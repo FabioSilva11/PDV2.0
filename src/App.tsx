@@ -11,17 +11,7 @@ import { CashierView } from './components/cashier/CashierView';
 import { KDSView } from './components/kitchen/KDSView';
 import { DeliveryView } from './components/delivery/DeliveryView';
 import { MenuManagementView } from './components/menu/MenuManagementView';
-import { InventoryView } from './components/inventory/InventoryView';
-import { PurchasesView } from './components/purchases/PurchasesView';
-import { SuppliersView } from './components/suppliers/SuppliersView';
-import { CustomersView } from './components/customers/CustomersView';
-import { StaffView } from './components/staff/StaffView';
-import { FinancialView } from './components/finance/FinancialView';
-import { ReportsView } from './components/reports/ReportsView';
 import { PrintersView } from './components/printers/PrintersView';
-import { AuditView } from './components/audit/AuditView';
-import { SettingsView } from './components/settings/SettingsView';
-import { LoginView } from './components/auth/LoginView';
 
 // Global Modals
 import { ManualPaymentModal } from './components/payment/ManualPaymentModal';
@@ -30,15 +20,11 @@ import { ThermalReceiptModal } from './components/orders/ThermalReceiptModal';
 import { OperationHealthModal } from './components/layout/OperationHealthModal';
 import { AlertsDrawer } from './components/layout/AlertsDrawer';
 
-interface MainAppContentProps {
-  onLogout: () => void;
-}
-
-const MainAppContent: React.FC<MainAppContentProps> = ({ onLogout }) => {
+const MainAppContent: React.FC = () => {
   const { activeModule, setActiveModule } = useRestaurant();
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(false);
 
-  // Keyboard shortcuts (F1 = PDV, F2 = Pedidos, F3 = Mesas, F4 = KDS, F5 = Caixa, F6 = Estoque)
+  // Keyboard shortcuts (F1 = PDV, F2 = Pedidos, F3 = Mesas, F4 = KDS, F5 = Caixa)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'F1') {
@@ -56,9 +42,6 @@ const MainAppContent: React.FC<MainAppContentProps> = ({ onLogout }) => {
       } else if (e.key === 'F5') {
         e.preventDefault();
         setActiveModule('caixa');
-      } else if (e.key === 'F6') {
-        e.preventDefault();
-        setActiveModule('estoque');
       }
     };
 
@@ -70,7 +53,7 @@ const MainAppContent: React.FC<MainAppContentProps> = ({ onLogout }) => {
     <div className="min-h-screen bg-stone-100 text-stone-900 flex flex-col font-sans selection:bg-amber-200 selection:text-amber-900">
       <div className="flex flex-1 overflow-hidden h-screen">
         {/* Left SaaS Navigation Sidebar */}
-        <Sidebar collapsed={sidebarCollapsed} setCollapsed={setSidebarCollapsed} onLogout={onLogout} />
+        <Sidebar collapsed={sidebarCollapsed} setCollapsed={setSidebarCollapsed} />
 
         {/* Main Content Area */}
         <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
@@ -88,16 +71,7 @@ const MainAppContent: React.FC<MainAppContentProps> = ({ onLogout }) => {
             {activeModule === 'kds' && <KDSView />}
             {activeModule === 'delivery' && <DeliveryView />}
             {activeModule === 'cardapio' && <MenuManagementView />}
-            {activeModule === 'estoque' && <InventoryView />}
-            {activeModule === 'compras' && <PurchasesView />}
-            {activeModule === 'fornecedores' && <SuppliersView />}
-            {activeModule === 'clientes' && <CustomersView />}
-            {activeModule === 'funcionarios' && <StaffView />}
-            {activeModule === 'financeiro' && <FinancialView />}
-            {activeModule === 'relatorios' && <ReportsView />}
             {activeModule === 'impressoras' && <PrintersView />}
-            {activeModule === 'auditoria' && <AuditView />}
-            {activeModule === 'configuracoes' && <SettingsView />}
           </main>
 
           {/* Quick status bar at the bottom */}
@@ -131,29 +105,10 @@ const MainAppContent: React.FC<MainAppContentProps> = ({ onLogout }) => {
   );
 };
 
-const AuthenticatedApp: React.FC = () => {
-  const { staffList, setCurrentUser } = useRestaurant();
-  const [authenticated, setAuthenticated] = useState(false);
-
-  if (!authenticated) {
-    return (
-      <LoginView
-        staffList={staffList}
-        onLogin={(user) => {
-          setCurrentUser(user);
-          setAuthenticated(true);
-        }}
-      />
-    );
-  }
-
-  return <MainAppContent onLogout={() => setAuthenticated(false)} />;
-};
-
 export default function App() {
   return (
     <RestaurantProvider>
-      <AuthenticatedApp />
+      <MainAppContent />
     </RestaurantProvider>
   );
 }

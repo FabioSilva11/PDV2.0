@@ -27,7 +27,7 @@ export function mergeSnapshots(base: any, local: any, remote: any, path = 'datab
   throw new SyncConflict(path);
 }
 
-const arrayFields = ['staff', 'alerts', 'menu', 'orders', 'paymentOptions', 'tables', 'comandas', 'ingredients', 'stockMovements', 'batches', 'suppliers', 'purchaseOrders', 'couriers', 'customers', 'financialEntries', 'printers', 'printQueue', 'auditLogs', 'cashHistory'];
+const arrayFields = ['alerts', 'menu', 'orders', 'paymentOptions', 'tables', 'comandas', 'couriers', 'printers', 'printQueue', 'cashHistory'];
 export function normalizeSnapshot(value: any): any {
   if (!value) return {};
   const next = { ...value };

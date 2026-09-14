@@ -7,54 +7,31 @@ import {
   Table, 
   Comanda,
   CashRegister, 
-  CashTransaction, 
-  OrderType, 
   OrderStatus,
-  PaymentStatus,
   PaymentMethodId,
   PaymentRecord,
-  StaffUser,
-  Customer,
-  Supplier,
-  PurchaseOrder,
   Courier,
-  Ingredient,
-  ProductBatch,
-  StockMovement,
   PrinterDevice,
   PrinterRoutingRule,
   PrintJob,
-  AuditLog,
-  FinancialEntry,
   SystemAlert,
   ManualPaymentOption,
-  KitchenStation,
-  CategoryType,
-  RestaurantSettings
+  CategoryType
 } from '../types';
 import { 
   INITIAL_MENU, 
-  INITIAL_INGREDIENTS, 
-  INITIAL_BATCHES, 
   INITIAL_TABLES, 
   INITIAL_ORDERS, 
   INITIAL_COMANDAS, 
-  INITIAL_STAFF, 
-  INITIAL_CUSTOMERS, 
-  INITIAL_SUPPLIERS, 
-  INITIAL_PURCHASES, 
   INITIAL_COURIERS, 
   INITIAL_PRINTERS, 
   INITIAL_PRINTER_ROUTING, 
-  INITIAL_AUDIT_LOGS, 
-  INITIAL_FINANCIAL, 
   INITIAL_ALERTS, 
   INITIAL_CASH_REGISTER, 
-  INITIAL_MANUAL_PAYMENTS,
-  INITIAL_SETTINGS
+  INITIAL_MANUAL_PAYMENTS
 } from '../data/seedData';
 import { LocalStore, useStoreField } from '../lib/localStore';
-import { uid, money, amount, quantity, subtotal as calculateSubtotal, totals, reconcile, requirePermission } from '../utils/business';
+import { uid, money, amount, subtotal as calculateSubtotal, totals, reconcile } from '../utils/business';
 import { sounds } from '../utils/audio';
 import {
   firebaseDatabaseEnabled,
@@ -72,16 +49,25 @@ interface HealthStatus {
   ultimaSincronizacao: string;
 }
 
+export interface CurrentUser {
+  id: string;
+  nome: string;
+  cargo: string;
+  usuario?: string;
+}
+
+const DEFAULT_ADMIN: CurrentUser = {
+  id: 'usr-1',
+  nome: 'Carlos Mendes',
+  cargo: 'Administrador',
+  usuario: 'admin'
+};
+
 interface RestaurantContextType {
   // Navigation & Active State
   activeModule: AppModule;
   setActiveModule: (mod: AppModule) => void;
-  currentUser: StaffUser;
-  setCurrentUser: (user: StaffUser) => void;
-  staffList: StaffUser[];
-  updateStaffPermissions: (userId: string, permissions: StaffUser['permissoes']) => void;
-  addStaffMember: (user: StaffUser) => void;
-  deleteStaffMember: (id: string) => void;
+  currentUser: CurrentUser;
 
   // System Health & Alerts
   health: HealthStatus;
@@ -155,36 +141,11 @@ interface RestaurantContextType {
   closeCashRegister: (blindCloseData?: CashRegister['fechamentoCego']) => void;
   addCashMovement: (tipo: 'suprimento' | 'sangria' | 'entrada_manual' | 'saida_manual', valor: number, motivo: string) => void;
 
-  // Inventory & Batch/Lots
-  ingredients: Ingredient[];
-  stockMovements: StockMovement[];
-  batches: ProductBatch[];
-  addStockMovement: (ingredienteId: string, tipo: StockMovement['tipo'], quantidade: number, motivo: string) => void;
-  addBatch: (batch: Omit<ProductBatch, 'id'>) => void;
-  updateIngredient: (ing: Ingredient) => void;
-
-  // Purchases & Suppliers
-  suppliers: Supplier[];
-  purchaseOrders: PurchaseOrder[];
-  addSupplier: (supplier: Omit<Supplier, 'id' | 'totalComprado'>) => void;
-  addPurchaseOrder: (po: Omit<PurchaseOrder, 'id'>) => void;
-  receivePurchaseOrder: (poId: string) => void;
-
   // Delivery & Couriers
   couriers: Courier[];
   assignCourierToOrder: (orderId: string, courierName: string) => void;
   completeDeliveryOrder: (orderId: string) => void;
   updateCourierStatus: (courierId: string, status: Courier['status']) => void;
-
-  // Customers (CRM)
-  customers: Customer[];
-  saveCustomer: (customer: Customer) => void;
-  deleteCustomer: (id: string) => void;
-
-  // Financial (Managerial)
-  financialEntries: FinancialEntry[];
-  addFinancialEntry: (entry: Omit<FinancialEntry, 'id'>) => void;
-  settleFinancialEntry: (id: string) => void;
 
   // Printers & Print Queue
   printers: PrinterDevice[];
@@ -195,18 +156,6 @@ interface RestaurantContextType {
   togglePrinterStatus: (printerId: string) => void;
   savePrinter: (printer: PrinterDevice) => void;
   deletePrinter: (printerId: string) => void;
-
-  // Settings & SaaS Configuration
-  settings: RestaurantSettings;
-  updateSettings: (newSettings: Partial<RestaurantSettings>) => void;
-  resetSettingsToDefaults: () => void;
-  updatePaymentOptions: (options: ManualPaymentOption[]) => void;
-  togglePaymentOption: (id: PaymentMethodId) => void;
-  addPaymentOption: (option: ManualPaymentOption) => void;
-
-  // Audit Logs
-  auditLogs: AuditLog[];
-  logAuditEvent: (acao: string, detalhes: string, pedidoNumero?: number, valorEnvolvido?: number) => void;
 
   // Sound and UI Extras
   soundEnabled: boolean;
@@ -219,28 +168,17 @@ const DATABASE_STORAGE_KEY = 'murupi_restaurant_database_v1';
 const LEGACY_STORAGE_PREFIXES = ['rest_saas_v6_', 'rest_saas_v5_', 'rest_saas_v4_', 'rest_saas_v3_'];
 
 interface RestaurantDatabaseSnapshot {
-  staff?: StaffUser[];
-  staffResetApplied?: boolean;
   operationalDemoResetApplied?: boolean;
   alerts?: SystemAlert[];
   menu?: MenuItem[];
   orders?: Order[];
   paymentOptions?: ManualPaymentOption[];
-  settings?: RestaurantSettings;
   tables?: Table[];
   comandas?: Comanda[];
   cashRegister?: CashRegister;
-  ingredients?: Ingredient[];
-  stockMovements?: StockMovement[];
-  batches?: ProductBatch[];
-  suppliers?: Supplier[];
-  purchaseOrders?: PurchaseOrder[];
   couriers?: Courier[];
-  customers?: Customer[];
-  financialEntries?: FinancialEntry[];
   printers?: PrinterDevice[];
   printQueue?: PrintJob[];
-  auditLogs?: AuditLog[];
 }
 
 const loadRestaurantDatabase = (): RestaurantDatabaseSnapshot => {
@@ -266,39 +204,17 @@ const loadRestaurantDatabase = (): RestaurantDatabaseSnapshot => {
   };
 
   return {
-    staff: readLegacy<StaffUser[]>('staff'),
     alerts: readLegacy<SystemAlert[]>('alerts'),
     menu: readLegacy<MenuItem[]>('menu'),
     orders: readLegacy<Order[]>('orders'),
     paymentOptions: readLegacy<ManualPaymentOption[]>('payment_options'),
-    settings: readLegacy<RestaurantSettings>('settings'),
     tables: readLegacy<Table[]>('tables'),
     comandas: readLegacy<Comanda[]>('comandas'),
     cashRegister: readLegacy<CashRegister>('cash'),
-    ingredients: readLegacy<Ingredient[]>('ingredients'),
-    stockMovements: readLegacy<StockMovement[]>('stock_movements'),
-    batches: readLegacy<ProductBatch[]>('batches'),
-    suppliers: readLegacy<Supplier[]>('suppliers'),
-    purchaseOrders: readLegacy<PurchaseOrder[]>('purchases'),
     couriers: readLegacy<Courier[]>('couriers'),
-    customers: readLegacy<Customer[]>('customers'),
-    financialEntries: readLegacy<FinancialEntry[]>('financial'),
     printers: readLegacy<PrinterDevice[]>('printers'),
-    auditLogs: readLegacy<AuditLog[]>('audit')
+    printQueue: readLegacy<PrintJob[]>('print_queue')
   };
-};
-
-const ensureDefaultAdmin = (staff: StaffUser[] | undefined): StaffUser[] => {
-  const defaultAdmin = INITIAL_STAFF[0];
-  if (!staff || staff.length === 0) return INITIAL_STAFF;
-
-  const adminIndex = staff.findIndex(user => user.usuario.toLowerCase() === 'admin');
-  if (adminIndex === -1) return [defaultAdmin, ...staff];
-
-  return staff.map((user, index) => index === adminIndex
-    ? { ...defaultAdmin, ...user, usuario: 'admin', senha: user.senha || 'admin1', cargo: 'Administrador', status: 'ativo' }
-    : user
-  );
 };
 
 const clearDemoTableOccupancy = (tables: Table[]): Table[] => tables.map(table => ({
@@ -325,11 +241,7 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const [operationError, setOperationError] = useState('');
   // Navigation & User
   const [activeModule, setActiveModule] = useState<AppModule>('dashboard');
-  const [staffList, setStaffList] = useStoreField<StaffUser[]>(store, 'staff', () => {
-    // Limpeza única solicitada: inicia somente com o administrador padrão.
-    return database.staffResetApplied ? ensureDefaultAdmin(database.staff) : [INITIAL_STAFF[0]];
-  });
-  const [currentUser, setCurrentUser] = useState<StaffUser>(staffList[0] || INITIAL_STAFF[0]);
+  const currentUser = DEFAULT_ADMIN;
 
   // Operational Health
   const [health, setHealth] = useState<HealthStatus>({
@@ -368,14 +280,6 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [orderForPaymentModal, setOrderForPaymentModal] = useState<Order | null>(null);
 
-  // Settings & SaaS Parameters
-  const [settings, setSettings] = useStoreField<RestaurantSettings>(store, 'settings', () => {
-    if (database.settings) {
-      return { ...INITIAL_SETTINGS, ...database.settings, saas: { ...INITIAL_SETTINGS.saas, ...database.settings.saas } };
-    }
-    return INITIAL_SETTINGS;
-  });
-
   // Tables
   const [tables, setTables] = useStoreField<Table[]>(store, 'tables', () => {
     return database.operationalDemoResetApplied
@@ -393,36 +297,9 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     return database.cashRegister || INITIAL_CASH_REGISTER;
   });
 
-  // Inventory & Lots
-  const [ingredients, setIngredients] = useStoreField<Ingredient[]>(store, 'ingredients', () => {
-    return database.ingredients || INITIAL_INGREDIENTS;
-  });
-  const [stockMovements, setStockMovements] = useStoreField<StockMovement[]>(store, 'stockMovements', database.stockMovements || []);
-  const [batches, setBatches] = useStoreField<ProductBatch[]>(store, 'batches', () => {
-    return database.batches || INITIAL_BATCHES;
-  });
-
-  // Purchases & Suppliers
-  const [suppliers, setSuppliers] = useStoreField<Supplier[]>(store, 'suppliers', () => {
-    return database.suppliers || INITIAL_SUPPLIERS;
-  });
-  const [purchaseOrders, setPurchaseOrders] = useStoreField<PurchaseOrder[]>(store, 'purchaseOrders', () => {
-    return database.purchaseOrders || INITIAL_PURCHASES;
-  });
-
   // Couriers
   const [couriers, setCouriers] = useStoreField<Courier[]>(store, 'couriers', () => {
     return database.couriers || INITIAL_COURIERS;
-  });
-
-  // Customers
-  const [customers, setCustomers] = useStoreField<Customer[]>(store, 'customers', () => {
-    return database.customers || INITIAL_CUSTOMERS;
-  });
-
-  // Financial
-  const [financialEntries, setFinancialEntries] = useStoreField<FinancialEntry[]>(store, 'financialEntries', () => {
-    return database.financialEntries || INITIAL_FINANCIAL;
   });
 
   // Printers
@@ -431,11 +308,6 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   });
   const [routingRules] = useState<PrinterRoutingRule[]>(INITIAL_PRINTER_ROUTING);
   const [printQueue, setPrintQueue] = useStoreField<PrintJob[]>(store, 'printQueue', () => database.printQueue || []);
-
-  // Audit Logs
-  const [auditLogs, setAuditLogs] = useStoreField<AuditLog[]>(store, 'auditLogs', () => {
-    return database.auditLogs || INITIAL_AUDIT_LOGS;
-  });
 
   // Sound
   const [soundEnabled, setSoundEnabled] = useState(true);
@@ -457,42 +329,17 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       if (cancelled) return;
 
       if (remote) {
-        const remoteStaff = asArray(remote.staff, database.staff || [INITIAL_STAFF[0]]);
-        const hydratedStaff = remote.staffResetApplied
-          ? ensureDefaultAdmin(remoteStaff)
-          : [INITIAL_STAFF[0]];
-
-        setStaffList(hydratedStaff);
-        setCurrentUser(current => hydratedStaff.find(user => user.id === current.id) || hydratedStaff[0] || INITIAL_STAFF[0]);
         setAlerts(remote.operationalDemoResetApplied ? asArray(remote.alerts, []) : []);
         setMenu(asArray(remote.menu, database.menu || INITIAL_MENU));
         setOrders(remote.operationalDemoResetApplied ? asArray(remote.orders, []) : []);
         setPaymentOptions(asArray(remote.paymentOptions, database.paymentOptions || INITIAL_MANUAL_PAYMENTS));
-        setSettings({
-          ...INITIAL_SETTINGS,
-          ...(database.settings || {}),
-          ...(remote.settings || {}),
-          saas: {
-            ...INITIAL_SETTINGS.saas,
-            ...(database.settings?.saas || {}),
-            ...(remote.settings?.saas || {})
-          }
-        });
         const remoteTables = asArray(remote.tables, database.tables || INITIAL_TABLES);
         setTables(remote.operationalDemoResetApplied ? remoteTables : clearDemoTableOccupancy(remoteTables));
         setComandas(remote.operationalDemoResetApplied ? asArray(remote.comandas, []) : []);
         setCashRegister(remote.cashRegister || database.cashRegister || INITIAL_CASH_REGISTER);
-        setIngredients(asArray(remote.ingredients, database.ingredients || INITIAL_INGREDIENTS));
-        setStockMovements(asArray(remote.stockMovements, database.stockMovements || []));
-        setBatches(asArray(remote.batches, database.batches || INITIAL_BATCHES));
-        setSuppliers(asArray(remote.suppliers, database.suppliers || INITIAL_SUPPLIERS));
-        setPurchaseOrders(asArray(remote.purchaseOrders, database.purchaseOrders || INITIAL_PURCHASES));
         setCouriers(asArray(remote.couriers, database.couriers || INITIAL_COURIERS));
-        setCustomers(asArray(remote.customers, database.customers || INITIAL_CUSTOMERS));
-        setFinancialEntries(asArray(remote.financialEntries, database.financialEntries || INITIAL_FINANCIAL));
         setPrinters(asArray(remote.printers, database.printers || INITIAL_PRINTERS));
         setPrintQueue(asArray(remote.printQueue, []));
-        setAuditLogs(asArray(remote.auditLogs, database.auditLogs || INITIAL_AUDIT_LOGS));
       }
 
       setFirebaseSyncReady(true);
@@ -504,7 +351,6 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     };
   }, [database]);
 
-  store.state.staffResetApplied = true;
   store.state.operationalDemoResetApplied = true;
   useEffect(() => {
     store.onCommit = snapshot => {
@@ -512,24 +358,6 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     };
     return () => { store.onCommit = undefined; };
   }, [store, firebaseSyncReady]);
-
-  // Helper to log audit events
-  const logAuditEvent = useCallback((acao: string, detalhes: string, pedidoNumero?: number, valorEnvolvido?: number) => {
-    const now = new Date();
-    const dateStr = now.toLocaleDateString('pt-BR') + ' ' + now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-    const newLog: AuditLog = {
-      id: uid('aud'),
-      usuario: `${currentUser.nome} (${currentUser.cargo})`,
-      cargo: currentUser.cargo,
-      acao,
-      dataHora: dateStr,
-      dispositivo: 'Terminal Web (AI Studio SaaS)',
-      detalhes,
-      pedidoNumero,
-      valorEnvolvido
-    };
-    setAuditLogs(prev => [newLog, ...prev]);
-  }, [currentUser]);
 
   // Refresh Health
   const refreshHealth = useCallback(() => {
@@ -579,91 +407,54 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   ];
 
   const saveMenuItem = useCallback((item: MenuItem) => {
-    requirePermission(currentUser, 'excluirProduto');
     amount(item.preco, 'Preço');
     if (!item.nome.trim() || item.nome.length > 200) throw new Error('Nome de produto inválido.');
     setMenu(prev => {
       const exists = prev.some(m => m.id === item.id);
       if (exists) {
-        logAuditEvent('Alteração de produto no cardápio', `Atualizou "${item.nome}" - Preço: R$ ${item.preco.toFixed(2)}`);
         return prev.map(m => m.id === item.id ? item : m);
       } else {
-        logAuditEvent('Cadastro de produto no cardápio', `Cadastrou novo item "${item.nome}" - R$ ${item.preco.toFixed(2)}`);
         return [item, ...prev];
       }
     });
-  }, [logAuditEvent]);
+  }, [setMenu]);
 
   const deleteMenuItem = useCallback((id: string) => {
-    requirePermission(currentUser, 'excluirProduto');
     const item = store.state.menu.find(m => m.id === id);
     if (item) {
-      logAuditEvent('Exclusão de produto', `Removeu produto "${item.nome}" do cardápio`);
       setMenu(prev => prev.filter(m => m.id !== id));
     }
-  }, [menu, logAuditEvent]);
+  }, [menu, setMenu]);
 
   const toggleItemAvailability = useCallback((id: string) => {
     setMenu(prev => prev.map(m => {
       if (m.id === id) {
         const novoStatus = !m.disponivel;
-        logAuditEvent('Disponibilidade de produto', `Marcou "${m.nome}" como ${novoStatus ? 'Disponível' : 'Esgotado'}`);
         return { ...m, disponivel: novoStatus };
       }
       return m;
     }));
-  }, [logAuditEvent]);
+  }, [setMenu]);
 
   const updateItemPrice = useCallback((id: string, newPrice: number) => {
-    requirePermission(currentUser, 'excluirProduto');
     newPrice = amount(newPrice, 'Preço');
     setMenu(prev => prev.map(m => {
       if (m.id === id) {
-        logAuditEvent('Mudança de preço no cardápio', `Alterou preço de "${m.nome}" de R$ ${m.preco.toFixed(2)} para R$ ${newPrice.toFixed(2)}`, undefined, newPrice);
         return { ...m, preco: newPrice };
       }
       return m;
     }));
-  }, [logAuditEvent]);
+  }, [setMenu]);
 
   const resetMenuToDefaults = useCallback(() => {
     setMenu(INITIAL_MENU);
-    logAuditEvent('Restauração de cardápio', 'Restaurou cardápio para os padrões originais do sistema');
-  }, [logAuditEvent]);
+  }, [setMenu]);
 
-  // Inventory Technical Sheet Deduction
-  const deductRecipeIngredients = (cartItems: CartItem[], restore = false) => {
-    const usages = new Map<string, number>();
-    for (const item of cartItems) {
-      quantity(item.quantidade);
-      const product = store.state.menu.find((m: MenuItem) => m.id === item.menuItemId) as MenuItem | undefined;
-      if (!restore && (!product || !product.disponivel)) throw new Error('Produto indisponível.');
-      const recipe = item.ingredientesConsumidos || (product?.estoqueControlado ? product.fichaTecnica || [] : []);
-      for (const usage of recipe) usages.set(usage.ingredienteId, (usages.get(usage.ingredienteId) || 0) + quantity(usage.quantidade) * item.quantidade);
-    }
-    for (const [id, qty] of usages) {
-      const ing = store.state.ingredients.find((i: Ingredient) => i.id === id) as Ingredient | undefined;
-      if (!ing || (!restore && ing.estoqueAtual + 1e-9 < qty)) throw new Error('Estoque insuficiente para concluir o pedido.');
-    }
-    setIngredients(prev => prev.map(ing => {
-      const qty = usages.get(ing.id);
-      if (!qty) return ing;
-      const next = Number((ing.estoqueAtual + (restore ? qty : -qty)).toFixed(6));
-      setStockMovements(prev => [{ id: uid('mov'), ingredienteId: ing.id, tipo: restore ? 'entrada' : 'saida_venda', quantidade: qty, unidade: ing.unidade, custoTotal: money(qty * ing.custoMedio), motivo: restore ? 'Cancelamento de pedido' : 'Consumo de pedido', usuario: currentUser.nome, dataHora: new Date().toISOString() }, ...prev]);
-      if (!restore && next <= ing.estoqueMinimo) addAlert({ tipo: 'estoque_baixo', titulo: 'Estoque baixo: ' + ing.nome, mensagem: 'Restam ' + next + ' ' + ing.unidade, gravidade: 'alta', linkAcao: 'estoque' });
-      return { ...ing, estoqueAtual: next };
-    }));
-  };
-
-  const snapshotItems = (items: CartItem[]): CartItem[] => items.map(item => {
-    const product = store.state.menu.find((m: MenuItem) => m.id === item.menuItemId) as MenuItem | undefined;
-    const recipe = product?.estoqueControlado ? [...(product.fichaTecnica || [])] : [];
-    for (const addon of item.adicionais || []) {
-      const option = product?.gruposAdicionais?.flatMap(g => g.opcoes).find(a => a.id === addon.addonId);
-      if (product?.estoqueControlado) recipe.push(...(option?.ingredientes || []));
-    }
-    return { ...structuredClone(item), cartItemId: item.cartItemId || uid('item'), ingredientesConsumidos: recipe, statusProducao: 'pendente' };
-  });
+  const snapshotItems = (items: CartItem[]): CartItem[] => items.map(item => ({
+    ...structuredClone(item),
+    cartItemId: item.cartItemId || uid('item'),
+    statusProducao: 'pendente'
+  }));
   const syncTableTotals = (order: Order) => {
     setTables(prev => prev.map(t => t.pedidoAtivoId === order.id ? { ...t, valorAtual: order.saldoRestante } : t));
   };
@@ -684,12 +475,10 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     }
     if (!store.state.cashRegister.aberto) throw new Error('Abra o caixa antes de vender.');
     if (!data.itens?.length) throw new Error('Adicione produtos ao pedido.');
-    if (data.desconto) requirePermission(currentUser, 'aplicarDesconto');
     const values = totals(data.itens, data.desconto, data.taxaServico, data.taxaEntrega);
     const table = data.tipo === 'mesa' ? store.state.tables.find((t: Table) => t.numero === data.mesaNumero) as Table | undefined : undefined;
     if (data.tipo === 'mesa' && (!table || table.pedidoAtivoId)) throw new Error('Mesa inexistente ou com pedido ativo. Adicione itens à conta existente.');
     const items = snapshotItems(data.itens);
-    deductRecipeIngredients(items);
     let order: Order = { ...data, ...values, id: uid('ord'), operacaoId: data.operacaoId || uid('op'), numero: Math.max(1000, ...store.state.orders.map((o: Order) => o.numero)) + 1,
       tipo: data.tipo || 'balcao', garcomNome: data.garcomNome || currentUser.nome, canal: data.canal || (data.tipo === 'mesa' ? 'Salão' : data.tipo === 'delivery' ? 'Delivery' : 'Balcão'), criadoEm: new Date().toISOString(), itens: items,
       status: 'novo', statusPagamento: values.total === 0 ? 'pago' : 'pendente', pagamentos: [], valorTotalPago: 0, saldoRestante: values.total };
@@ -702,35 +491,29 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       order = store.state.orders.find((o: Order) => o.id === order.id);
     }
     dispatchItems(order, items);
-    logAuditEvent('Criação de pedido', 'Pedido #' + order.numero, order.numero, order.total);
     return order;
   };
 
   const updateOrderStatus = useCallback((orderId: string, status: OrderStatus) => {
     setOrders(prev => prev.map(o => {
       if (o.id === orderId) {
-        logAuditEvent('Alteração de status de pedido', `Alterou status do pedido #${o.numero} para "${status.toUpperCase()}"`, o.numero);
         return { ...o, status };
       }
       return o;
     }));
-  }, [logAuditEvent]);
+  }, [setOrders]);
 
   const cancelOrder = (orderId: string, motivo: string) => {
-    requirePermission(currentUser, 'cancelarPedido');
     const order = store.state.orders.find((o: Order) => o.id === orderId) as Order | undefined;
     if (!order || order.status === 'cancelado') return;
     if (!motivo.trim()) throw new Error('Informe o motivo do cancelamento.');
     if (order.valorTotalPago > 0) throw new Error('Estorne os pagamentos antes de cancelar.');
-    deductRecipeIngredients(order.itens, true);
     setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: 'cancelado', cancelamento: { motivo, usuario: currentUser.nome, dataHora: new Date().toISOString() } } : o));
     setTables(prev => prev.map(t => t.pedidoAtivoId === orderId ? { ...t, status: 'livre', pedidoAtivoId: undefined, valorAtual: 0, clienteNome: undefined } : t));
     dispatchItems(order, order.itens, 'CANCELAMENTO');
-    logAuditEvent('Cancelamento de pedido', motivo, order.numero, order.total);
   };
 
   const cancelOrderItem = (orderId: string, itemId: string, motivo: string) => {
-    requirePermission(currentUser, 'cancelarPedido');
     const order = store.state.orders.find((o: Order) => o.id === orderId) as Order | undefined;
     if (!order || order.status === 'cancelado') return;
     const removed = order.itens.find(i => i.cartItemId === itemId);
@@ -739,12 +522,10 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     const items = order.itens.filter(i => i.cartItemId !== itemId);
     const values = totals(items, Math.min(order.desconto, calculateSubtotal(items)), order.taxaServico, order.taxaEntrega);
     if (values.total < order.valorTotalPago) throw new Error('Estorne o valor excedente antes de remover o item.');
-    deductRecipeIngredients([removed], true);
     const next = reconcile({ ...order, ...values, itens: items });
     setOrders(prev => prev.map(o => o.id === orderId ? next : o));
     syncTableTotals(next);
     dispatchItems(order, [removed], 'CANCELAMENTO DE ITEM');
-    logAuditEvent('Item cancelado', motivo, order.numero);
   };
 
   const addItemsToOrder = (orderId: string, newItems: CartItem[]) => {
@@ -754,16 +535,13 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     const added = snapshotItems(newItems);
     const items = [...order.itens, ...added];
     const values = totals(items, order.desconto, order.taxaServico, order.taxaEntrega);
-    deductRecipeIngredients(added);
     const next = reconcile({ ...order, ...values, itens: items, status: 'em_preparacao' });
     setOrders(prev => prev.map(o => o.id === orderId ? next : o));
     syncTableTotals(next);
     dispatchItems(order, added, 'ADICIONAL');
-    logAuditEvent('Adição de itens', 'Itens adicionados ao pedido', order.numero);
   };
 
   const applyOrderDiscount = (orderId: string, desconto: number, motivo: string) => {
-    requirePermission(currentUser, 'aplicarDesconto');
     const order = store.state.orders.find((o: Order) => o.id === orderId) as Order | undefined;
     if (!order || order.status === 'cancelado') return;
     const values = totals(order.itens, desconto, order.taxaServico, order.taxaEntrega);
@@ -771,7 +549,6 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     const next = reconcile({ ...order, ...values, descontoMotivo: motivo });
     setOrders(prev => prev.map(o => o.id === orderId ? next : o));
     syncTableTotals(next);
-    logAuditEvent('Desconto', motivo, order.numero, desconto);
   };
 
   const updateOrderItemProductionStatus = useCallback((orderId: string, cartItemId: string, status: 'pendente' | 'preparando' | 'pronto') => {
@@ -787,20 +564,17 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       }
       return o;
     }));
-  }, []);
+  }, [setOrders]);
 
   const setOrderPriority = useCallback((orderId: string, prioridade: 'normal' | 'urgente') => {
     setOrders(prev => prev.map(o => o.id === orderId ? { ...o, prioridade } : o));
-  }, []);
+  }, [setOrders]);
 
   const reopenOrder = (id: string, motivo: string) => {
-    requirePermission(currentUser, 'reabrirConta');
     const order = store.state.orders.find((o: Order) => o.id === id) as Order | undefined;
     if (!order) return;
     if (!motivo.trim()) throw new Error('Informe o motivo.');
-    if (order.status === 'cancelado') deductRecipeIngredients(order.itens);
     setOrders(prev => prev.map(o => o.id === id ? { ...reconcile(o), status: 'confirmado', cancelamento: undefined } : o));
-    logAuditEvent('Reabertura de pedido', motivo, order.numero);
   };
 
   const addManualPaymentToOrder = (orderId: string, formaId: PaymentMethodId, valor: number, valorRecebido?: number, observacao?: string): boolean => {
@@ -818,12 +592,10 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     setOrders(prev => prev.map(o => o.id === orderId ? next : o));
     setCashRegister(prev => ({ ...prev, saldoAtualGaveta: money(prev.saldoAtualGaveta + (formaId === 'dinheiro' ? valor : 0)), transacoes: [{ id: uid('tx'), tipo: 'venda_manual', valor, motivo: 'Recebimento pedido #' + order.numero, formaPagamento: formaId, horario: new Date().toISOString(), pedidoId: orderId, operador: currentUser.nome }, ...prev.transacoes] }));
     syncTableTotals(next);
-    logAuditEvent('Registro manual de pagamento', option.nome, order.numero, valor);
     return true;
   };
 
   const reverseOrderPayment = (orderId: string, paymentId: string, motivo: string) => {
-    requirePermission(currentUser, 'estornarPagamento');
     const order = store.state.orders.find((o: Order) => o.id === orderId) as Order | undefined;
     const payment = order?.pagamentos.find(p => p.id === paymentId);
     if (!order || !payment || payment.estornado) return;
@@ -834,11 +606,9 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     setOrders(prev => prev.map(o => o.id === orderId ? next : o));
     setCashRegister(prev => ({ ...prev, saldoAtualGaveta: money(prev.saldoAtualGaveta - (payment.formaId === 'dinheiro' ? payment.valor : 0)), transacoes: [{ id: uid('tx-rev'), tipo: 'saida_manual', valor: payment.valor, formaPagamento: payment.formaId, motivo: 'Estorno: ' + motivo, horario: new Date().toISOString(), pedidoId: orderId, operador: currentUser.nome }, ...prev.transacoes] }));
     syncTableTotals(next);
-    logAuditEvent('Estorno de pagamento', motivo, order.numero, payment.valor);
   };
 
   const markOrderAsPaidManually = (orderId: string) => {
-    requirePermission(currentUser, 'aplicarDesconto');
     const order = store.state.orders.find((o: Order) => o.id === orderId) as Order | undefined;
     if (!order || order.status === 'cancelado' || !order.saldoRestante) return;
     throw new Error('Selecione a forma e registre o pagamento. Para cortesia, aplique desconto com motivo.');
@@ -870,8 +640,7 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       }
       return t;
     }));
-    logAuditEvent('Abertura de mesa', `Abriu Mesa ${tableNumber} para ${pessoas} pessoas com cliente "${customerName || 'Cliente Salão'}"`);
-  }, [currentUser, logAuditEvent]);
+  }, [setTables, currentUser]);
 
   const addItemsToTable = (number: number, items: CartItem[]) => {
     const table = store.state.tables.find((t: Table) => t.numero === number) as Table | undefined;
@@ -882,8 +651,7 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   const requestTableBill = useCallback((tableNumber: number) => {
     setTables(prev => prev.map(t => t.numero === tableNumber ? { ...t, status: 'conta' } : t));
-    logAuditEvent('Conta solicitada', `Garçom sinalizou pedido de conta na Mesa ${tableNumber}`);
-  }, [logAuditEvent]);
+  }, [setTables]);
 
   const settleTableAccount = useCallback((tableNumber: number) => {
     setTables(prev => prev.map(t => {
@@ -900,8 +668,7 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       }
       return t;
     }));
-    logAuditEvent('Liberação de mesa', `Mesa ${tableNumber} quitada e liberada no salão`);
-  }, [logAuditEvent]);
+  }, [setTables]);
 
   const freeTableManually = useCallback((tableNumber: number) => {
     setTables(prev => prev.map(t => {
@@ -918,8 +685,7 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       }
       return t;
     }));
-    logAuditEvent('Liberação manual de mesa', `Liberou Mesa ${tableNumber} manualmente`);
-  }, [logAuditEvent]);
+  }, [setTables]);
 
   const transferTable = useCallback((fromTable: number, toTable: number) => {
     const origin = store.state.tables.find(t => t.numero === fromTable);
@@ -958,9 +724,7 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     if (origin.pedidoAtivoId) {
       setOrders(prev => prev.map(o => o.id === origin.pedidoAtivoId ? { ...o, mesaNumero: toTable } : o));
     }
-
-    logAuditEvent('Transferência de mesa', `Transferiu comanda da Mesa ${fromTable} para a Mesa ${toTable}`);
-  }, [tables, logAuditEvent]);
+  }, [tables, setTables, setOrders]);
 
   const joinTables = useCallback((sourceTable: number, targetTable: number) => {
     const src = store.state.tables.find(t => t.numero === sourceTable);
@@ -977,8 +741,7 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       }
       return t;
     }));
-    logAuditEvent('Junção de mesas', `Juntou Mesa ${sourceTable} à Mesa ${targetTable}`);
-  }, [tables, logAuditEvent]);
+  }, [tables, setTables]);
 
   const updateTableLayout = useCallback((tableId: string, x: number, y: number, formato?: Table['formato'], setor?: Table['setor']) => {
     setTables(prev => prev.map(t => {
@@ -993,7 +756,7 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       }
       return t;
     }));
-  }, []);
+  }, [setTables]);
 
   const addNewTable = useCallback((tableData: Omit<Table, 'id' | 'valorAtual'>) => {
     const newTable: Table = {
@@ -1002,8 +765,7 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       valorAtual: 0
     };
     setTables(prev => [...prev, newTable]);
-    logAuditEvent('Cadastro de mesa', `Cadastrou nova Mesa ${newTable.numero} no setor ${newTable.setor}`);
-  }, [logAuditEvent]);
+  }, [setTables]);
 
   const configureTableCount = useCallback((requestedCount: number) => {
     const count = Math.max(1, Math.floor(Number(requestedCount) || 1));
@@ -1044,9 +806,7 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
       return [...nextTables, ...preservedOpenTables];
     });
-
-    logAuditEvent('Configuração de mesas', `Configurou ${count} mesa${count === 1 ? '' : 's'} no estabelecimento`);
-  }, [logAuditEvent]);
+  }, [setTables]);
 
   // Comandas
   const createComanda = useCallback((numero: number, clienteNome?: string, mesaNumero?: number, limite?: number) => {
@@ -1064,8 +824,7 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       itens: []
     };
     setComandas(prev => [newCmd, ...prev]);
-    logAuditEvent('Abertura de comanda', `Abriu comanda #${numero} para ${clienteNome || 'Cliente Individual'}`);
-  }, [currentUser, logAuditEvent]);
+  }, [setComandas, currentUser]);
 
   const addItemsToComanda = useCallback((comandaId: string, items: CartItem[]) => {
     setComandas(prev => prev.map(c => {
@@ -1080,8 +839,7 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       }
       return c;
     }));
-    deductRecipeIngredients(items);
-  }, [deductRecipeIngredients]);
+  }, [setComandas]);
 
   const transferComandaItems = useCallback((fromComandaId: string, toComandaId: string, itemIds: string[]) => {
     const fromCmd = store.state.comandas.find(c => c.id === fromComandaId);
@@ -1101,8 +859,7 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       }
       return c;
     }));
-    logAuditEvent('Transferência de itens entre comandas', `Moveu ${itemsToMove.length} itens da comanda #${fromCmd.numero}`);
-  }, [comandas, logAuditEvent]);
+  }, [comandas, setComandas]);
 
   const closeComanda = useCallback((comandaId: string) => {
     setComandas(prev => prev.map(c => {
@@ -1111,7 +868,7 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       }
       return c;
     }));
-  }, []);
+  }, [setComandas]);
 
   // Cash Register
   const openCashRegister = (initialAmount: number) => {
@@ -1120,23 +877,19 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     const previous = store.state.cashRegister as CashRegister;
     if (previous.fechadoEm) store.set('cashHistory', [...(store.state.cashHistory || []), previous]);
     setCashRegister({ id: uid('cash'), aberto: true, operadorAbertura: currentUser.nome, abertoEm: new Date().toISOString(), saldoInicial: initial, saldoAtualGaveta: initial, transacoes: [] });
-    logAuditEvent('Abertura de caixa', 'Fundo inicial', undefined, initial);
   };
 
   const closeCashRegister = useCallback((blindCloseData?: CashRegister['fechamentoCego']) => {
     if (!store.state.cashRegister.aberto) return;
     if (!['Administrador', 'Gerente', 'Gerente Geral', 'Caixa', 'Operador de Caixa'].includes(currentUser.cargo)) throw new Error('Sem permissão para fechar caixa.');
     if (blindCloseData) { amount(blindCloseData.dinheiroInformado); amount(blindCloseData.pixInformado); amount(blindCloseData.cartaoInformado); amount(blindCloseData.outrosInformado); }
-    setCashRegister(prev => {
-      logAuditEvent('Fechamento de caixa', `Encerrou turno de caixa. Saldo físico registrado: R$ ${prev.saldoAtualGaveta.toFixed(2)}`, undefined, prev.saldoAtualGaveta);
-      return {
-        ...prev,
-        aberto: false,
-        fechadoEm: new Date().toISOString(),
-        fechamentoCego: blindCloseData
-      };
-    });
-  }, [logAuditEvent]);
+    setCashRegister(prev => ({
+      ...prev,
+      aberto: false,
+      fechadoEm: new Date().toISOString(),
+      fechamentoCego: blindCloseData
+    }));
+  }, [setCashRegister, currentUser]);
 
   const addCashMovement = (tipo: 'suprimento' | 'sangria' | 'entrada_manual' | 'saida_manual', valor: number, motivo: string) => {
     if (!store.state.cashRegister.aberto) throw new Error('Caixa fechado.');
@@ -1145,82 +898,7 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     const incoming = tipo === 'suprimento' || tipo === 'entrada_manual';
     if (!incoming && valor > store.state.cashRegister.saldoAtualGaveta) throw new Error('Saldo insuficiente na gaveta.');
     setCashRegister(prev => ({ ...prev, saldoAtualGaveta: money(prev.saldoAtualGaveta + (incoming ? valor : -valor)), transacoes: [{ id: uid('tx'), tipo, valor, motivo, horario: new Date().toISOString(), operador: currentUser.nome }, ...prev.transacoes] }));
-    logAuditEvent('Movimentação de caixa', motivo, undefined, valor);
   };
-
-  const addStockMovement = (id: string, tipo: StockMovement['tipo'], qty: number, motivo: string) => {
-    requirePermission(currentUser, 'modificarEstoque');
-    const ing = store.state.ingredients.find((i: Ingredient) => i.id === id) as Ingredient | undefined;
-    if (!ing) throw new Error('Ingrediente inexistente.');
-    quantity(qty, tipo === 'inventario' || tipo === 'ajuste');
-    const next = tipo === 'entrada' ? ing.estoqueAtual + qty : tipo === 'inventario' || tipo === 'ajuste' ? qty : ing.estoqueAtual - qty;
-    if (next < 0) throw new Error('Estoque insuficiente.');
-    setIngredients(prev => prev.map(i => i.id === id ? { ...i, estoqueAtual: Number(next.toFixed(6)) } : i));
-    setStockMovements(prev => [{ id: uid('mov'), ingredienteId: id, tipo, quantidade: qty, unidade: ing.unidade, custoTotal: money(qty * ing.custoMedio), motivo, usuario: currentUser.nome, dataHora: new Date().toISOString() }, ...prev]);
-    logAuditEvent('Movimentação de estoque', motivo);
-  };
-
-  const addBatch = useCallback((batchData: Omit<ProductBatch, 'id'>) => {
-    const newBatch: ProductBatch = {
-      ...batchData,
-      id: uid('lot')
-    };
-    setBatches(prev => [newBatch, ...prev]);
-    logAuditEvent('Cadastro de lote e validade', `Cadastrou lote ${newBatch.loteNumero} (${newBatch.produtoOuIngredienteNome}) com validade para ${newBatch.dataValidade}`);
-  }, [logAuditEvent]);
-
-  const updateIngredient = useCallback((ing: Ingredient) => {
-    requirePermission(currentUser, 'modificarEstoque');
-    quantity(ing.estoqueAtual, true);
-    setIngredients(prev => prev.map(i => i.id === ing.id ? ing : i));
-  }, []);
-
-  // Purchases & Suppliers
-  const addSupplier = useCallback((supplierData: Omit<Supplier, 'id' | 'totalComprado'>) => {
-    const newSup: Supplier = {
-      ...supplierData,
-      id: uid('sup'),
-      totalComprado: 0
-    };
-    setSuppliers(prev => [...prev, newSup]);
-    logAuditEvent('Cadastro de fornecedor', `Cadastrou fornecedor "${newSup.empresa}" (${newSup.cnpj})`);
-  }, [logAuditEvent]);
-
-  const addPurchaseOrder = useCallback((poData: Omit<PurchaseOrder, 'id'>) => {
-    const newPO: PurchaseOrder = {
-      ...poData,
-      id: uid('po')
-    };
-    setPurchaseOrders(prev => [newPO, ...prev]);
-    logAuditEvent('Ordem de compra criada', `Gerou pedido de compra ${newPO.codigo} para ${newPO.fornecedorNome} no valor de R$ ${newPO.valorTotal.toFixed(2)}`, undefined, newPO.valorTotal);
-  }, [logAuditEvent]);
-
-  const receivePurchaseOrder = useCallback((poId: string) => {
-    setPurchaseOrders(prev => prev.map(po => {
-      if (po.id === poId && po.status !== 'recebido') {
-        // Automatically credit inventory items
-        po.itens.forEach(item => {
-          setIngredients(ingPrev => ingPrev.map(ing => {
-            if (ing.id === item.ingredienteId) {
-              return {
-                ...ing,
-                estoqueAtual: ing.estoqueAtual + item.quantidade,
-                ultimoPrecoCompra: item.precoUnitario
-              };
-            }
-            return ing;
-          }));
-        });
-        logAuditEvent('Recebimento de compra', `Recebeu itens da ordem de compra ${po.codigo} com sucesso`);
-        return {
-          ...po,
-          status: 'recebido',
-          dataRecebimento: new Date().toISOString().split('T')[0]
-        };
-      }
-      return po;
-    }));
-  }, [logAuditEvent]);
 
   // Delivery & Couriers
   const assignCourierToOrder = useCallback((orderId: string, courierName: string) => {
@@ -1234,8 +912,7 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       : o
     ));
     setCouriers(prev => prev.map(c => c.nome === courierName ? { ...c, status: 'em_rota' } : c));
-    logAuditEvent('Entregador despachado', `Atribuiu entregador ${courierName} ao pedido #${order.numero}`);
-  }, [orders, couriers, logAuditEvent]);
+  }, [orders, couriers, setOrders, setCouriers]);
 
   const completeDeliveryOrder = useCallback((orderId: string) => {
     const order = store.state.orders.find(o => o.id === orderId);
@@ -1248,68 +925,11 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         : c
       ));
     }
-    logAuditEvent('Entrega concluída', `Registrou a entrega do pedido #${order.numero}${order.entregadorNome ? ` com ${order.entregadorNome}` : ''}`);
-  }, [orders, logAuditEvent]);
+  }, [orders, setOrders, setCouriers]);
 
   const updateCourierStatus = useCallback((courierId: string, status: Courier['status']) => {
     setCouriers(prev => prev.map(c => c.id === courierId ? { ...c, status } : c));
-  }, []);
-
-  // Customers
-  const saveCustomer = useCallback((cust: Customer) => {
-    setCustomers(prev => {
-      const exists = prev.some(c => c.id === cust.id);
-      if (exists) {
-        return prev.map(c => c.id === cust.id ? cust : c);
-      }
-      return [cust, ...prev];
-    });
-  }, []);
-
-  const deleteCustomer = useCallback((id: string) => {
-    setCustomers(prev => prev.filter(c => c.id !== id));
-    logAuditEvent('Cliente excluído', `Removeu o cliente ID ${id} da base`);
-  }, [logAuditEvent]);
-
-  // Staff & Permissions
-  const updateStaffPermissions = useCallback((userId: string, permissions: StaffUser['permissoes']) => {
-    setStaffList(prev => prev.map(u => u.id === userId ? { ...u, permissoes: permissions } : u));
-    logAuditEvent('Alteração de permissões', `Atualizou matriz de permissões do funcionário ${userId}`);
-  }, [logAuditEvent]);
-
-  const addStaffMember = useCallback((user: StaffUser) => {
-    setStaffList(prev => [...prev, user]);
-    logAuditEvent('Novo funcionário cadastrado', `Cadastrou ${user.nome} como ${user.cargo}`);
-  }, [logAuditEvent]);
-
-  const deleteStaffMember = useCallback((id: string) => {
-    setStaffList(prev => prev.filter(u => u.id !== id));
-    logAuditEvent('Funcionário excluído', `Removeu funcionário ID ${id}`);
-  }, [logAuditEvent]);
-
-  // Financial
-  const addFinancialEntry = useCallback((entryData: Omit<FinancialEntry, 'id'>) => {
-    const newEntry: FinancialEntry = {
-      ...entryData,
-      id: uid('fin')
-    };
-    setFinancialEntries(prev => [newEntry, ...prev]);
-    logAuditEvent('Lançamento financeiro', `${newEntry.tipo.toUpperCase()}: ${newEntry.descricao} - R$ ${newEntry.valor.toFixed(2)}`, undefined, newEntry.valor);
-  }, [logAuditEvent]);
-
-  const settleFinancialEntry = useCallback((id: string) => {
-    setFinancialEntries(prev => prev.map(f => {
-      if (f.id === id) {
-        return {
-          ...f,
-          status: 'pago',
-          dataPagamento: new Date().toISOString().split('T')[0]
-        };
-      }
-      return f;
-    }));
-    logAuditEvent('Baixa financeira', `Liquidou lançamento ID ${id}`);
-  }, [logAuditEvent]);
+  }, [setCouriers]);
 
   // Printers
   const triggerTestPrint = useCallback((printerId: string) => {
@@ -1328,7 +948,7 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     };
     setPrintQueue(prev => [job, ...prev]);
     if (soundEnabled) sounds.print();
-  }, [printers, soundEnabled]);
+  }, [printers, soundEnabled, setPrintQueue]);
 
   const reprintJob = useCallback((jobId: string) => {
     setPrintQueue(prev => prev.map(j => {
@@ -1338,7 +958,7 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       return j;
     }));
     if (soundEnabled) sounds.print();
-  }, [soundEnabled]);
+  }, [soundEnabled, setPrintQueue]);
 
   const togglePrinterStatus = useCallback((printerId: string) => {
     setPrinters(prev => prev.map(p => {
@@ -1348,7 +968,7 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       }
       return p;
     }));
-  }, []);
+  }, [setPrinters]);
 
   const savePrinter = useCallback((printer: PrinterDevice) => {
     setPrinters(prev => {
@@ -1356,53 +976,11 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       if (exists) return prev.map(p => p.id === printer.id ? printer : p);
       return [...prev, printer];
     });
-    logAuditEvent('Impressora configurada', `Salvou impressora ${printer.nome} (${printer.tipo})`);
-  }, [logAuditEvent]);
+  }, [setPrinters]);
 
   const deletePrinter = useCallback((printerId: string) => {
     setPrinters(prev => prev.filter(p => p.id !== printerId));
-    logAuditEvent('Impressora excluída', `Removeu impressora ID ${printerId}`);
-  }, [logAuditEvent]);
-
-  // Settings & SaaS Configuration
-  const updateSettings = useCallback((newSettings: Partial<RestaurantSettings>) => {
-    setSettings(prev => {
-      const updated = {
-        ...prev,
-        ...newSettings,
-        saas: {
-          ...prev.saas,
-          ...(newSettings.saas || {})
-        }
-      };
-      return updated;
-    });
-    logAuditEvent('Configurações salvas', `Atualizou parâmetros operacionais da loja e SaaS`);
-  }, [logAuditEvent]);
-
-  const resetSettingsToDefaults = useCallback(() => {
-    setSettings(INITIAL_SETTINGS);
-    setPaymentOptions(INITIAL_MANUAL_PAYMENTS);
-    logAuditEvent('Configurações restauradas', 'Restaurou dados e formas de pagamento para padrão de fábrica');
-  }, [logAuditEvent]);
-
-  const updatePaymentOptions = useCallback((options: ManualPaymentOption[]) => {
-    setPaymentOptions(options);
-    logAuditEvent('Formas de pagamento atualizadas', `Atualizou tabela de meios manuais (${options.length} opções)`);
-  }, [logAuditEvent]);
-
-  const togglePaymentOption = useCallback((id: PaymentMethodId) => {
-    setPaymentOptions(prev => prev.map(p => p.id === id ? { ...p, ativo: !p.ativo } : p));
-  }, []);
-
-  const addPaymentOption = useCallback((option: ManualPaymentOption) => {
-    setPaymentOptions(prev => {
-      const exists = prev.some(p => p.id === option.id);
-      if (exists) return prev.map(p => p.id === option.id ? option : p);
-      return [...prev, option];
-    });
-    logAuditEvent('Nova forma de pagamento', `Adicionou forma de pagamento manual: ${option.nome}`);
-  }, [logAuditEvent]);
+  }, [setPrinters]);
 
   const guardActions = <T extends object,>(api: T): T => Object.fromEntries(Object.entries(api).map(([key, value]) => [key, typeof value === 'function' ? (...args: unknown[]) => {
     try { return store.transaction(() => value(...args)); }
@@ -1415,11 +993,6 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         activeModule,
         setActiveModule,
         currentUser,
-        setCurrentUser,
-        staffList,
-        updateStaffPermissions,
-        addStaffMember,
-        deleteStaffMember,
 
         health,
         refreshHealth,
@@ -1487,31 +1060,10 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         closeCashRegister,
         addCashMovement,
 
-        ingredients,
-        stockMovements,
-        batches,
-        addStockMovement,
-        addBatch,
-        updateIngredient,
-
-        suppliers,
-        purchaseOrders,
-        addSupplier,
-        addPurchaseOrder,
-        receivePurchaseOrder,
-
         couriers,
         assignCourierToOrder,
         completeDeliveryOrder,
         updateCourierStatus,
-
-        customers,
-        saveCustomer,
-        deleteCustomer,
-
-        financialEntries,
-        addFinancialEntry,
-        settleFinancialEntry,
 
         printers,
         routingRules,
@@ -1521,16 +1073,6 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         togglePrinterStatus,
         savePrinter,
         deletePrinter,
-
-        settings,
-        updateSettings,
-        resetSettingsToDefaults,
-        updatePaymentOptions,
-        togglePaymentOption,
-        addPaymentOption,
-
-        auditLogs,
-        logAuditEvent,
 
         soundEnabled,
         setSoundEnabled

@@ -4,13 +4,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { RestaurantProvider, useRestaurant } from '../context/RestaurantContext';
 import { PaymentModal } from '../components/pdv/PaymentModal';
 import { POSView } from '../components/pdv/POSView';
-import { INITIAL_CASH_REGISTER, INITIAL_INGREDIENTS, INITIAL_TABLES } from '../data/seedData';
+import { INITIAL_CASH_REGISTER, INITIAL_TABLES } from '../data/seedData';
 import type { CartItem, MenuItem, Order, PaymentMethodId } from '../types';
 
 const key = 'murupi_restaurant_database_v1';
 const product: MenuItem = { id: 'qa-product', nome: 'Hambúrguer QA 🍔', preco: 20,
-  categoria: 'Bebidas', disponivel: true, estoqueControlado: true,
-  fichaTecnica: [{ ingredienteId: 'ing-1', nome: 'Unidade QA', quantidade: 1, unidade: 'un', custoEstimado: 1 }] };
+  categoria: 'Bebidas', disponivel: true };
 const item = (overrides: Partial<CartItem> = {}): CartItem => ({ cartItemId: 'qa-line',
   menuItemId: product.id, nome: product.nome, precoUnitario: 20, quantidade: 1,
   observacao: '', estacaoProducao: 'cozinha', ...overrides });
@@ -26,8 +25,7 @@ function attempt(fn: () => unknown) { try { fn(); } catch { /* rejeição é per
 beforeEach(() => {
   localStorage.clear();
   localStorage.setItem(key, JSON.stringify({ staffResetApplied: true, operationalDemoResetApplied: true,
-    menu: [product], orders: [], alerts: [], auditLogs: [], printQueue: [],
-    ingredients: [{ ...INITIAL_INGREDIENTS[0], estoqueAtual: 1000, estoqueMinimo: 0 }],
+    menu: [product], orders: [], alerts: [], printQueue: [],
     tables: INITIAL_TABLES.map(t => ({ ...t, status: 'livre', valorAtual: 0, pedidoAtivoId: undefined })),
     cashRegister: { ...INITIAL_CASH_REGISTER, aberto: true, saldoInicial: 200, saldoAtualGaveta: 200, transacoes: [] } }));
 });
@@ -46,7 +44,6 @@ describe('venda e matematica', () => {
   it('PRO preço do carrinho preservado após alteração', () => { const { result } = boot(); const cart = item(); act(() => result.current.updateItemPrice(product.id, 25)); expect(sale(result, { itens: [cart] }).total).toBe(20); });
   it('PRO excluir produto preserva histórico', () => { const { result } = boot(); sale(result); act(() => result.current.deleteMenuItem(product.id)); expect(result.current.orders[0].itens[0].nome).toBe(product.nome); });
   it.each([-1, NaN, Infinity])('PRO preço inválido %s rejeitado', preco => { const { result } = boot(); act(() => attempt(() => result.current.updateItemPrice(product.id, preco))); expect(result.current.menu[0].preco).toBe(20); });
-  it('PER usuário sem permissão não exclui produto', () => { const { result } = boot(); act(() => result.current.setCurrentUser({ ...result.current.currentUser, cargo: 'Garçom', permissoes: { cancelarPedido: false, aplicarDesconto: false, reabrirCaixa: false, modificarEstoque: false, visualizarFinanceiro: false, reabrirConta: false, excluirProduto: false, fecharMesa: false, estornarPagamento: false } })); act(() => attempt(() => result.current.deleteMenuItem(product.id))); expect(result.current.menu).toHaveLength(1); });
   it('LAN adicionais pagos e gratuitos', () => { const { result } = boot(); expect(sale(result, { itens: [item({ quantidade: 2, adicionais: [{ grupoId: 'g', addonId: 'a', nome: 'Queijo', preco: 3 }, { grupoId: 'g', addonId: 'b', nome: 'Molho', preco: 0 }] })] }).total).toBe(46); });
   it('LAN remover item preserva valor de adicionais restantes', () => { const { result } = boot(); const o = sale(result, { itens: [item({ adicionais: [{ grupoId: 'g', addonId: 'a', nome: 'Queijo', preco: 3 }] }), item({ cartItemId: 'remove' })] }); act(() => result.current.cancelOrderItem(o.id, 'remove', 'QA')); expect(result.current.orders[0].total).toBe(23); });
   it('SEG observação longa com emojis preservada', () => { const { result } = boot(); const observacao = 'Sem cebola 🍔 <script>QA</script> '.repeat(500); expect(sale(result, { itens: [item({ observacao })] }).itens[0].observacao).toBe(observacao); });
@@ -74,16 +71,11 @@ describe('pagamento e caixa', () => {
   it('CAI reabrir caixa aberto não apaga movimentações', () => { const { result } = boot(); act(() => result.current.addCashMovement('suprimento', 50, 'QA')); act(() => attempt(() => result.current.openCashRegister(200))); expect(result.current.cashRegister.saldoAtualGaveta).toBe(250); });
 });
 
-describe('estoque mesas cozinha recuperacao e estresse', () => {
-  it('EST venda baixa ficha técnica', () => { const { result } = boot(); sale(result); expect(result.current.ingredients[0].estoqueAtual).toBe(999); });
-  it('EST cancelamento antes de preparo devolve estoque', () => { const { result } = boot(); const o = sale(result); act(() => result.current.cancelOrder(o.id, 'Cliente desistiu antes do preparo')); expect(result.current.ingredients[0].estoqueAtual).toBe(1000); });
-  it('EST mesa primeira inclusão baixa apenas uma vez', () => { const { result } = boot(); act(() => result.current.addItemsToTable(1, [item()])); expect(result.current.ingredients[0].estoqueAtual).toBe(999); });
-  it('ATAQUE concorrencia última unidade aceita uma venda', () => { const { result } = boot(); act(() => result.current.updateIngredient({ ...result.current.ingredients[0], estoqueAtual: 1 })); act(() => { for (let i = 0; i < 2; i++) attempt(() => result.current.createOrder({ itens: [item()] })); }); expect(result.current.orders).toHaveLength(1); });
-  it('ATAQUE estoque entradas simultâneas não perdem atualização', () => { const { result } = boot(); act(() => { result.current.addStockMovement('ing-1', 'entrada', 1, 'QA A'); result.current.addStockMovement('ing-1', 'entrada', 1, 'QA B'); }); expect(result.current.ingredients[0].estoqueAtual).toBe(1002); });
+describe('mesas cozinha recuperacao e estresse', () => {
   it('MES reabrir mesa ocupada preserva valor', () => { const { result } = boot(); sale(result, { tipo: 'mesa', mesaNumero: 1 }); act(() => result.current.openTableWithOrder(1, 'Outro funcionário')); expect(result.current.tables.find(t => t.numero === 1)?.valorAtual).toBe(20); });
   it('MES transferência para mesa livre preserva pedido', () => { const { result } = boot(); const o = sale(result, { tipo: 'mesa', mesaNumero: 1 }); act(() => result.current.transferTable(1, 2)); expect(result.current.tables.find(t => t.numero === 2)?.pedidoAtivoId).toBe(o.id); expect(result.current.orders[0].mesaNumero).toBe(2); });
   it('COZ pedido cria fila de impressão', () => { const { result } = boot(); const o = sale(result); expect(result.current.printQueue.some(j => j.pedidoNumero === o.numero)).toBe(true); });
-  it('REC remontagem offline preserva venda caixa e estoque', () => { const first = boot(); const o = sale(first.result); act(() => first.result.current.addManualPaymentToOrder(o.id, 'dinheiro', 20, 20)); first.unmount(); const { result } = boot(); expect(result.current.orders[0].id).toBe(o.id); expect(result.current.orders[0].statusPagamento).toBe('pago'); expect(result.current.cashRegister.saldoAtualGaveta).toBe(220); expect(result.current.ingredients[0].estoqueAtual).toBe(999); });
+  it('REC remontagem offline preserva venda caixa', () => { const first = boot(); const o = sale(first.result); act(() => first.result.current.addManualPaymentToOrder(o.id, 'dinheiro', 20, 20)); first.unmount(); const { result } = boot(); expect(result.current.orders[0].id).toBe(o.id); expect(result.current.orders[0].statusPagamento).toBe('pago'); expect(result.current.cashRegister.saldoAtualGaveta).toBe(220); });
   it('CHAOS estresse 500 pedidos no mesmo lote têm IDs e números únicos', () => { const { result } = boot(); act(() => { for (let i = 0; i < 500; i++) result.current.createOrder({ itens: [item()] }); }); expect(result.current.orders).toHaveLength(500); expect(new Set(result.current.orders.map(o => o.id)).size).toBe(500); expect(new Set(result.current.orders.map(o => o.numero)).size).toBe(500); });
   it('DIA jornada sintética reconcilia caixa após estorno e sangria', () => { const { result } = boot(); const a = sale(result); act(() => result.current.addManualPaymentToOrder(a.id, 'dinheiro', 20, 50)); const b = sale(result); act(() => result.current.addManualPaymentToOrder(b.id, 'pix', 20)); const c = sale(result); act(() => result.current.addManualPaymentToOrder(c.id, 'dinheiro', 20, 20)); act(() => result.current.reverseOrderPayment(c.id, result.current.orders[0].pagamentos[0].id, 'QA')); act(() => result.current.cancelOrder(c.id, 'QA')); act(() => result.current.addCashMovement('sangria', 10, 'QA')); act(() => result.current.closeCashRegister()); expect(result.current.cashRegister.saldoAtualGaveta).toBe(210); expect(result.current.orders.filter(o => o.statusPagamento === 'pago').reduce((s, o) => s + o.total, 0)).toBe(40); });
 });
@@ -109,4 +101,3 @@ describe('interface pagamento', () => {
   it('UI dinheiro insuficiente desabilita confirmação', () => { const view = render(<PaymentModal isOpen total={100} onClose={vi.fn()} onConfirm={vi.fn()} onReceiptTrigger={vi.fn()} />); fireEvent.change(view.container.querySelector('#cash-amount-input')!, { target: { value: '50' } }); expect(view.container.querySelector('#payment-confirm-only-btn')).toBeDisabled(); });
   it('CHAOS UI duplo clique 10 confirmações dispara uma operação', () => { const confirm = vi.fn(() => ({} as Order)); const view = render(<PaymentModal isOpen total={100} onClose={vi.fn()} onConfirm={confirm} onReceiptTrigger={vi.fn()} />); const button = view.container.querySelector('#payment-confirm-only-btn')!; act(() => { for (let i = 0; i < 10; i++) fireEvent.click(button); }); expect(confirm).toHaveBeenCalledTimes(1); });
 });
-

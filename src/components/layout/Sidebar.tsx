@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { useRestaurant } from '../../context/RestaurantContext';
 import { AppModule } from '../../types';
 import { 
@@ -9,51 +9,31 @@ import {
   DollarSign, 
   ChefHat, 
   BookMarked, 
-  Boxes, 
-  ShoppingCart, 
-  Truck, 
   Bike, 
-  Users2, 
-  UserCheck, 
-  PiggyBank, 
-  BarChart3, 
   Printer, 
-  Settings, 
-  ShieldAlert, 
   ChevronLeft, 
   ChevronRight,
-  LogOut,
   ShoppingBag
 } from 'lucide-react';
 
 interface SidebarProps {
   collapsed: boolean;
   setCollapsed: (collapsed: boolean) => void;
-  onLogout: () => void;
 }
 
-export const Sidebar: React.FC<SidebarProps> = ({ collapsed, setCollapsed, onLogout }) => {
+export const Sidebar: React.FC<SidebarProps> = ({ collapsed, setCollapsed }) => {
   const { 
     activeModule, 
     setActiveModule, 
     orders, 
     tables, 
-    ingredients, 
-    stockMovements,
     currentUser,
   } = useRestaurant();
-
-  const [showUserMenu, setShowUserMenu] = useState(false);
 
   // Computed badges
   const pendingOrdersCount = orders.filter(o => o.status === 'novo' || o.status === 'confirmado').length;
   const occupiedTablesCount = tables.filter(t => t.status === 'ocupada' || t.status === 'conta').length;
   const kdsCount = orders.filter(o => o.status === 'novo' || o.status === 'em_preparacao').length;
-  // O alerta de estoque só aparece depois que houver uma movimentação registrada;
-  // assim o menu não transforma o estoque demonstrativo inicial em um alerta falso.
-  const lowStockCount = stockMovements.length > 0
-    ? ingredients.filter(i => i.estoqueAtual <= i.estoqueMinimo).length
-    : 0;
 
   interface NavSection {
     title: string;
@@ -81,24 +61,10 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed, setCollapsed, onLog
       ]
     },
     {
-      title: 'PRODUTOS & ESTOQUE',
+      title: 'GERENCIAMENTO',
       items: [
         { id: 'cardapio', label: 'Cardápio & Fichas', icon: BookMarked },
-        { id: 'estoque', label: 'Estoque & Validades', icon: Boxes, badge: lowStockCount, badgeColor: 'bg-amber-600 text-white' },
-        { id: 'compras', label: 'Compras & Cotações', icon: ShoppingCart },
-        { id: 'fornecedores', label: 'Fornecedores', icon: Truck },
-      ]
-    },
-    {
-      title: 'GESTÃO & SAAS',
-      items: [
-        { id: 'clientes', label: 'Clientes (CRM)', icon: Users2 },
-        { id: 'funcionarios', label: 'Funcionários & Cargos', icon: UserCheck },
-        { id: 'financeiro', label: 'Financeiro Gerencial', icon: PiggyBank },
-        { id: 'relatorios', label: 'Relatórios & BI', icon: BarChart3 },
         { id: 'impressoras', label: 'Impressoras & Fila', icon: Printer },
-        { id: 'auditoria', label: 'Auditoria de Ações', icon: ShieldAlert },
-        { id: 'configuracoes', label: 'Configurações', icon: Settings },
       ]
     }
   ];
@@ -193,12 +159,11 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed, setCollapsed, onLog
         ))}
       </div>
 
-      {/* Operator profile footer & Switcher */}
+      {/* Operator profile footer */}
       <div className="p-3 border-t border-stone-800 relative bg-stone-950/40">
-        <button
+        <div
           id="user-profile-menu-trigger"
-          onClick={() => setShowUserMenu(!showUserMenu)}
-          className="w-full flex items-center gap-2.5 p-1.5 rounded-lg hover:bg-stone-800 transition-colors text-left"
+          className="w-full flex items-center gap-2.5 p-1.5 rounded-lg hover:bg-stone-800 transition-colors"
         >
           <div className="w-8 h-8 rounded-full bg-stone-800 border border-stone-700 flex items-center justify-center text-amber-400 font-bold text-xs shrink-0">
             {currentUser.nome.charAt(0)}
@@ -209,27 +174,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed, setCollapsed, onLog
               <div className="text-[10px] text-amber-400 font-medium truncate">{currentUser.cargo}</div>
             </div>
           )}
-        </button>
-
-        {/* Sessão atual */}
-        {showUserMenu && (
-          <div className="absolute bottom-16 left-3 w-56 bg-stone-900 border border-stone-700 rounded-xl shadow-2xl p-2 z-50 animate-in fade-in zoom-in-95">
-            <div className="px-2 py-1.5 text-[11px] font-bold text-stone-400 border-b border-stone-800 mb-1 flex items-center justify-between">
-              <span>Sessão autenticada</span>
-            </div>
-            <p className="px-2 py-2 text-[11px] leading-4 text-stone-400">
-              Para trocar de operador, encerre esta sessão e entre com outro usuário.
-            </p>
-            <button
-              id="logout-btn"
-              onClick={() => { setShowUserMenu(false); onLogout(); }}
-              className="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-xs font-bold text-rose-300 hover:bg-rose-950/60 transition-colors"
-            >
-              <LogOut className="w-3.5 h-3.5" />
-              Sair do sistema
-            </button>
-          </div>
-        )}
+        </div>
       </div>
     </aside>
   );

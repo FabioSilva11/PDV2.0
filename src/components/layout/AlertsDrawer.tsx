@@ -6,8 +6,6 @@ import {
   AlertCircle, 
   CheckCheck, 
   ArrowRight, 
-  Boxes, 
-  CalendarClock, 
   Printer, 
   DollarSign
 } from 'lucide-react';
@@ -27,10 +25,6 @@ export const AlertsDrawer: React.FC = () => {
 
   const getIcon = (tipo: string) => {
     switch (tipo) {
-      case 'estoque_baixo':
-        return <Boxes className="w-4 h-4 text-amber-600" />;
-      case 'validade_proxima':
-        return <CalendarClock className="w-4 h-4 text-rose-600" />;
       case 'impressora_offline':
         return <Printer className="w-4 h-4 text-rose-600" />;
       case 'caixa_diferenca':

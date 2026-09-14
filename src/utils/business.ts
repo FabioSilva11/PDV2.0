@@ -1,4 +1,4 @@
-import type { CartItem, Order, StaffUser } from '../types';
+import type { CartItem, Order } from '../types';
 
 export const uid = (prefix: string) => `${prefix}-${crypto.randomUUID()}`;
 export const money = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
@@ -32,7 +32,4 @@ export function reconcile(order: Order): Order {
   const balance = money(Math.max(0, order.total - paid));
   return { ...order, valorTotalPago: paid, saldoRestante: balance,
     statusPagamento: balance === 0 ? 'pago' : paid > 0 ? 'pago_parcial' : 'pendente' };
-}
-export function requirePermission(user: StaffUser, permission: keyof StaffUser['permissoes']) {
-  if (user.status !== 'ativo' || !user.permissoes[permission]) throw new Error('Seu usuário não tem permissão para esta operação.');
 }

@@ -23,9 +23,7 @@ export const Topbar: React.FC = () => {
     setIsHealthModalOpen, 
     setActiveModule,
     soundEnabled, 
-    setSoundEnabled,
-    currentUser,
-    settings 
+    setSoundEnabled
   } = useRestaurant();
 
   const [currentTime, setCurrentTime] = useState<string>('');
@@ -56,7 +54,7 @@ export const Topbar: React.FC = () => {
       <div className="flex items-center gap-3">
         <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-lg bg-stone-100 border border-stone-200 text-xs font-semibold text-stone-700">
           <Building2 className="w-3.5 h-3.5 text-amber-600" />
-          <span>{settings?.nomeFantasia || 'Restaurante Murupi'} • {settings?.saas?.unidadeAtual || 'Matriz'}</span>
+          <span>Restaurante Murupi • Matriz</span>
           <span className="text-[10px] px-1.5 py-0.2 bg-emerald-100 text-emerald-700 rounded font-bold">Produção</span>
         </div>
 

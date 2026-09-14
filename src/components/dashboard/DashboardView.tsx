@@ -11,7 +11,6 @@ import {
   TrendingUp, 
   Flame, 
   CheckCircle2, 
-  Boxes, 
   Activity, 
   Bike, 
   Receipt,
@@ -25,7 +24,6 @@ export const DashboardView: React.FC = () => {
   const { 
     orders, 
     tables, 
-    ingredients, 
     health, 
     setActiveModule, 
     setIsHealthModalOpen, 
@@ -74,9 +72,6 @@ export const DashboardView: React.FC = () => {
     delivery: todayOrders.filter(o => o.canal.toLowerCase().includes('delivery') || o.tipo === 'delivery').reduce((a, b) => a + b.total, 0),
     whatsapp: todayOrders.filter(o => o.canal.toLowerCase().includes('whatsapp')).reduce((a, b) => a + b.total, 0),
   };
-
-  // Critical Stock
-  const criticalStock = ingredients.filter(i => i.estoqueAtual <= i.estoqueMinimo);
 
   // Best Sellers (computed from items)
   const productCountMap: Record<string, { nome: string; count: number; total: number }> = {};
@@ -332,19 +327,12 @@ export const DashboardView: React.FC = () => {
         </div>
       </div>
 
-      {/* Third Row: Top Sellers & Critical Stock */}
+      {/* Third Row: Top Sellers */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {/* Produtos Mais Vendidos */}
-        <div className="bg-white p-5 rounded-2xl border border-stone-200 shadow-2xs space-y-4">
+        <div className="bg-white p-5 rounded-2xl border border-stone-200 shadow-2xs space-y-4 md:col-span-2">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-bold text-stone-900">Produtos Mais Vendidos</h3>
-            <button 
-              onClick={() => setActiveModule('relatorios')}
-              className="text-xs font-bold text-amber-700 hover:text-amber-800 flex items-center gap-1"
-            >
-              <span>Relatório Completo</span>
-              <ArrowRight className="w-3 h-3" />
-            </button>
           </div>
 
           <div className="divide-y divide-stone-100">
@@ -367,47 +355,6 @@ export const DashboardView: React.FC = () => {
               </div>
             ))}
           </div>
-        </div>
-
-        {/* Estoque Crítico / Atenção */}
-        <div className="bg-white p-5 rounded-2xl border border-stone-200 shadow-2xs space-y-4">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-bold text-stone-900 flex items-center gap-2">
-              <Boxes className="w-4 h-4 text-amber-600" />
-              Ingredientes em Estoque Crítico
-            </h3>
-            <button 
-              onClick={() => setActiveModule('compras')}
-              className="text-xs font-bold text-amber-700 hover:text-amber-800 flex items-center gap-1"
-            >
-              <span>Gerar Pedido de Compra</span>
-              <ArrowRight className="w-3 h-3" />
-            </button>
-          </div>
-
-          {criticalStock.length === 0 ? (
-            <div className="p-8 text-center text-stone-400 text-xs">
-              Todos os ingredientes estão acima do nível mínimo de segurança.
-            </div>
-          ) : (
-            <div className="divide-y divide-stone-100">
-              {criticalStock.map((ing) => (
-                <div key={ing.id} className="py-2.5 flex items-center justify-between">
-                  <div>
-                    <div className="text-xs font-bold text-stone-800">{ing.nome}</div>
-                    <div className="text-[11px] text-stone-500">
-                      Mínimo exigido: {ing.estoqueMinimo} {ing.unidade}
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-rose-100 text-rose-800 border border-rose-200">
-                      {ing.estoqueAtual.toFixed(1)} {ing.unidade}
-                    </span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
         </div>
       </div>
     </div>
