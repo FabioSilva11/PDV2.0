@@ -14,11 +14,11 @@ import {
   Users, 
   Receipt,
   Printer,
-  RotateCcw
+  Pencil
 } from 'lucide-react';
 
 export const KDSView: React.FC = () => {
-  const { orders, updateOrderStatus, cancelOrder, setSelectedReceiptOrder } = useRestaurant();
+  const { orders, updateOrderStatus, setSelectedReceiptOrder, setSelectedOrderForModal } = useRestaurant();
   const [now, setNow] = useState<number>(Date.now());
 
   // Update timer every 10 seconds
@@ -160,6 +160,16 @@ export const KDSView: React.FC = () => {
             title="Ver / Imprimir Comanda"
           >
             <Receipt className="w-4 h-4" />
+          </button>
+
+          <button
+            type="button"
+            id={`kds-edit-btn-${order.id}`}
+            onClick={() => setSelectedOrderForModal(order)}
+            className="p-2 text-stone-400 hover:text-stone-200 hover:bg-stone-800 rounded-xl transition-colors"
+            title="Editar Pedido (corrigir itens, quantidades, observações ou erros)"
+          >
+            <Pencil className="w-4 h-4" />
           </button>
 
           {nextStatus && (

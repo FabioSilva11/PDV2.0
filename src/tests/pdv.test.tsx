@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { RestaurantProvider, useRestaurant } from '../context/RestaurantContext';
 import { PaymentModal } from '../components/pdv/PaymentModal';
 import { POSView } from '../components/pdv/POSView';
+import { KDSView } from '../components/kitchen/KDSView';
 import { INITIAL_CASH_REGISTER, INITIAL_TABLES } from '../data/seedData';
 import type { CartItem, MenuItem, Order, PaymentMethodId } from '../types';
 
@@ -97,6 +98,24 @@ describe('interface pagamento', () => {
     const view = render(<RestaurantProvider><POSView /></RestaurantProvider>);
     fireEvent.change(view.container.querySelector('#pos-search-input')!, { target: { value: query } });
     expect(view.container.querySelector('#product-card-qa-product')).not.toBeNull();
+  });
+  it('EDIT KDS abre editor de pedido pelo lápis (pendente, em preparo e pronto)', () => {
+    let api!: ReturnType<typeof useRestaurant>;
+    const Screen = () => { api = useRestaurant(); return <KDSView />; };
+    const view = render(<RestaurantProvider><Screen /></RestaurantProvider>);
+    let pendente!: Order;
+    let preparando!: Order;
+    let pronto!: Order;
+    act(() => {
+      pendente = api.createOrder({ itens: [item()], status: 'pendente' });
+      preparando = api.createOrder({ itens: [item()], status: 'preparando' });
+      pronto = api.createOrder({ itens: [item()], status: 'pronto' });
+    });
+    expect(view.container.querySelector(`#kds-edit-btn-${pendente.id}`)).not.toBeNull();
+    expect(view.container.querySelector(`#kds-edit-btn-${preparando.id}`)).not.toBeNull();
+    expect(view.container.querySelector(`#kds-edit-btn-${pronto.id}`)).not.toBeNull();
+    fireEvent.click(view.container.querySelector(`#kds-edit-btn-${preparando.id}`)!);
+    expect(api.selectedOrderForModal?.id).toBe(preparando.id);
   });
   it('UI dinheiro insuficiente desabilita confirmação', () => { const view = render(<PaymentModal isOpen total={100} onClose={vi.fn()} onConfirm={vi.fn()} onReceiptTrigger={vi.fn()} />); fireEvent.change(view.container.querySelector('#cash-amount-input')!, { target: { value: '50' } }); expect(view.container.querySelector('#payment-confirm-only-btn')).toBeDisabled(); });
   it('CHAOS UI duplo clique 10 confirmações dispara uma operação', () => { const confirm = vi.fn(() => ({} as Order)); const view = render(<PaymentModal isOpen total={100} onClose={vi.fn()} onConfirm={confirm} onReceiptTrigger={vi.fn()} />); const button = view.container.querySelector('#payment-confirm-only-btn')!; act(() => { for (let i = 0; i < 10; i++) fireEvent.click(button); }); expect(confirm).toHaveBeenCalledTimes(1); });
