@@ -1,0 +1,67 @@
+import { getApp, getApps, initializeApp } from 'firebase/app';
+import { get, getDatabase, ref, set } from 'firebase/database';
+
+export interface RemoteDatabaseSnapshot {
+  [key: string]: unknown;
+}
+
+const firebaseConfig = {
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  databaseURL: import.meta.env.VITE_FIREBASE_DATABASE_URL,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID,
+  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID
+};
+
+const hasFirebaseConfig = Object.values(firebaseConfig).every(Boolean);
+export const firebaseDatabaseEnabled = hasFirebaseConfig;
+
+const firebaseApp = hasFirebaseConfig
+  ? (getApps().length > 0 ? getApp() : initializeApp(firebaseConfig))
+  : null;
+const remoteDatabase = firebaseApp ? getDatabase(firebaseApp) : null;
+const databasePath = 'restaurants/murupi/database';
+
+let writeQueue: Promise<void> = Promise.resolve();
+
+const removeUndefinedValues = (value: unknown): unknown => {
+  if (Array.isArray(value)) {
+    return value.map(removeUndefinedValues);
+  }
+
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value).filter(([, entry]) => entry !== undefined).map(([key, entry]) => [key, removeUndefinedValues(entry)])
+    );
+  }
+
+  return value;
+};
+
+export async function loadRemoteDatabase<T>(): Promise<T | undefined> {
+  if (!remoteDatabase) return undefined;
+
+  try {
+    const snapshot = await get(ref(remoteDatabase, databasePath));
+    return snapshot.exists() ? snapshot.val() as T : undefined;
+  } catch (error) {
+    console.warn('[Firebase] Não foi possível carregar o banco remoto. Usando o cache local.', error);
+    return undefined;
+  }
+}
+
+export function saveRemoteDatabase(snapshot: object): Promise<void> {
+  if (!remoteDatabase) return Promise.resolve();
+
+  // Serializa gravações para evitar que atualizações rápidas terminem fora de ordem.
+    writeQueue = writeQueue
+      .catch(() => undefined)
+      .then(() => set(ref(remoteDatabase, databasePath), removeUndefinedValues(snapshot) as object));
+
+  return writeQueue.catch(error => {
+    console.warn('[Firebase] Não foi possível sincronizar o banco remoto.', error);
+  });
+}

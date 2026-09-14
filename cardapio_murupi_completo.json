@@ -1,0 +1,405 @@
+{
+  "restaurante": {
+    "nome": "Murupi Restaurante",
+    "tipo_documento": "cardápio",
+    "observacoes": [
+      "Dados extraídos das duas imagens enviadas.",
+      "Os preços de sobremesas, sucos e bebidas não aparecem visíveis nas fotos."
+    ]
+  },
+  "categorias": [
+    {
+      "nome": "Pratos principais",
+      "itens": [
+        {
+          "nome": "Carne de Sol",
+          "preco": 23.0,
+          "preco_formatado": "R$ 23,00",
+          "acompanhamentos": [
+            "arroz branco",
+            "macarrão",
+            "farofa",
+            "maionese",
+            "salada crua",
+            "batata frita"
+          ]
+        },
+        {
+          "nome": "Isca de Carne",
+          "preco": 20.0,
+          "preco_formatado": "R$ 20,00",
+          "acompanhamentos": [
+            "arroz branco",
+            "macarrão",
+            "farofa",
+            "maionese",
+            "salada crua",
+            "batata frita"
+          ]
+        },
+        {
+          "nome": "Isca de Frango",
+          "preco": 16.0,
+          "preco_formatado": "R$ 16,00",
+          "acompanhamentos": [
+            "arroz branco",
+            "macarrão",
+            "farofa",
+            "maionese",
+            "salada crua",
+            "batata frita"
+          ]
+        },
+        {
+          "nome": "Isca Mista",
+          "preco": 20.0,
+          "preco_formatado": "R$ 20,00",
+          "acompanhamentos": [
+            "arroz branco",
+            "macarrão",
+            "farofa",
+            "maionese",
+            "salada crua",
+            "batata frita"
+          ]
+        },
+        {
+          "nome": "Strogonoff Carne",
+          "preco": 20.0,
+          "preco_formatado": "R$ 20,00",
+          "acompanhamentos": [
+            "arroz branco",
+            "macarrão",
+            "farofa",
+            "maionese",
+            "salada crua",
+            "batata frita"
+          ]
+        },
+        {
+          "nome": "Strogonoff Frango",
+          "preco": 18.0,
+          "preco_formatado": "R$ 18,00",
+          "acompanhamentos": [
+            "arroz branco",
+            "macarrão",
+            "farofa",
+            "maionese",
+            "salada crua",
+            "batata palha"
+          ]
+        },
+        {
+          "nome": "Creme Camarão",
+          "preco": 20.0,
+          "preco_formatado": "R$ 20,00",
+          "acompanhamentos": [
+            "arroz",
+            "macarrão",
+            "maionese",
+            "farofa",
+            "batata frita"
+          ]
+        },
+        {
+          "nome": "Macarrão ao molho de Camarão",
+          "preco": 20.0,
+          "preco_formatado": "R$ 20,00",
+          "acompanhamentos": []
+        },
+        {
+          "nome": "Lasanha de Carne",
+          "preco": 20.0,
+          "preco_formatado": "R$ 20,00",
+          "acompanhamentos": [
+            "arroz branco",
+            "macarrão",
+            "farofa",
+            "maionese",
+            "salada crua",
+            "batata frita"
+          ]
+        },
+        {
+          "nome": "Lasanha de Frango",
+          "preco": 20.0,
+          "preco_formatado": "R$ 20,00",
+          "acompanhamentos": [
+            "arroz branco",
+            "macarrão",
+            "farofa",
+            "maionese",
+            "salada crua",
+            "batata frita"
+          ]
+        },
+        {
+          "nome": "Farofa de Jabá com Banana",
+          "preco": 20.0,
+          "preco_formatado": "R$ 20,00",
+          "acompanhamentos": [
+            "arroz",
+            "macarrão",
+            "maionese",
+            "salada"
+          ]
+        },
+        {
+          "nome": "Farofa de Carne seca",
+          "preco": 20.0,
+          "preco_formatado": "R$ 20,00",
+          "acompanhamentos": [
+            "arroz",
+            "macarrão",
+            "maionese",
+            "salada"
+          ]
+        },
+        {
+          "nome": "Picanha Suína",
+          "preco": 25.0,
+          "preco_formatado": "R$ 25,00",
+          "acompanhamentos": [
+            "arroz branco",
+            "feijão tropeiro",
+            "macarrão",
+            "farofa",
+            "maionese",
+            "salada crua",
+            "macaxeira frita"
+          ]
+        },
+        {
+          "nome": "Picanha Chapeada",
+          "preco": 30.0,
+          "preco_formatado": "R$ 30,00",
+          "acompanhamentos": [
+            "feijão tropeiro",
+            "macarrão",
+            "farofa",
+            "salada crua",
+            "maionese",
+            "fritas"
+          ]
+        },
+        {
+          "nome": "Frango Chapeado",
+          "preco": 16.0,
+          "preco_formatado": "R$ 16,00",
+          "acompanhamentos": [
+            "arroz branco",
+            "macarrão",
+            "farofa",
+            "maionese",
+            "salada crua",
+            "fritas"
+          ]
+        },
+        {
+          "nome": "Bife Acebolado",
+          "preco": 20.0,
+          "preco_formatado": "R$ 20,00",
+          "acompanhamentos": [
+            "arroz branco",
+            "macarrão",
+            "farofa",
+            "maionese",
+            "salada crua",
+            "fritas"
+          ]
+        },
+        {
+          "nome": "Bife a Cavalo",
+          "preco": 22.0,
+          "preco_formatado": "R$ 22,00",
+          "acompanhamentos": [
+            "arroz branco",
+            "macarrão",
+            "farofa",
+            "maionese",
+            "salada crua",
+            "fritas"
+          ]
+        },
+        {
+          "nome": "Costela desfiada",
+          "preco": 20.0,
+          "preco_formatado": "R$ 20,00",
+          "acompanhamentos": [
+            "arroz branco",
+            "macarrão",
+            "farofa",
+            "maionese",
+            "salada crua",
+            "fritas"
+          ]
+        },
+        {
+          "nome": "Fricassê",
+          "preco": 20.0,
+          "preco_formatado": "R$ 20,00",
+          "acompanhamentos": [
+            "arroz branco",
+            "macarrão",
+            "farofa",
+            "salada crua",
+            "maionese",
+            "batata palha"
+          ]
+        }
+      ]
+    },
+    {
+      "nome": "Entradas",
+      "itens": [
+        {
+          "nome": "Bolinho de Pirarucu",
+          "preco": 1.0,
+          "preco_formatado": "R$ 1,00"
+        },
+        {
+          "nome": "Dadinho de Tapioca",
+          "preco": 1.0,
+          "preco_formatado": "R$ 1,00"
+        },
+        {
+          "nome": "Bolinha de Queijo",
+          "preco": 1.0,
+          "preco_formatado": "R$ 1,00"
+        }
+      ]
+    },
+    {
+      "nome": "Porções Extras",
+      "itens": [
+        {
+          "nome": "Lasanha",
+          "preco": 15.0,
+          "preco_formatado": "R$ 15,00"
+        },
+        {
+          "nome": "Batata",
+          "preco": 5.0,
+          "preco_formatado": "R$ 5,00"
+        },
+        {
+          "nome": "Farofa de Carne Seca",
+          "preco": 15.0,
+          "preco_formatado": "R$ 15,00"
+        },
+        {
+          "nome": "Farofa de Jaba",
+          "preco": 15.0,
+          "preco_formatado": "R$ 15,00"
+        },
+        {
+          "nome": "Maionese",
+          "preco": 5.0,
+          "preco_formatado": "R$ 5,00"
+        },
+        {
+          "nome": "Feijão Tropeiro",
+          "preco": 5.0,
+          "preco_formatado": "R$ 5,00"
+        }
+      ]
+    },
+    {
+      "nome": "Sobremesas",
+      "itens": [
+        {
+          "nome": "Torta de Maracujá",
+          "preco": null,
+          "preco_formatado": null
+        },
+        {
+          "nome": "Torta de Cupuaçu",
+          "preco": null,
+          "preco_formatado": null
+        },
+        {
+          "nome": "Torta de Limão",
+          "preco": null,
+          "preco_formatado": null
+        },
+        {
+          "nome": "Torta de Sonho de Valsa",
+          "preco": null,
+          "preco_formatado": null
+        },
+        {
+          "nome": "Torta de Prestígio",
+          "preco": null,
+          "preco_formatado": null
+        },
+        {
+          "nome": "Torta de Chocolate",
+          "preco": null,
+          "preco_formatado": null
+        },
+        {
+          "nome": "Pudim",
+          "preco": null,
+          "preco_formatado": null
+        }
+      ]
+    },
+    {
+      "nome": "Sucos de Frutas",
+      "tamanho": "400 ml",
+      "itens": [
+        {
+          "nome": "Maracujá",
+          "preco": null,
+          "preco_formatado": null
+        },
+        {
+          "nome": "Goiaba",
+          "preco": null,
+          "preco_formatado": null
+        },
+        {
+          "nome": "Cupuaçu",
+          "preco": null,
+          "preco_formatado": null
+        },
+        {
+          "nome": "Graviola",
+          "preco": null,
+          "preco_formatado": null
+        }
+      ]
+    },
+    {
+      "nome": "Bebidas",
+      "itens": [
+        {
+          "nome": "Água",
+          "preco": null,
+          "preco_formatado": null
+        },
+        {
+          "nome": "Água com gás",
+          "preco": null,
+          "preco_formatado": null
+        },
+        {
+          "nome": "Água Tônica",
+          "preco": null,
+          "preco_formatado": null
+        },
+        {
+          "nome": "Refrigerante lata",
+          "preco": null,
+          "preco_formatado": null
+        },
+        {
+          "nome": "Refrigerante 1l",
+          "preco": null,
+          "preco_formatado": null
+        }
+      ]
+    }
+  ],
+  "mensagem_final": "O Restaurante Murupi agradece a preferência."
+}

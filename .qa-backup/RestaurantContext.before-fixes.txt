@@ -1,0 +1,1882 @@
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { 
+  AppModule,
+  MenuItem, 
+  CartItem, 
+  Order, 
+  Table, 
+  Comanda,
+  CashRegister, 
+  CashTransaction, 
+  OrderType, 
+  OrderStatus,
+  PaymentStatus,
+  PaymentMethodId,
+  PaymentRecord,
+  StaffUser,
+  Customer,
+  Supplier,
+  PurchaseOrder,
+  Courier,
+  Ingredient,
+  ProductBatch,
+  StockMovement,
+  PrinterDevice,
+  PrinterRoutingRule,
+  PrintJob,
+  AuditLog,
+  FinancialEntry,
+  SystemAlert,
+  ManualPaymentOption,
+  KitchenStation,
+  CategoryType,
+  RestaurantSettings
+} from '../types';
+import { 
+  INITIAL_MENU, 
+  INITIAL_INGREDIENTS, 
+  INITIAL_BATCHES, 
+  INITIAL_TABLES, 
+  INITIAL_ORDERS, 
+  INITIAL_COMANDAS, 
+  INITIAL_STAFF, 
+  INITIAL_CUSTOMERS, 
+  INITIAL_SUPPLIERS, 
+  INITIAL_PURCHASES, 
+  INITIAL_COURIERS, 
+  INITIAL_PRINTERS, 
+  INITIAL_PRINTER_ROUTING, 
+  INITIAL_AUDIT_LOGS, 
+  INITIAL_FINANCIAL, 
+  INITIAL_ALERTS, 
+  INITIAL_CASH_REGISTER, 
+  INITIAL_MANUAL_PAYMENTS,
+  INITIAL_SETTINGS
+} from '../data/seedData';
+import { sounds } from '../utils/audio';
+import {
+  firebaseDatabaseEnabled,
+  loadRemoteDatabase,
+  saveRemoteDatabase
+} from '../lib/firebaseDatabase';
+
+interface HealthStatus {
+  internet: 'online' | 'offline' | 'atencao';
+  servidor: 'online' | 'offline' | 'atencao';
+  sistema: 'online' | 'offline' | 'atencao';
+  impressoras: 'online' | 'offline' | 'atencao';
+  kds: 'online' | 'offline' | 'atencao';
+  ultimoBackup: string;
+  ultimaSincronizacao: string;
+}
+
+interface RestaurantContextType {
+  // Navigation & Active State
+  activeModule: AppModule;
+  setActiveModule: (mod: AppModule) => void;
+  currentUser: StaffUser;
+  setCurrentUser: (user: StaffUser) => void;
+  staffList: StaffUser[];
+  updateStaffPermissions: (userId: string, permissions: StaffUser['permissoes']) => void;
+  addStaffMember: (user: StaffUser) => void;
+  deleteStaffMember: (id: string) => void;
+
+  // System Health & Alerts
+  health: HealthStatus;
+  refreshHealth: () => void;
+  alerts: SystemAlert[];
+  dismissAlert: (id: string) => void;
+  clearAllAlerts: () => void;
+  addAlert: (alert: Omit<SystemAlert, 'id' | 'horario' | 'lida'>) => void;
+  isAlertsDrawerOpen: boolean;
+  setIsAlertsDrawerOpen: (open: boolean) => void;
+  isHealthModalOpen: boolean;
+  setIsHealthModalOpen: (open: boolean) => void;
+
+  // Menu Management
+  menu: MenuItem[];
+  categories: CategoryType[];
+  saveMenuItem: (item: MenuItem) => void;
+  deleteMenuItem: (id: string) => void;
+  toggleItemAvailability: (id: string) => void;
+  updateItemPrice: (id: string, newPrice: number) => void;
+  resetMenuToDefaults: () => void;
+
+  // Orders Management
+  orders: Order[];
+  createOrder: (orderData: Partial<Order>) => Order;
+  updateOrderStatus: (orderId: string, status: OrderStatus) => void;
+  cancelOrder: (orderId: string, motivo: string) => void;
+  cancelOrderItem: (orderId: string, cartItemId: string, motivo: string) => void;
+  applyOrderDiscount: (orderId: string, desconto: number, motivo: string) => void;
+  updateOrderItemProductionStatus: (orderId: string, cartItemId: string, status: 'pendente' | 'preparando' | 'pronto') => void;
+  setOrderPriority: (orderId: string, prioridade: 'normal' | 'urgente') => void;
+  reopenOrder: (orderId: string, motivo: string) => void;
+  selectedOrderForModal: Order | null;
+  setSelectedOrderForModal: (order: Order | null) => void;
+  selectedReceiptOrder: Order | null;
+  setSelectedReceiptOrder: (order: Order | null) => void;
+
+  // Manual Payments (No gateway, manual employee registration)
+  paymentOptions: ManualPaymentOption[];
+  addManualPaymentToOrder: (orderId: string, formaId: PaymentMethodId, valor: number, valorRecebido?: number, observacao?: string) => boolean;
+  reverseOrderPayment: (orderId: string, paymentId: string, motivo: string) => void;
+  markOrderAsPaidManually: (orderId: string) => void;
+  isPaymentModalOpen: boolean;
+  orderForPaymentModal: Order | null;
+  openPaymentModal: (order: Order) => void;
+  closePaymentModal: () => void;
+
+  // Tables Management
+  tables: Table[];
+  openTableWithOrder: (tableNumber: number, customerName?: string, pessoas?: number) => void;
+  addItemsToTable: (tableNumber: number, items: CartItem[]) => void;
+  requestTableBill: (tableNumber: number) => void;
+  settleTableAccount: (tableNumber: number) => void;
+  freeTableManually: (tableNumber: number) => void;
+  transferTable: (fromTable: number, toTable: number) => void;
+  joinTables: (sourceTable: number, targetTable: number) => void;
+  updateTableLayout: (tableId: string, x: number, y: number, formato?: Table['formato'], setor?: Table['setor']) => void;
+  addNewTable: (table: Omit<Table, 'id' | 'valorAtual'>) => void;
+  configureTableCount: (count: number) => void;
+
+  // Comandas Management
+  comandas: Comanda[];
+  createComanda: (numero: number, clienteNome?: string, mesaNumero?: number, limite?: number) => void;
+  addItemsToComanda: (comandaId: string, items: CartItem[]) => void;
+  transferComandaItems: (fromComandaId: string, toComandaId: string, itemIds: string[]) => void;
+  closeComanda: (comandaId: string) => void;
+
+  // Cash Register (Manual Flow)
+  cashRegister: CashRegister;
+  openCashRegister: (initialAmount: number) => void;
+  closeCashRegister: (blindCloseData?: CashRegister['fechamentoCego']) => void;
+  addCashMovement: (tipo: 'suprimento' | 'sangria' | 'entrada_manual' | 'saida_manual', valor: number, motivo: string) => void;
+
+  // Inventory & Batch/Lots
+  ingredients: Ingredient[];
+  stockMovements: StockMovement[];
+  batches: ProductBatch[];
+  addStockMovement: (ingredienteId: string, tipo: StockMovement['tipo'], quantidade: number, motivo: string) => void;
+  addBatch: (batch: Omit<ProductBatch, 'id'>) => void;
+  updateIngredient: (ing: Ingredient) => void;
+
+  // Purchases & Suppliers
+  suppliers: Supplier[];
+  purchaseOrders: PurchaseOrder[];
+  addSupplier: (supplier: Omit<Supplier, 'id' | 'totalComprado'>) => void;
+  addPurchaseOrder: (po: Omit<PurchaseOrder, 'id'>) => void;
+  receivePurchaseOrder: (poId: string) => void;
+
+  // Delivery & Couriers
+  couriers: Courier[];
+  assignCourierToOrder: (orderId: string, courierName: string) => void;
+  completeDeliveryOrder: (orderId: string) => void;
+  updateCourierStatus: (courierId: string, status: Courier['status']) => void;
+
+  // Customers (CRM)
+  customers: Customer[];
+  saveCustomer: (customer: Customer) => void;
+  deleteCustomer: (id: string) => void;
+
+  // Financial (Managerial)
+  financialEntries: FinancialEntry[];
+  addFinancialEntry: (entry: Omit<FinancialEntry, 'id'>) => void;
+  settleFinancialEntry: (id: string) => void;
+
+  // Printers & Print Queue
+  printers: PrinterDevice[];
+  routingRules: PrinterRoutingRule[];
+  printQueue: PrintJob[];
+  triggerTestPrint: (printerId: string) => void;
+  reprintJob: (jobId: string) => void;
+  togglePrinterStatus: (printerId: string) => void;
+  savePrinter: (printer: PrinterDevice) => void;
+  deletePrinter: (printerId: string) => void;
+
+  // Settings & SaaS Configuration
+  settings: RestaurantSettings;
+  updateSettings: (newSettings: Partial<RestaurantSettings>) => void;
+  resetSettingsToDefaults: () => void;
+  updatePaymentOptions: (options: ManualPaymentOption[]) => void;
+  togglePaymentOption: (id: PaymentMethodId) => void;
+  addPaymentOption: (option: ManualPaymentOption) => void;
+
+  // Audit Logs
+  auditLogs: AuditLog[];
+  logAuditEvent: (acao: string, detalhes: string, pedidoNumero?: number, valorEnvolvido?: number) => void;
+
+  // Sound and UI Extras
+  soundEnabled: boolean;
+  setSoundEnabled: (enabled: boolean) => void;
+}
+
+const RestaurantContext = createContext<RestaurantContextType | null>(null);
+
+const DATABASE_STORAGE_KEY = 'murupi_restaurant_database_v1';
+const LEGACY_STORAGE_PREFIXES = ['rest_saas_v6_', 'rest_saas_v5_', 'rest_saas_v4_', 'rest_saas_v3_'];
+
+interface RestaurantDatabaseSnapshot {
+  staff?: StaffUser[];
+  staffResetApplied?: boolean;
+  operationalDemoResetApplied?: boolean;
+  alerts?: SystemAlert[];
+  menu?: MenuItem[];
+  orders?: Order[];
+  paymentOptions?: ManualPaymentOption[];
+  settings?: RestaurantSettings;
+  tables?: Table[];
+  comandas?: Comanda[];
+  cashRegister?: CashRegister;
+  ingredients?: Ingredient[];
+  stockMovements?: StockMovement[];
+  batches?: ProductBatch[];
+  suppliers?: Supplier[];
+  purchaseOrders?: PurchaseOrder[];
+  couriers?: Courier[];
+  customers?: Customer[];
+  financialEntries?: FinancialEntry[];
+  printers?: PrinterDevice[];
+  printQueue?: PrintJob[];
+  auditLogs?: AuditLog[];
+}
+
+const loadRestaurantDatabase = (): RestaurantDatabaseSnapshot => {
+  const parse = <T,>(raw: string | null): T | undefined => {
+    if (!raw) return undefined;
+    try {
+      return JSON.parse(raw) as T;
+    } catch {
+      return undefined;
+    }
+  };
+
+  const savedDatabase = parse<RestaurantDatabaseSnapshot>(localStorage.getItem(DATABASE_STORAGE_KEY));
+  if (savedDatabase) return savedDatabase;
+
+  // Migração única: importa o armazenamento antigo para o banco unificado.
+  const readLegacy = <T,>(name: string): T | undefined => {
+    for (const prefix of LEGACY_STORAGE_PREFIXES) {
+      const value = parse<T>(localStorage.getItem(prefix + name));
+      if (value !== undefined) return value;
+    }
+    return undefined;
+  };
+
+  return {
+    staff: readLegacy<StaffUser[]>('staff'),
+    alerts: readLegacy<SystemAlert[]>('alerts'),
+    menu: readLegacy<MenuItem[]>('menu'),
+    orders: readLegacy<Order[]>('orders'),
+    paymentOptions: readLegacy<ManualPaymentOption[]>('payment_options'),
+    settings: readLegacy<RestaurantSettings>('settings'),
+    tables: readLegacy<Table[]>('tables'),
+    comandas: readLegacy<Comanda[]>('comandas'),
+    cashRegister: readLegacy<CashRegister>('cash'),
+    ingredients: readLegacy<Ingredient[]>('ingredients'),
+    stockMovements: readLegacy<StockMovement[]>('stock_movements'),
+    batches: readLegacy<ProductBatch[]>('batches'),
+    suppliers: readLegacy<Supplier[]>('suppliers'),
+    purchaseOrders: readLegacy<PurchaseOrder[]>('purchases'),
+    couriers: readLegacy<Courier[]>('couriers'),
+    customers: readLegacy<Customer[]>('customers'),
+    financialEntries: readLegacy<FinancialEntry[]>('financial'),
+    printers: readLegacy<PrinterDevice[]>('printers'),
+    auditLogs: readLegacy<AuditLog[]>('audit')
+  };
+};
+
+const ensureDefaultAdmin = (staff: StaffUser[] | undefined): StaffUser[] => {
+  const defaultAdmin = INITIAL_STAFF[0];
+  if (!staff || staff.length === 0) return INITIAL_STAFF;
+
+  const adminIndex = staff.findIndex(user => user.usuario.toLowerCase() === 'admin');
+  if (adminIndex === -1) return [defaultAdmin, ...staff];
+
+  return staff.map((user, index) => index === adminIndex
+    ? { ...defaultAdmin, ...user, usuario: 'admin', senha: user.senha || 'admin1', cargo: 'Administrador', status: 'ativo' }
+    : user
+  );
+};
+
+const clearDemoTableOccupancy = (tables: Table[]): Table[] => tables.map(table => ({
+  ...table,
+  status: 'livre',
+  garcomResponsavel: undefined,
+  clienteNome: undefined,
+  abertaEm: undefined,
+  pedidoAtivoId: undefined,
+  comandasIds: [],
+  valorAtual: 0,
+  pessoasSentadas: undefined
+}));
+
+const asArray = <T,>(value: T[] | Record<string, T> | undefined, fallback: T[]): T[] => {
+  if (Array.isArray(value)) return value;
+  if (value && typeof value === 'object') return Object.values(value);
+  return fallback;
+};
+
+export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const [database] = useState<RestaurantDatabaseSnapshot>(loadRestaurantDatabase);
+  // Navigation & User
+  const [activeModule, setActiveModule] = useState<AppModule>('dashboard');
+  const [staffList, setStaffList] = useState<StaffUser[]>(() => {
+    // Limpeza única solicitada: inicia somente com o administrador padrão.
+    return database.staffResetApplied ? ensureDefaultAdmin(database.staff) : [INITIAL_STAFF[0]];
+  });
+  const [currentUser, setCurrentUser] = useState<StaffUser>(staffList[0] || INITIAL_STAFF[0]);
+
+  // Operational Health
+  const [health, setHealth] = useState<HealthStatus>({
+    internet: 'online',
+    servidor: 'online',
+    sistema: 'online',
+    impressoras: 'atencao',
+    kds: 'online',
+    ultimoBackup: 'Hoje às 11:30',
+    ultimaSincronizacao: 'Há poucos segundos'
+  });
+  const [isHealthModalOpen, setIsHealthModalOpen] = useState(false);
+
+  // Alerts
+  const [alerts, setAlerts] = useState<SystemAlert[]>(() => {
+    return database.operationalDemoResetApplied ? (database.alerts || []) : [];
+  });
+  const [isAlertsDrawerOpen, setIsAlertsDrawerOpen] = useState(false);
+
+  // Menu
+  const [menu, setMenu] = useState<MenuItem[]>(() => {
+    return database.menu || INITIAL_MENU;
+  });
+
+  // Orders
+  const [orders, setOrders] = useState<Order[]>(() => {
+    return database.operationalDemoResetApplied ? (database.orders || []) : [];
+  });
+  const [selectedOrderForModal, setSelectedOrderForModal] = useState<Order | null>(null);
+  const [selectedReceiptOrder, setSelectedReceiptOrder] = useState<Order | null>(null);
+
+  // Manual Payments
+  const [paymentOptions, setPaymentOptions] = useState<ManualPaymentOption[]>(() => {
+    return database.paymentOptions || INITIAL_MANUAL_PAYMENTS;
+  });
+  const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
+  const [orderForPaymentModal, setOrderForPaymentModal] = useState<Order | null>(null);
+
+  // Settings & SaaS Parameters
+  const [settings, setSettings] = useState<RestaurantSettings>(() => {
+    if (database.settings) {
+      return { ...INITIAL_SETTINGS, ...database.settings, saas: { ...INITIAL_SETTINGS.saas, ...database.settings.saas } };
+    }
+    return INITIAL_SETTINGS;
+  });
+
+  // Tables
+  const [tables, setTables] = useState<Table[]>(() => {
+    return database.operationalDemoResetApplied
+      ? (database.tables || clearDemoTableOccupancy(INITIAL_TABLES))
+      : clearDemoTableOccupancy(database.tables || INITIAL_TABLES);
+  });
+
+  // Comandas
+  const [comandas, setComandas] = useState<Comanda[]>(() => {
+    return database.operationalDemoResetApplied ? (database.comandas || []) : [];
+  });
+
+  // Cash Register
+  const [cashRegister, setCashRegister] = useState<CashRegister>(() => {
+    return database.cashRegister || INITIAL_CASH_REGISTER;
+  });
+
+  // Inventory & Lots
+  const [ingredients, setIngredients] = useState<Ingredient[]>(() => {
+    return database.ingredients || INITIAL_INGREDIENTS;
+  });
+  const [stockMovements, setStockMovements] = useState<StockMovement[]>(database.stockMovements || []);
+  const [batches, setBatches] = useState<ProductBatch[]>(() => {
+    return database.batches || INITIAL_BATCHES;
+  });
+
+  // Purchases & Suppliers
+  const [suppliers, setSuppliers] = useState<Supplier[]>(() => {
+    return database.suppliers || INITIAL_SUPPLIERS;
+  });
+  const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>(() => {
+    return database.purchaseOrders || INITIAL_PURCHASES;
+  });
+
+  // Couriers
+  const [couriers, setCouriers] = useState<Courier[]>(() => {
+    return database.couriers || INITIAL_COURIERS;
+  });
+
+  // Customers
+  const [customers, setCustomers] = useState<Customer[]>(() => {
+    return database.customers || INITIAL_CUSTOMERS;
+  });
+
+  // Financial
+  const [financialEntries, setFinancialEntries] = useState<FinancialEntry[]>(() => {
+    return database.financialEntries || INITIAL_FINANCIAL;
+  });
+
+  // Printers
+  const [printers, setPrinters] = useState<PrinterDevice[]>(() => {
+    return database.printers || INITIAL_PRINTERS;
+  });
+  const [routingRules] = useState<PrinterRoutingRule[]>(INITIAL_PRINTER_ROUTING);
+  const [printQueue, setPrintQueue] = useState<PrintJob[]>(() => database.printQueue || []);
+
+  // Audit Logs
+  const [auditLogs, setAuditLogs] = useState<AuditLog[]>(() => {
+    return database.auditLogs || INITIAL_AUDIT_LOGS;
+  });
+
+  // Sound
+  const [soundEnabled, setSoundEnabled] = useState(true);
+
+  // Firebase é a fonte remota principal. O estado local é exibido imediatamente
+  // como cache e substituído pelo documento remoto assim que a leitura termina.
+  const [firebaseSyncReady, setFirebaseSyncReady] = useState(!firebaseDatabaseEnabled);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const hydrateFromFirebase = async () => {
+      if (!firebaseDatabaseEnabled) {
+        setFirebaseSyncReady(true);
+        return;
+      }
+
+      const remote = await loadRemoteDatabase<RestaurantDatabaseSnapshot>();
+      if (cancelled) return;
+
+      if (remote) {
+        const remoteStaff = asArray(remote.staff, database.staff || [INITIAL_STAFF[0]]);
+        const hydratedStaff = remote.staffResetApplied
+          ? ensureDefaultAdmin(remoteStaff)
+          : [INITIAL_STAFF[0]];
+
+        setStaffList(hydratedStaff);
+        setCurrentUser(current => hydratedStaff.find(user => user.id === current.id) || hydratedStaff[0] || INITIAL_STAFF[0]);
+        setAlerts(remote.operationalDemoResetApplied ? asArray(remote.alerts, []) : []);
+        setMenu(asArray(remote.menu, database.menu || INITIAL_MENU));
+        setOrders(remote.operationalDemoResetApplied ? asArray(remote.orders, []) : []);
+        setPaymentOptions(asArray(remote.paymentOptions, database.paymentOptions || INITIAL_MANUAL_PAYMENTS));
+        setSettings({
+          ...INITIAL_SETTINGS,
+          ...(database.settings || {}),
+          ...(remote.settings || {}),
+          saas: {
+            ...INITIAL_SETTINGS.saas,
+            ...(database.settings?.saas || {}),
+            ...(remote.settings?.saas || {})
+          }
+        });
+        const remoteTables = asArray(remote.tables, database.tables || INITIAL_TABLES);
+        setTables(remote.operationalDemoResetApplied ? remoteTables : clearDemoTableOccupancy(remoteTables));
+        setComandas(remote.operationalDemoResetApplied ? asArray(remote.comandas, []) : []);
+        setCashRegister(remote.cashRegister || database.cashRegister || INITIAL_CASH_REGISTER);
+        setIngredients(asArray(remote.ingredients, database.ingredients || INITIAL_INGREDIENTS));
+        setStockMovements(asArray(remote.stockMovements, database.stockMovements || []));
+        setBatches(asArray(remote.batches, database.batches || INITIAL_BATCHES));
+        setSuppliers(asArray(remote.suppliers, database.suppliers || INITIAL_SUPPLIERS));
+        setPurchaseOrders(asArray(remote.purchaseOrders, database.purchaseOrders || INITIAL_PURCHASES));
+        setCouriers(asArray(remote.couriers, database.couriers || INITIAL_COURIERS));
+        setCustomers(asArray(remote.customers, database.customers || INITIAL_CUSTOMERS));
+        setFinancialEntries(asArray(remote.financialEntries, database.financialEntries || INITIAL_FINANCIAL));
+        setPrinters(asArray(remote.printers, database.printers || INITIAL_PRINTERS));
+        setPrintQueue(asArray(remote.printQueue, []));
+        setAuditLogs(asArray(remote.auditLogs, database.auditLogs || INITIAL_AUDIT_LOGS));
+      }
+
+      setFirebaseSyncReady(true);
+    };
+
+    void hydrateFromFirebase();
+    return () => {
+      cancelled = true;
+    };
+  }, [database]);
+
+  // Cache local e documento remoto único: todos os módulos persistem no mesmo snapshot.
+  useEffect(() => {
+    if (!firebaseSyncReady) return;
+
+    const databaseSnapshot: RestaurantDatabaseSnapshot = {
+      staff: staffList,
+      staffResetApplied: true,
+      operationalDemoResetApplied: true,
+      alerts,
+      menu,
+      orders,
+      paymentOptions,
+      settings,
+      tables,
+      comandas,
+      cashRegister,
+      ingredients,
+      stockMovements,
+      batches,
+      suppliers,
+      purchaseOrders,
+      couriers,
+      customers,
+      financialEntries,
+      printers,
+      printQueue,
+      auditLogs
+    };
+
+    localStorage.setItem(DATABASE_STORAGE_KEY, JSON.stringify(databaseSnapshot));
+    void saveRemoteDatabase(databaseSnapshot);
+
+    // Remove as chaves antigas depois da migração para não manter cópias divergentes.
+    for (const prefix of LEGACY_STORAGE_PREFIXES) {
+      for (const name of ['staff', 'alerts', 'menu', 'orders', 'payment_options', 'settings', 'tables', 'comandas', 'cash', 'ingredients', 'stock_movements', 'batches', 'suppliers', 'purchases', 'couriers', 'customers', 'financial', 'printers', 'audit']) {
+        localStorage.removeItem(prefix + name);
+      }
+    }
+  }, [firebaseSyncReady, staffList, alerts, menu, orders, paymentOptions, settings, tables, comandas, cashRegister, ingredients, stockMovements, batches, suppliers, purchaseOrders, couriers, customers, financialEntries, printers, printQueue, auditLogs]);
+
+  // Helper to log audit events
+  const logAuditEvent = useCallback((acao: string, detalhes: string, pedidoNumero?: number, valorEnvolvido?: number) => {
+    const now = new Date();
+    const dateStr = now.toLocaleDateString('pt-BR') + ' ' + now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const newLog: AuditLog = {
+      id: 'aud-' + Date.now() + '-' + Math.random().toString(36).substring(2, 5),
+      usuario: `${currentUser.nome} (${currentUser.cargo})`,
+      cargo: currentUser.cargo,
+      acao,
+      dataHora: dateStr,
+      dispositivo: 'Terminal Web (AI Studio SaaS)',
+      detalhes,
+      pedidoNumero,
+      valorEnvolvido
+    };
+    setAuditLogs(prev => [newLog, ...prev]);
+  }, [currentUser]);
+
+  // Refresh Health
+  const refreshHealth = useCallback(() => {
+    const hasOfflinePrinters = printers.some(p => p.status === 'offline');
+    setHealth({
+      internet: 'online',
+      servidor: 'online',
+      sistema: 'online',
+      impressoras: hasOfflinePrinters ? 'atencao' : 'online',
+      kds: 'online',
+      ultimoBackup: 'Hoje às ' + new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+      ultimaSincronizacao: 'Sincronizado agora'
+    });
+    if (soundEnabled) sounds.click();
+  }, [printers, soundEnabled]);
+
+  // Alerts
+  const dismissAlert = useCallback((id: string) => {
+    setAlerts(prev => prev.filter(a => a.id !== id));
+  }, []);
+
+  const clearAllAlerts = useCallback(() => {
+    setAlerts([]);
+  }, []);
+
+  const addAlert = useCallback((alert: Omit<SystemAlert, 'id' | 'horario' | 'lida'>) => {
+    const newAlert: SystemAlert = {
+      ...alert,
+      id: 'alt-' + Date.now(),
+      horario: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+      lida: false
+    };
+    setAlerts(prev => [newAlert, ...prev]);
+  }, []);
+
+  // Menu Management
+  const categories: CategoryType[] = [
+    'Hambúrgueres',
+    'Pizzas',
+    'Pratos principais',
+    'Entradas',
+    'Porções Extras',
+    'Bebidas',
+    'Sucos de Frutas',
+    'Sobremesas',
+    'Combos'
+  ];
+
+  const saveMenuItem = useCallback((item: MenuItem) => {
+    setMenu(prev => {
+      const exists = prev.some(m => m.id === item.id);
+      if (exists) {
+        logAuditEvent('Alteração de produto no cardápio', `Atualizou "${item.nome}" - Preço: R$ ${item.preco.toFixed(2)}`);
+        return prev.map(m => m.id === item.id ? item : m);
+      } else {
+        logAuditEvent('Cadastro de produto no cardápio', `Cadastrou novo item "${item.nome}" - R$ ${item.preco.toFixed(2)}`);
+        return [item, ...prev];
+      }
+    });
+  }, [logAuditEvent]);
+
+  const deleteMenuItem = useCallback((id: string) => {
+    const item = menu.find(m => m.id === id);
+    if (item) {
+      logAuditEvent('Exclusão de produto', `Removeu produto "${item.nome}" do cardápio`);
+      setMenu(prev => prev.filter(m => m.id !== id));
+    }
+  }, [menu, logAuditEvent]);
+
+  const toggleItemAvailability = useCallback((id: string) => {
+    setMenu(prev => prev.map(m => {
+      if (m.id === id) {
+        const novoStatus = !m.disponivel;
+        logAuditEvent('Disponibilidade de produto', `Marcou "${m.nome}" como ${novoStatus ? 'Disponível' : 'Esgotado'}`);
+        return { ...m, disponivel: novoStatus };
+      }
+      return m;
+    }));
+  }, [logAuditEvent]);
+
+  const updateItemPrice = useCallback((id: string, newPrice: number) => {
+    setMenu(prev => prev.map(m => {
+      if (m.id === id) {
+        logAuditEvent('Mudança de preço no cardápio', `Alterou preço de "${m.nome}" de R$ ${m.preco.toFixed(2)} para R$ ${newPrice.toFixed(2)}`, undefined, newPrice);
+        return { ...m, preco: newPrice };
+      }
+      return m;
+    }));
+  }, [logAuditEvent]);
+
+  const resetMenuToDefaults = useCallback(() => {
+    setMenu(INITIAL_MENU);
+    logAuditEvent('Restauração de cardápio', 'Restaurou cardápio para os padrões originais do sistema');
+  }, [logAuditEvent]);
+
+  // Inventory Technical Sheet Deduction
+  const deductRecipeIngredients = useCallback((cartItems: CartItem[]) => {
+    cartItems.forEach(cartItem => {
+      const menuItem = menu.find(m => m.id === cartItem.menuItemId);
+      if (menuItem?.fichaTecnica && menuItem.estoqueControlado) {
+        menuItem.fichaTecnica.forEach(ingUsage => {
+          const totalQty = ingUsage.quantidade * cartItem.quantidade;
+          setIngredients(prev => prev.map(ing => {
+            if (ing.id === ingUsage.ingredienteId) {
+              const novoEstoque = Math.max(0, ing.estoqueAtual - totalQty);
+              if (novoEstoque <= ing.estoqueMinimo) {
+                addAlert({
+                  tipo: 'estoque_baixo',
+                  titulo: `Estoque Baixo: ${ing.nome}`,
+                  mensagem: `Restam apenas ${novoEstoque.toFixed(1)} ${ing.unidade}. Estoque mínimo é ${ing.estoqueMinimo}.`,
+                  gravidade: 'alta',
+                  linkAcao: 'estoque'
+                });
+              }
+              return { ...ing, estoqueAtual: novoEstoque };
+            }
+            return ing;
+          }));
+        });
+      }
+    });
+  }, [menu, addAlert]);
+
+  // Orders Management
+  const createOrder = useCallback((orderData: Partial<Order>): Order => {
+    const nextNum = orders.length > 0 ? Math.max(...orders.map(o => o.numero)) + 1 : 1001;
+    const items = orderData.itens || [];
+    const subtotal = items.reduce((acc, it) => {
+      const addonsTotal = (it.adicionais || []).reduce((a, ad) => a + ad.preco, 0);
+      return acc + (it.precoUnitario + addonsTotal) * it.quantidade;
+    }, 0);
+    const desconto = orderData.desconto || 0;
+    const taxaServico = orderData.taxaServico || 0;
+    const taxaEntrega = orderData.taxaEntrega || 0;
+    const total = Math.max(0, subtotal - desconto + taxaServico + taxaEntrega);
+
+    const newOrder: Order = {
+      id: 'ord-' + Date.now(),
+      numero: nextNum,
+      tipo: orderData.tipo || 'balcao',
+      mesaNumero: orderData.mesaNumero,
+      comandaNumero: orderData.comandaNumero,
+      clienteId: orderData.clienteId,
+      nomeCliente: orderData.nomeCliente,
+      telefoneCliente: orderData.telefoneCliente,
+      enderecoEntrega: orderData.enderecoEntrega,
+      garcomNome: orderData.garcomNome || currentUser.nome,
+      canal: orderData.canal || (orderData.tipo === 'delivery' ? 'Delivery' : orderData.tipo === 'mesa' ? 'Salão' : 'Balcão'),
+      criadoEm: new Date().toISOString(),
+      itens: items,
+      subtotal,
+      desconto,
+      descontoMotivo: orderData.descontoMotivo,
+      taxaServico,
+      taxaEntrega,
+      total,
+      status: 'novo',
+      statusPagamento: 'pendente',
+      pagamentos: [],
+      valorTotalPago: 0,
+      saldoRestante: total,
+      observacoesGerais: orderData.observacoesGerais,
+      prioridade: orderData.prioridade || 'normal'
+    };
+
+    setOrders(prev => [newOrder, ...prev]);
+
+    // Update table if table order
+    if (newOrder.tipo === 'mesa' && newOrder.mesaNumero) {
+      setTables(prev => prev.map(t => {
+        if (t.numero === newOrder.mesaNumero) {
+          return {
+            ...t,
+            status: 'ocupada',
+            pedidoAtivoId: newOrder.id,
+            clienteNome: newOrder.nomeCliente || t.clienteNome,
+            valorAtual: t.valorAtual + newOrder.total,
+            abertaEm: t.abertaEm || newOrder.criadoEm
+          };
+        }
+        return t;
+      }));
+    }
+
+    // Deduct ingredients automatically
+    deductRecipeIngredients(items);
+
+    // Create printer dispatch jobs based on routing rules
+    items.forEach(it => {
+      const route = routingRules.find(r => r.estacao === it.estacaoProducao);
+      if (route) {
+        const prn = printers.find(p => p.id === route.impressoraId);
+        if (prn) {
+          const job: PrintJob = {
+            id: 'job-' + Date.now() + '-' + Math.random().toString(36).substring(2, 4),
+            impressoraId: prn.id,
+            impressoraNome: prn.nome,
+            pedidoNumero: newOrder.numero,
+            titulo: `PEDIDO #${newOrder.numero} - ${it.estacaoProducao.toUpperCase()}`,
+            conteudoTexto: `${it.quantidade}x ${it.nome} ${it.observacao ? `[OBS: ${it.observacao}]` : ''}`,
+            status: prn.status === 'online' ? 'sucesso' : 'pendente',
+            dataHora: new Date().toLocaleTimeString('pt-BR'),
+            tentativas: 1
+          };
+          setPrintQueue(q => [job, ...q]);
+        }
+      }
+    });
+
+    logAuditEvent('Criação de pedido', `Criou pedido #${newOrder.numero} (${newOrder.tipo.toUpperCase()}) com ${items.length} itens no valor de R$ ${total.toFixed(2)}`, newOrder.numero, total);
+
+    if (soundEnabled) sounds.notification();
+    return newOrder;
+  }, [orders, currentUser, deductRecipeIngredients, routingRules, printers, logAuditEvent, soundEnabled]);
+
+  const updateOrderStatus = useCallback((orderId: string, status: OrderStatus) => {
+    setOrders(prev => prev.map(o => {
+      if (o.id === orderId) {
+        logAuditEvent('Alteração de status de pedido', `Alterou status do pedido #${o.numero} para "${status.toUpperCase()}"`, o.numero);
+        return { ...o, status };
+      }
+      return o;
+    }));
+  }, [logAuditEvent]);
+
+  const cancelOrder = useCallback((orderId: string, motivo: string) => {
+    setOrders(prev => prev.map(o => {
+      if (o.id === orderId) {
+        logAuditEvent('Cancelamento de pedido', `Cancelou pedido #${o.numero}. Motivo: "${motivo}"`, o.numero, o.total);
+        // If table, free table or reduce amount
+        if (o.tipo === 'mesa' && o.mesaNumero) {
+          setTables(tPrev => tPrev.map(t => {
+            if (t.numero === o.mesaNumero && t.pedidoAtivoId === o.id) {
+              return { ...t, status: 'livre', pedidoAtivoId: undefined, valorAtual: 0, clienteNome: undefined };
+            }
+            return t;
+          }));
+        }
+        return {
+          ...o,
+          status: 'cancelado',
+          cancelamento: {
+            motivo,
+            usuario: currentUser.nome,
+            dataHora: new Date().toLocaleString('pt-BR')
+          }
+        };
+      }
+      return o;
+    }));
+  }, [currentUser, logAuditEvent]);
+
+  const cancelOrderItem = useCallback((orderId: string, cartItemId: string, motivo: string) => {
+    setOrders(prev => prev.map(o => {
+      if (o.id === orderId) {
+        const itemToRemove = o.itens.find(i => i.cartItemId === cartItemId);
+        if (!itemToRemove) return o;
+
+        const newItens = o.itens.filter(i => i.cartItemId !== cartItemId);
+        const subtotal = newItens.reduce((acc, it) => acc + it.precoUnitario * it.quantidade, 0);
+        const total = Math.max(0, subtotal - o.desconto + o.taxaServico + o.taxaEntrega);
+
+        logAuditEvent('Item cancelado no pedido', `Cancelou item "${itemToRemove.nome}" (${itemToRemove.quantidade}x) do pedido #${o.numero}. Motivo: "${motivo}"`, o.numero, itemToRemove.precoUnitario * itemToRemove.quantidade);
+
+        return {
+          ...o,
+          itens: newItens,
+          subtotal,
+          total,
+          saldoRestante: Math.max(0, total - o.valorTotalPago)
+        };
+      }
+      return o;
+    }));
+  }, [logAuditEvent]);
+
+  const addItemsToOrder = useCallback((orderId: string, newItems: CartItem[]) => {
+    if (newItems.length === 0) return;
+
+    const targetOrder = orders.find(o => o.id === orderId);
+    const numeroPedido = targetOrder?.numero;
+
+    setOrders(prev => prev.map(o => {
+      if (o.id !== orderId || o.status === 'cancelado') return o;
+
+      const cartItems: CartItem[] = newItems.map(it => ({
+        ...it,
+        cartItemId: 'item-' + Date.now() + '-' + Math.random().toString(36).substring(2, 5),
+        statusProducao: 'pendente'
+      }));
+
+      const itens = [...o.itens, ...cartItems];
+      const subtotal = itens.reduce((acc, it) => {
+        const addonsTotal = (it.adicionais || []).reduce((a, ad) => a + ad.preco, 0);
+        return acc + (it.precoUnitario + addonsTotal) * it.quantidade;
+      }, 0);
+      const total = Math.max(0, subtotal - o.desconto + o.taxaServico + o.taxaEntrega);
+
+      logAuditEvent(
+        'Adição de itens ao pedido',
+        `Adicionou ${cartItems.length} item(ns) ao pedido #${o.numero}: ${cartItems.map(i => `${i.quantidade}x ${i.nome}`).join(', ')}`,
+        o.numero,
+        cartItems.reduce((acc, i) => acc + (i.precoUnitario + (i.adicionais || []).reduce((a, ad) => a + ad.preco, 0)) * i.quantidade, 0)
+      );
+
+      return {
+        ...o,
+        itens,
+        subtotal,
+        total,
+        saldoRestante: Math.max(0, total - o.valorTotalPago),
+        status: ['pronto', 'entregue', 'finalizado', 'saiu_entrega'].includes(o.status) ? 'em_preparacao' : o.status
+      };
+    }));
+
+    // Baixa de estoque e despacho para a cozinha dos novos itens
+    deductRecipeIngredients(newItems);
+
+    newItems.forEach(it => {
+      const route = routingRules.find(r => r.estacao === it.estacaoProducao);
+      if (route) {
+        const prn = printers.find(p => p.id === route.impressoraId);
+        if (prn) {
+          const job: PrintJob = {
+            id: 'job-' + Date.now() + '-' + Math.random().toString(36).substring(2, 4),
+            impressoraId: prn.id,
+            impressoraNome: prn.nome,
+            pedidoNumero: numeroPedido,
+            titulo: `ADICIONAL PEDIDO #${numeroPedido} - ${it.estacaoProducao.toUpperCase()}`,
+            conteudoTexto: `${it.quantidade}x ${it.nome} ${it.observacao ? `[OBS: ${it.observacao}]` : ''}`,
+            status: prn.status === 'online' ? 'sucesso' : 'pendente',
+            dataHora: new Date().toLocaleTimeString('pt-BR'),
+            tentativas: 1
+          };
+          setPrintQueue(q => [job, ...q]);
+        }
+      }
+    });
+  }, [orders, routingRules, printers, deductRecipeIngredients, logAuditEvent]);
+
+  const applyOrderDiscount = useCallback((orderId: string, desconto: number, motivo: string) => {
+    setOrders(prev => prev.map(o => {
+      if (o.id === orderId) {
+        const newTotal = Math.max(0, o.subtotal - desconto + o.taxaServico + o.taxaEntrega);
+        logAuditEvent('Aplicação de desconto manual', `Aplicou desconto de R$ ${desconto.toFixed(2)} no pedido #${o.numero}. Motivo: "${motivo}"`, o.numero, desconto);
+        return {
+          ...o,
+          desconto,
+          descontoMotivo: motivo,
+          total: newTotal,
+          saldoRestante: Math.max(0, newTotal - o.valorTotalPago)
+        };
+      }
+      return o;
+    }));
+  }, [logAuditEvent]);
+
+  const updateOrderItemProductionStatus = useCallback((orderId: string, cartItemId: string, status: 'pendente' | 'preparando' | 'pronto') => {
+    setOrders(prev => prev.map(o => {
+      if (o.id === orderId) {
+        const updatedItens = o.itens.map(it => it.cartItemId === cartItemId ? { ...it, statusProducao: status } : it);
+        const allDone = updatedItens.every(it => it.statusProducao === 'pronto');
+        return {
+          ...o,
+          itens: updatedItens,
+          status: allDone ? 'pronto' : o.status === 'novo' ? 'em_preparacao' : o.status
+        };
+      }
+      return o;
+    }));
+  }, []);
+
+  const setOrderPriority = useCallback((orderId: string, prioridade: 'normal' | 'urgente') => {
+    setOrders(prev => prev.map(o => o.id === orderId ? { ...o, prioridade } : o));
+  }, []);
+
+  const reopenOrder = useCallback((orderId: string, motivo: string) => {
+    setOrders(prev => prev.map(o => {
+      if (o.id === orderId) {
+        logAuditEvent('Reabertura de conta/pedido', `Reabriu pedido #${o.numero} que estava finalizado. Motivo: "${motivo}"`, o.numero);
+        return {
+          ...o,
+          status: 'confirmado',
+          statusPagamento: 'pendente'
+        };
+      }
+      return o;
+    }));
+  }, [logAuditEvent]);
+
+  // ====================================================
+  // MANUAL PAYMENT SYSTEM (Strictly manual, no gateways)
+  // ====================================================
+  const addManualPaymentToOrder = useCallback((
+    orderId: string, 
+    formaId: PaymentMethodId, 
+    valor: number, 
+    valorRecebido?: number, 
+    observacao?: string
+  ): boolean => {
+    const opt = paymentOptions.find(p => p.id === formaId);
+    const formaNome = opt ? opt.nome : formaId.toUpperCase();
+    const troco = (formaId === 'dinheiro' && valorRecebido && valorRecebido > valor) ? valorRecebido - valor : 0;
+
+    const newPaymentRecord: PaymentRecord = {
+      id: 'pay-' + Date.now() + '-' + Math.random().toString(36).substring(2, 5),
+      formaId,
+      formaNome,
+      valor,
+      valorRecebido,
+      troco,
+      observacao,
+      dataHora: new Date().toLocaleString('pt-BR'),
+      registradoPor: currentUser.nome
+    };
+
+    let orderUpdated: Order | null = null;
+
+    setOrders(prev => prev.map(o => {
+      if (o.id === orderId) {
+        const novosPagamentos = [...o.pagamentos, newPaymentRecord];
+        const novoTotalPago = novosPagamentos.filter(p => !p.estornado).reduce((acc, p) => acc + p.valor, 0);
+        const novoSaldo = Math.max(0, o.total - novoTotalPago);
+        const novoStatusPagamento: PaymentStatus = novoSaldo === 0 ? 'pago' : novoTotalPago > 0 ? 'pago_parcial' : 'pendente';
+        const novoStatusPedido: OrderStatus = novoSaldo === 0 && o.status !== 'cancelado' ? 'finalizado' : o.status;
+
+        orderUpdated = {
+          ...o,
+          pagamentos: novosPagamentos,
+          valorTotalPago: novoTotalPago,
+          saldoRestante: novoSaldo,
+          statusPagamento: novoStatusPagamento,
+          status: novoStatusPedido
+        };
+        return orderUpdated;
+      }
+      return o;
+    }));
+
+    // Register transaction in operational cash register
+    if (cashRegister.aberto) {
+      setCashRegister(prev => {
+        const isDinheiro = formaId === 'dinheiro';
+        const newSaldoGaveta = isDinheiro ? prev.saldoAtualGaveta + valor : prev.saldoAtualGaveta;
+        const tx: CashTransaction = {
+          id: 'tx-' + Date.now(),
+          tipo: 'venda_manual',
+          valor,
+          motivo: `Recebimento manual pedido #${orderUpdated?.numero || ''} (${formaNome})`,
+          formaPagamento: formaId,
+          horario: new Date().toISOString(),
+          pedidoId: orderId,
+          operador: currentUser.nome
+        };
+        return {
+          ...prev,
+          saldoAtualGaveta: newSaldoGaveta,
+          transacoes: [tx, ...prev.transacoes]
+        };
+      });
+    }
+
+    logAuditEvent(
+      'Registro manual de pagamento',
+      `Registrou pagamento manual de R$ ${valor.toFixed(2)} via [${formaNome}] no pedido #${orderUpdated?.numero || ''}. ${observacao ? `Obs: "${observacao}"` : ''}`,
+      orderUpdated?.numero,
+      valor
+    );
+
+    if (soundEnabled) sounds.cash();
+    return true;
+  }, [paymentOptions, currentUser, cashRegister, logAuditEvent, soundEnabled]);
+
+  const reverseOrderPayment = useCallback((orderId: string, paymentId: string, motivo: string) => {
+    setOrders(prev => prev.map(o => {
+      if (o.id === orderId) {
+        const paymentToReverse = o.pagamentos.find(p => p.id === paymentId);
+        if (!paymentToReverse) return o;
+
+        const updatedPagamentos = o.pagamentos.map(p => {
+          if (p.id === paymentId) {
+            return {
+              ...p,
+              estornado: true,
+              motivoEstorno: motivo,
+              estornadoPor: currentUser.nome,
+              estornadoEm: new Date().toLocaleString('pt-BR')
+            };
+          }
+          return p;
+        });
+
+        const novoTotalPago = updatedPagamentos.filter(p => !p.estornado).reduce((acc, p) => acc + p.valor, 0);
+        const novoSaldo = Math.max(0, o.total - novoTotalPago);
+        const novoStatusPagamento: PaymentStatus = novoSaldo === 0 ? 'pago' : novoTotalPago > 0 ? 'pago_parcial' : 'pendente';
+
+        logAuditEvent(
+          'Estorno de pagamento manual',
+          `Estornou pagamento de R$ ${paymentToReverse.valor.toFixed(2)} (${paymentToReverse.formaNome}) do pedido #${o.numero}. Motivo: "${motivo}"`,
+          o.numero,
+          paymentToReverse.valor
+        );
+
+        // Adjust physical cash drawer if was cash
+        if (paymentToReverse.formaId === 'dinheiro' && cashRegister.aberto) {
+          setCashRegister(cPrev => ({
+            ...cPrev,
+            saldoAtualGaveta: Math.max(0, cPrev.saldoAtualGaveta - paymentToReverse.valor),
+            transacoes: [
+              {
+                id: 'tx-rev-' + Date.now(),
+                tipo: 'saida_manual',
+                valor: paymentToReverse.valor,
+                motivo: `Estorno de recebimento manual pedido #${o.numero} (${motivo})`,
+                horario: new Date().toISOString(),
+                pedidoId: o.id,
+                operador: currentUser.nome
+              },
+              ...cPrev.transacoes
+            ]
+          }));
+        }
+
+        return {
+          ...o,
+          pagamentos: updatedPagamentos,
+          valorTotalPago: novoTotalPago,
+          saldoRestante: novoSaldo,
+          statusPagamento: novoStatusPagamento,
+          status: 'confirmado' // Reopen order if was finalized
+        };
+      }
+      return o;
+    }));
+  }, [currentUser, cashRegister, logAuditEvent]);
+
+  const markOrderAsPaidManually = useCallback((orderId: string) => {
+    setOrders(prev => prev.map(o => {
+      if (o.id === orderId) {
+        logAuditEvent('Marcar como pago diretamente', `Operador marcou pedido #${o.numero} como quitado integralmente`, o.numero, o.total);
+        return {
+          ...o,
+          statusPagamento: 'pago',
+          saldoRestante: 0,
+          valorTotalPago: o.total,
+          status: 'finalizado'
+        };
+      }
+      return o;
+    }));
+  }, [logAuditEvent]);
+
+  const openPaymentModal = useCallback((order: Order) => {
+    setOrderForPaymentModal(order);
+    setIsPaymentModalOpen(true);
+  }, []);
+
+  const closePaymentModal = useCallback(() => {
+    setIsPaymentModalOpen(false);
+    setOrderForPaymentModal(null);
+  }, []);
+
+  // Tables Management
+  const openTableWithOrder = useCallback((tableNumber: number, customerName?: string, pessoas: number = 2) => {
+    setTables(prev => prev.map(t => {
+      if (t.numero === tableNumber) {
+        return {
+          ...t,
+          status: 'ocupada',
+          clienteNome: customerName || 'Cliente Salão',
+          garcomResponsavel: currentUser.nome,
+          abertaEm: new Date().toISOString(),
+          pessoasSentadas: pessoas,
+          valorAtual: 0
+        };
+      }
+      return t;
+    }));
+    logAuditEvent('Abertura de mesa', `Abriu Mesa ${tableNumber} para ${pessoas} pessoas com cliente "${customerName || 'Cliente Salão'}"`);
+  }, [currentUser, logAuditEvent]);
+
+  const addItemsToTable = useCallback((tableNumber: number, items: CartItem[]) => {
+    const table = tables.find(t => t.numero === tableNumber);
+    if (!table) return;
+
+    if (table.pedidoAtivoId) {
+      // Add items to existing active order
+      setOrders(prev => prev.map(o => {
+        if (o.id === table.pedidoAtivoId) {
+          const updatedItens = [...o.itens, ...items];
+          const subtotal = updatedItens.reduce((acc, it) => acc + it.precoUnitario * it.quantidade, 0);
+          const total = Math.max(0, subtotal - o.desconto + o.taxaServico + o.taxaEntrega);
+          return {
+            ...o,
+            itens: updatedItens,
+            subtotal,
+            total,
+            saldoRestante: Math.max(0, total - o.valorTotalPago)
+          };
+        }
+        return o;
+      }));
+    } else {
+      // Create new order for this table
+      const newOrder = createOrder({
+        tipo: 'mesa',
+        mesaNumero: tableNumber,
+        nomeCliente: table.clienteNome,
+        itens: items,
+        garcomNome: table.garcomResponsavel || currentUser.nome
+      });
+
+      setTables(prev => prev.map(t => {
+        if (t.numero === tableNumber) {
+          return {
+            ...t,
+            status: 'ocupada',
+            pedidoAtivoId: newOrder.id,
+            valorAtual: newOrder.total
+          };
+        }
+        return t;
+      }));
+    }
+
+    deductRecipeIngredients(items);
+  }, [tables, createOrder, currentUser, deductRecipeIngredients]);
+
+  const requestTableBill = useCallback((tableNumber: number) => {
+    setTables(prev => prev.map(t => t.numero === tableNumber ? { ...t, status: 'conta' } : t));
+    logAuditEvent('Conta solicitada', `Garçom sinalizou pedido de conta na Mesa ${tableNumber}`);
+  }, [logAuditEvent]);
+
+  const settleTableAccount = useCallback((tableNumber: number) => {
+    setTables(prev => prev.map(t => {
+      if (t.numero === tableNumber) {
+        return {
+          ...t,
+          status: 'livre',
+          pedidoAtivoId: undefined,
+          clienteNome: undefined,
+          abertaEm: undefined,
+          valorAtual: 0,
+          pessoasSentadas: undefined
+        };
+      }
+      return t;
+    }));
+    logAuditEvent('Liberação de mesa', `Mesa ${tableNumber} quitada e liberada no salão`);
+  }, [logAuditEvent]);
+
+  const freeTableManually = useCallback((tableNumber: number) => {
+    setTables(prev => prev.map(t => {
+      if (t.numero === tableNumber) {
+        return {
+          ...t,
+          status: 'livre',
+          pedidoAtivoId: undefined,
+          clienteNome: undefined,
+          abertaEm: undefined,
+          valorAtual: 0,
+          pessoasSentadas: undefined
+        };
+      }
+      return t;
+    }));
+    logAuditEvent('Liberação manual de mesa', `Liberou Mesa ${tableNumber} manualmente`);
+  }, [logAuditEvent]);
+
+  const transferTable = useCallback((fromTable: number, toTable: number) => {
+    const origin = tables.find(t => t.numero === fromTable);
+    if (!origin || origin.status === 'livre') return;
+
+    setTables(prev => prev.map(t => {
+      if (t.numero === toTable) {
+        return {
+          ...t,
+          status: 'ocupada',
+          clienteNome: origin.clienteNome,
+          pedidoAtivoId: origin.pedidoAtivoId,
+          abertaEm: origin.abertaEm,
+          valorAtual: origin.valorAtual,
+          garcomResponsavel: origin.garcomResponsavel,
+          pessoasSentadas: origin.pessoasSentadas
+        };
+      }
+      if (t.numero === fromTable) {
+        return {
+          ...t,
+          status: 'livre',
+          clienteNome: undefined,
+          pedidoAtivoId: undefined,
+          abertaEm: undefined,
+          valorAtual: 0,
+          pessoasSentadas: undefined
+        };
+      }
+      return t;
+    }));
+
+    // Update order table reference
+    if (origin.pedidoAtivoId) {
+      setOrders(prev => prev.map(o => o.id === origin.pedidoAtivoId ? { ...o, mesaNumero: toTable } : o));
+    }
+
+    logAuditEvent('Transferência de mesa', `Transferiu comanda da Mesa ${fromTable} para a Mesa ${toTable}`);
+  }, [tables, logAuditEvent]);
+
+  const joinTables = useCallback((sourceTable: number, targetTable: number) => {
+    const src = tables.find(t => t.numero === sourceTable);
+    const tgt = tables.find(t => t.numero === targetTable);
+    if (!src || !tgt) return;
+
+    const combinedValue = src.valorAtual + tgt.valorAtual;
+    setTables(prev => prev.map(t => {
+      if (t.numero === targetTable) {
+        return { ...t, valorAtual: combinedValue, clienteNome: `${tgt.clienteNome || ''} + ${src.clienteNome || ''}` };
+      }
+      if (t.numero === sourceTable) {
+        return { ...t, status: 'livre', valorAtual: 0, clienteNome: undefined, pedidoAtivoId: undefined };
+      }
+      return t;
+    }));
+    logAuditEvent('Junção de mesas', `Juntou Mesa ${sourceTable} à Mesa ${targetTable}`);
+  }, [tables, logAuditEvent]);
+
+  const updateTableLayout = useCallback((tableId: string, x: number, y: number, formato?: Table['formato'], setor?: Table['setor']) => {
+    setTables(prev => prev.map(t => {
+      if (t.id === tableId) {
+        return {
+          ...t,
+          posX: x,
+          posY: y,
+          formato: formato || t.formato,
+          setor: setor || t.setor
+        };
+      }
+      return t;
+    }));
+  }, []);
+
+  const addNewTable = useCallback((tableData: Omit<Table, 'id' | 'valorAtual'>) => {
+    const newTable: Table = {
+      ...tableData,
+      id: 'tbl-' + Date.now(),
+      valorAtual: 0
+    };
+    setTables(prev => [...prev, newTable]);
+    logAuditEvent('Cadastro de mesa', `Cadastrou nova Mesa ${newTable.numero} no setor ${newTable.setor}`);
+  }, [logAuditEvent]);
+
+  const configureTableCount = useCallback((requestedCount: number) => {
+    const count = Math.max(1, Math.floor(Number(requestedCount) || 1));
+
+    setTables(prev => {
+      const sorted = [...prev].sort((a, b) => a.numero - b.numero);
+      const byNumber = new Map(sorted.map(table => [table.numero, table]));
+      const nextTables: Table[] = [];
+      const columns = 4;
+
+      for (let number = 1; number <= count; number += 1) {
+        const existing = byNumber.get(number);
+        if (existing) {
+          nextTables.push(existing);
+          continue;
+        }
+
+        const row = Math.floor((number - 1) / columns);
+        const column = (number - 1) % columns;
+        nextTables.push({
+          id: `tbl-${number}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          numero: number,
+          capacidade: 4,
+          status: 'livre',
+          valorAtual: 0,
+          posX: 30 + column * 120,
+          posY: 40 + row * 100,
+          formato: 'quadrada',
+          setor: row >= 3 ? 'Deck Externo' : row >= 1 ? 'Varanda' : 'Salão Principal'
+        });
+      }
+
+      // Nunca descarta uma mesa que ainda tenha operação aberta. Assim, reduzir
+      // a configuração não apaga uma conta ativa ou uma reserva existente.
+      const preservedOpenTables = sorted.filter(table =>
+        table.numero > count && table.status !== 'livre'
+      );
+
+      return [...nextTables, ...preservedOpenTables];
+    });
+
+    logAuditEvent('Configuração de mesas', `Configurou ${count} mesa${count === 1 ? '' : 's'} no estabelecimento`);
+  }, [logAuditEvent]);
+
+  // Comandas
+  const createComanda = useCallback((numero: number, clienteNome?: string, mesaNumero?: number, limite?: number) => {
+    const newCmd: Comanda = {
+      id: 'cmd-' + Date.now(),
+      numero,
+      clienteNome,
+      mesaNumero,
+      limiteConsumo: limite || 200.00,
+      abertaEm: new Date().toISOString(),
+      status: 'aberta',
+      garcomNome: currentUser.nome,
+      pagamentoStatus: 'pendente',
+      total: 0,
+      itens: []
+    };
+    setComandas(prev => [newCmd, ...prev]);
+    logAuditEvent('Abertura de comanda', `Abriu comanda #${numero} para ${clienteNome || 'Cliente Individual'}`);
+  }, [currentUser, logAuditEvent]);
+
+  const addItemsToComanda = useCallback((comandaId: string, items: CartItem[]) => {
+    setComandas(prev => prev.map(c => {
+      if (c.id === comandaId) {
+        const updatedItens = [...c.itens, ...items];
+        const newTotal = updatedItens.reduce((acc, it) => acc + it.precoUnitario * it.quantidade, 0);
+        return {
+          ...c,
+          itens: updatedItens,
+          total: newTotal
+        };
+      }
+      return c;
+    }));
+    deductRecipeIngredients(items);
+  }, [deductRecipeIngredients]);
+
+  const transferComandaItems = useCallback((fromComandaId: string, toComandaId: string, itemIds: string[]) => {
+    const fromCmd = comandas.find(c => c.id === fromComandaId);
+    if (!fromCmd) return;
+    const itemsToMove = fromCmd.itens.filter(i => itemIds.includes(i.cartItemId));
+
+    setComandas(prev => prev.map(c => {
+      if (c.id === fromComandaId) {
+        const remaining = c.itens.filter(i => !itemIds.includes(i.cartItemId));
+        const total = remaining.reduce((acc, it) => acc + it.precoUnitario * it.quantidade, 0);
+        return { ...c, itens: remaining, total };
+      }
+      if (c.id === toComandaId) {
+        const combined = [...c.itens, ...itemsToMove];
+        const total = combined.reduce((acc, it) => acc + it.precoUnitario * it.quantidade, 0);
+        return { ...c, itens: combined, total };
+      }
+      return c;
+    }));
+    logAuditEvent('Transferência de itens entre comandas', `Moveu ${itemsToMove.length} itens da comanda #${fromCmd.numero}`);
+  }, [comandas, logAuditEvent]);
+
+  const closeComanda = useCallback((comandaId: string) => {
+    setComandas(prev => prev.map(c => {
+      if (c.id === comandaId) {
+        return { ...c, status: 'fechada', fechadaEm: new Date().toISOString() };
+      }
+      return c;
+    }));
+  }, []);
+
+  // Cash Register
+  const openCashRegister = useCallback((initialAmount: number) => {
+    const newRegister: CashRegister = {
+      id: 'csh-' + Date.now(),
+      aberto: true,
+      operadorAbertura: currentUser.nome,
+      abertoEm: new Date().toISOString(),
+      saldoInicial: initialAmount,
+      saldoAtualGaveta: initialAmount,
+      transacoes: [
+        {
+          id: 'tx-' + Date.now(),
+          tipo: 'abertura',
+          valor: initialAmount,
+          motivo: 'Abertura oficial do turno de caixa',
+          horario: new Date().toISOString(),
+          operador: currentUser.nome
+        }
+      ]
+    };
+    setCashRegister(newRegister);
+    logAuditEvent('Abertura de caixa', `Abriu caixa com fundo inicial de R$ ${initialAmount.toFixed(2)}`, undefined, initialAmount);
+  }, [currentUser, logAuditEvent]);
+
+  const closeCashRegister = useCallback((blindCloseData?: CashRegister['fechamentoCego']) => {
+    setCashRegister(prev => {
+      logAuditEvent('Fechamento de caixa', `Encerrou turno de caixa. Saldo físico registrado: R$ ${prev.saldoAtualGaveta.toFixed(2)}`, undefined, prev.saldoAtualGaveta);
+      return {
+        ...prev,
+        aberto: false,
+        fechadoEm: new Date().toISOString(),
+        fechamentoCego: blindCloseData
+      };
+    });
+  }, [logAuditEvent]);
+
+  const addCashMovement = useCallback((tipo: 'suprimento' | 'sangria' | 'entrada_manual' | 'saida_manual', valor: number, motivo: string) => {
+    setCashRegister(prev => {
+      const isEntrada = tipo === 'suprimento' || tipo === 'entrada_manual';
+      const novoSaldo = isEntrada ? prev.saldoAtualGaveta + valor : Math.max(0, prev.saldoAtualGaveta - valor);
+      const tx: CashTransaction = {
+        id: 'tx-' + Date.now(),
+        tipo,
+        valor,
+        motivo,
+        horario: new Date().toISOString(),
+        operador: currentUser.nome
+      };
+      return {
+        ...prev,
+        saldoAtualGaveta: novoSaldo,
+        transacoes: [tx, ...prev.transacoes]
+      };
+    });
+    logAuditEvent(`Movimentação de caixa: ${tipo.toUpperCase()}`, `${motivo} - Valor: R$ ${valor.toFixed(2)}`, undefined, valor);
+  }, [currentUser, logAuditEvent]);
+
+  // Inventory & Stock
+  const addStockMovement = useCallback((ingredienteId: string, tipo: StockMovement['tipo'], quantidade: number, motivo: string) => {
+    const ing = ingredients.find(i => i.id === ingredienteId);
+    if (!ing) return;
+
+    const isPositive = tipo === 'entrada';
+    const novoEstoque = isPositive ? ing.estoqueAtual + quantidade : Math.max(0, ing.estoqueAtual - quantidade);
+    const custoTotal = quantidade * ing.custoMedio;
+
+    const mov: StockMovement = {
+      id: 'mov-' + Date.now(),
+      ingredienteId,
+      tipo,
+      quantidade,
+      unidade: ing.unidade,
+      custoTotal,
+      motivo,
+      usuario: currentUser.nome,
+      dataHora: new Date().toLocaleString('pt-BR')
+    };
+
+    setStockMovements(prev => [mov, ...prev]);
+    setIngredients(prev => prev.map(i => i.id === ingredienteId ? { ...i, estoqueAtual: novoEstoque } : i));
+    logAuditEvent('Movimentação de estoque', `${tipo.toUpperCase()} de ${quantidade} ${ing.unidade} de ${ing.nome}. Motivo: ${motivo}`);
+  }, [ingredients, currentUser, logAuditEvent]);
+
+  const addBatch = useCallback((batchData: Omit<ProductBatch, 'id'>) => {
+    const newBatch: ProductBatch = {
+      ...batchData,
+      id: 'lot-' + Date.now()
+    };
+    setBatches(prev => [newBatch, ...prev]);
+    logAuditEvent('Cadastro de lote e validade', `Cadastrou lote ${newBatch.loteNumero} (${newBatch.produtoOuIngredienteNome}) com validade para ${newBatch.dataValidade}`);
+  }, [logAuditEvent]);
+
+  const updateIngredient = useCallback((ing: Ingredient) => {
+    setIngredients(prev => prev.map(i => i.id === ing.id ? ing : i));
+  }, []);
+
+  // Purchases & Suppliers
+  const addSupplier = useCallback((supplierData: Omit<Supplier, 'id' | 'totalComprado'>) => {
+    const newSup: Supplier = {
+      ...supplierData,
+      id: 'sup-' + Date.now(),
+      totalComprado: 0
+    };
+    setSuppliers(prev => [...prev, newSup]);
+    logAuditEvent('Cadastro de fornecedor', `Cadastrou fornecedor "${newSup.empresa}" (${newSup.cnpj})`);
+  }, [logAuditEvent]);
+
+  const addPurchaseOrder = useCallback((poData: Omit<PurchaseOrder, 'id'>) => {
+    const newPO: PurchaseOrder = {
+      ...poData,
+      id: 'po-' + Date.now()
+    };
+    setPurchaseOrders(prev => [newPO, ...prev]);
+    logAuditEvent('Ordem de compra criada', `Gerou pedido de compra ${newPO.codigo} para ${newPO.fornecedorNome} no valor de R$ ${newPO.valorTotal.toFixed(2)}`, undefined, newPO.valorTotal);
+  }, [logAuditEvent]);
+
+  const receivePurchaseOrder = useCallback((poId: string) => {
+    setPurchaseOrders(prev => prev.map(po => {
+      if (po.id === poId) {
+        // Automatically credit inventory items
+        po.itens.forEach(item => {
+          setIngredients(ingPrev => ingPrev.map(ing => {
+            if (ing.id === item.ingredienteId) {
+              return {
+                ...ing,
+                estoqueAtual: ing.estoqueAtual + item.quantidade,
+                ultimoPrecoCompra: item.precoUnitario
+              };
+            }
+            return ing;
+          }));
+        });
+        logAuditEvent('Recebimento de compra', `Recebeu itens da ordem de compra ${po.codigo} com sucesso`);
+        return {
+          ...po,
+          status: 'recebido',
+          dataRecebimento: new Date().toISOString().split('T')[0]
+        };
+      }
+      return po;
+    }));
+  }, [logAuditEvent]);
+
+  // Delivery & Couriers
+  const assignCourierToOrder = useCallback((orderId: string, courierName: string) => {
+    const order = orders.find(o => o.id === orderId);
+    const courier = couriers.find(c => c.nome === courierName);
+    if (!order || !courier) return;
+    if (courier.status !== 'disponivel' && courier.nome !== order.entregadorNome) return;
+
+    setOrders(prev => prev.map(o => o.id === orderId
+      ? { ...o, entregadorNome: courierName, status: 'saiu_entrega' }
+      : o
+    ));
+    setCouriers(prev => prev.map(c => c.nome === courierName ? { ...c, status: 'em_rota' } : c));
+    logAuditEvent('Entregador despachado', `Atribuiu entregador ${courierName} ao pedido #${order.numero}`);
+  }, [orders, couriers, logAuditEvent]);
+
+  const completeDeliveryOrder = useCallback((orderId: string) => {
+    const order = orders.find(o => o.id === orderId);
+    if (!order || order.status !== 'saiu_entrega') return;
+
+    setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: 'entregue' } : o));
+    if (order.entregadorNome) {
+      setCouriers(prev => prev.map(c => c.nome === order.entregadorNome
+        ? { ...c, status: 'disponivel', entregasHoje: c.entregasHoje + 1 }
+        : c
+      ));
+    }
+    logAuditEvent('Entrega concluída', `Registrou a entrega do pedido #${order.numero}${order.entregadorNome ? ` com ${order.entregadorNome}` : ''}`);
+  }, [orders, logAuditEvent]);
+
+  const updateCourierStatus = useCallback((courierId: string, status: Courier['status']) => {
+    setCouriers(prev => prev.map(c => c.id === courierId ? { ...c, status } : c));
+  }, []);
+
+  // Customers
+  const saveCustomer = useCallback((cust: Customer) => {
+    setCustomers(prev => {
+      const exists = prev.some(c => c.id === cust.id);
+      if (exists) {
+        return prev.map(c => c.id === cust.id ? cust : c);
+      }
+      return [cust, ...prev];
+    });
+  }, []);
+
+  const deleteCustomer = useCallback((id: string) => {
+    setCustomers(prev => prev.filter(c => c.id !== id));
+    logAuditEvent('Cliente excluído', `Removeu o cliente ID ${id} da base`);
+  }, [logAuditEvent]);
+
+  // Staff & Permissions
+  const updateStaffPermissions = useCallback((userId: string, permissions: StaffUser['permissoes']) => {
+    setStaffList(prev => prev.map(u => u.id === userId ? { ...u, permissoes: permissions } : u));
+    logAuditEvent('Alteração de permissões', `Atualizou matriz de permissões do funcionário ${userId}`);
+  }, [logAuditEvent]);
+
+  const addStaffMember = useCallback((user: StaffUser) => {
+    setStaffList(prev => [...prev, user]);
+    logAuditEvent('Novo funcionário cadastrado', `Cadastrou ${user.nome} como ${user.cargo}`);
+  }, [logAuditEvent]);
+
+  const deleteStaffMember = useCallback((id: string) => {
+    setStaffList(prev => prev.filter(u => u.id !== id));
+    logAuditEvent('Funcionário excluído', `Removeu funcionário ID ${id}`);
+  }, [logAuditEvent]);
+
+  // Financial
+  const addFinancialEntry = useCallback((entryData: Omit<FinancialEntry, 'id'>) => {
+    const newEntry: FinancialEntry = {
+      ...entryData,
+      id: 'fin-' + Date.now()
+    };
+    setFinancialEntries(prev => [newEntry, ...prev]);
+    logAuditEvent('Lançamento financeiro', `${newEntry.tipo.toUpperCase()}: ${newEntry.descricao} - R$ ${newEntry.valor.toFixed(2)}`, undefined, newEntry.valor);
+  }, [logAuditEvent]);
+
+  const settleFinancialEntry = useCallback((id: string) => {
+    setFinancialEntries(prev => prev.map(f => {
+      if (f.id === id) {
+        return {
+          ...f,
+          status: 'pago',
+          dataPagamento: new Date().toISOString().split('T')[0]
+        };
+      }
+      return f;
+    }));
+    logAuditEvent('Baixa financeira', `Liquidou lançamento ID ${id}`);
+  }, [logAuditEvent]);
+
+  // Printers
+  const triggerTestPrint = useCallback((printerId: string) => {
+    const prn = printers.find(p => p.id === printerId);
+    if (!prn) return;
+    const job: PrintJob = {
+      id: 'job-test-' + Date.now(),
+      impressoraId: prn.id,
+      impressoraNome: prn.nome,
+      pedidoNumero: 0,
+      titulo: 'TESTE DE COMUNICAÇÃO DE IMPRESSORA',
+      conteudoTexto: `TESTE OPERACIONAL ${prn.larguraPapel}\nIP: ${prn.ip}:${prn.porta}\nStatus: ${prn.status.toUpperCase()}`,
+      status: prn.status === 'online' ? 'sucesso' : 'falha',
+      dataHora: new Date().toLocaleTimeString('pt-BR'),
+      tentativas: 1
+    };
+    setPrintQueue(prev => [job, ...prev]);
+    if (soundEnabled) sounds.print();
+  }, [printers, soundEnabled]);
+
+  const reprintJob = useCallback((jobId: string) => {
+    setPrintQueue(prev => prev.map(j => {
+      if (j.id === jobId) {
+        return { ...j, status: 'sucesso', tentativas: j.tentativas + 1, dataHora: new Date().toLocaleTimeString('pt-BR') };
+      }
+      return j;
+    }));
+    if (soundEnabled) sounds.print();
+  }, [soundEnabled]);
+
+  const togglePrinterStatus = useCallback((printerId: string) => {
+    setPrinters(prev => prev.map(p => {
+      if (p.id === printerId) {
+        const nextStatus = p.status === 'online' ? 'offline' : 'online';
+        return { ...p, status: nextStatus };
+      }
+      return p;
+    }));
+  }, []);
+
+  const savePrinter = useCallback((printer: PrinterDevice) => {
+    setPrinters(prev => {
+      const exists = prev.some(p => p.id === printer.id);
+      if (exists) return prev.map(p => p.id === printer.id ? printer : p);
+      return [...prev, printer];
+    });
+    logAuditEvent('Impressora configurada', `Salvou impressora ${printer.nome} (${printer.tipo})`);
+  }, [logAuditEvent]);
+
+  const deletePrinter = useCallback((printerId: string) => {
+    setPrinters(prev => prev.filter(p => p.id !== printerId));
+    logAuditEvent('Impressora excluída', `Removeu impressora ID ${printerId}`);
+  }, [logAuditEvent]);
+
+  // Settings & SaaS Configuration
+  const updateSettings = useCallback((newSettings: Partial<RestaurantSettings>) => {
+    setSettings(prev => {
+      const updated = {
+        ...prev,
+        ...newSettings,
+        saas: {
+          ...prev.saas,
+          ...(newSettings.saas || {})
+        }
+      };
+      return updated;
+    });
+    logAuditEvent('Configurações salvas', `Atualizou parâmetros operacionais da loja e SaaS`);
+  }, [logAuditEvent]);
+
+  const resetSettingsToDefaults = useCallback(() => {
+    setSettings(INITIAL_SETTINGS);
+    setPaymentOptions(INITIAL_MANUAL_PAYMENTS);
+    logAuditEvent('Configurações restauradas', 'Restaurou dados e formas de pagamento para padrão de fábrica');
+  }, [logAuditEvent]);
+
+  const updatePaymentOptions = useCallback((options: ManualPaymentOption[]) => {
+    setPaymentOptions(options);
+    logAuditEvent('Formas de pagamento atualizadas', `Atualizou tabela de meios manuais (${options.length} opções)`);
+  }, [logAuditEvent]);
+
+  const togglePaymentOption = useCallback((id: PaymentMethodId) => {
+    setPaymentOptions(prev => prev.map(p => p.id === id ? { ...p, ativo: !p.ativo } : p));
+  }, []);
+
+  const addPaymentOption = useCallback((option: ManualPaymentOption) => {
+    setPaymentOptions(prev => {
+      const exists = prev.some(p => p.id === option.id);
+      if (exists) return prev.map(p => p.id === option.id ? option : p);
+      return [...prev, option];
+    });
+    logAuditEvent('Nova forma de pagamento', `Adicionou forma de pagamento manual: ${option.nome}`);
+  }, [logAuditEvent]);
+
+  return (
+    <RestaurantContext.Provider
+      value={{
+        activeModule,
+        setActiveModule,
+        currentUser,
+        setCurrentUser,
+        staffList,
+        updateStaffPermissions,
+        addStaffMember,
+        deleteStaffMember,
+
+        health,
+        refreshHealth,
+        alerts,
+        dismissAlert,
+        clearAllAlerts,
+        addAlert,
+        isAlertsDrawerOpen,
+        setIsAlertsDrawerOpen,
+        isHealthModalOpen,
+        setIsHealthModalOpen,
+
+        menu,
+        categories,
+        saveMenuItem,
+        deleteMenuItem,
+        toggleItemAvailability,
+        updateItemPrice,
+        resetMenuToDefaults,
+
+        orders,
+        createOrder,
+        updateOrderStatus,
+        cancelOrder,
+        cancelOrderItem,
+        addItemsToOrder,
+        applyOrderDiscount,
+        updateOrderItemProductionStatus,
+        setOrderPriority,
+        reopenOrder,
+        selectedOrderForModal,
+        setSelectedOrderForModal,
+        selectedReceiptOrder,
+        setSelectedReceiptOrder,
+
+        paymentOptions,
+        addManualPaymentToOrder,
+        reverseOrderPayment,
+        markOrderAsPaidManually,
+        isPaymentModalOpen,
+        orderForPaymentModal,
+        openPaymentModal,
+        closePaymentModal,
+
+        tables,
+        openTableWithOrder,
+        addItemsToTable,
+        requestTableBill,
+        settleTableAccount,
+        freeTableManually,
+        transferTable,
+        joinTables,
+        updateTableLayout,
+        addNewTable,
+        configureTableCount,
+
+        comandas,
+        createComanda,
+        addItemsToComanda,
+        transferComandaItems,
+        closeComanda,
+
+        cashRegister,
+        openCashRegister,
+        closeCashRegister,
+        addCashMovement,
+
+        ingredients,
+        stockMovements,
+        batches,
+        addStockMovement,
+        addBatch,
+        updateIngredient,
+
+        suppliers,
+        purchaseOrders,
+        addSupplier,
+        addPurchaseOrder,
+        receivePurchaseOrder,
+
+        couriers,
+        assignCourierToOrder,
+        completeDeliveryOrder,
+        updateCourierStatus,
+
+        customers,
+        saveCustomer,
+        deleteCustomer,
+
+        financialEntries,
+        addFinancialEntry,
+        settleFinancialEntry,
+
+        printers,
+        routingRules,
+        printQueue,
+        triggerTestPrint,
+        reprintJob,
+        togglePrinterStatus,
+        savePrinter,
+        deletePrinter,
+
+        settings,
+        updateSettings,
+        resetSettingsToDefaults,
+        updatePaymentOptions,
+        togglePaymentOption,
+        addPaymentOption,
+
+        auditLogs,
+        logAuditEvent,
+
+        soundEnabled,
+        setSoundEnabled
+      }}
+    >
+      {children}
+    </RestaurantContext.Provider>
+  );
+};
+
+export const useRestaurant = () => {
+  const context = useContext(RestaurantContext);
+  if (!context) {
+    throw new Error('useRestaurant must be used within a RestaurantProvider');
+  }
+  return context;
+};

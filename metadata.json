@@ -1,0 +1,6 @@
+{
+  "name": "Murupi Restaurante - Sistema PDV & Gestão",
+  "description": "Ecossistema completo para restaurantes e lanches com frente de caixa (PDV), controle de mesas, cozinha (KDS), fluxo de caixa e gestão de cardápio.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
