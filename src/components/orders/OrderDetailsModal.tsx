@@ -74,8 +74,7 @@ export const OrderDetailsModal: React.FC = () => {
   const handleCancelItem = (cartItemId: string) => {
     if (!cancelItemReason.trim()) return;
     cancelOrderItem(order.id, cartItemId, cancelItemReason.trim());
-    setShowItemCancelId(null);
-    setCancelItemReason('');
+    setSelectedOrderForModal(null);
   };
 
   const handleApplyDiscount = () => {
@@ -130,9 +129,7 @@ export const OrderDetailsModal: React.FC = () => {
   const confirmAddItems = () => {
     if (addCart.length === 0) return;
     addItemsToOrder(order.id, addCart);
-    setAddCart([]);
-    setAddItemSearch('');
-    setShowAddItems(false);
+    setSelectedOrderForModal(null);
   };
 
   const addCartSubtotal = addCart.reduce((acc, ci) => acc + ci.precoUnitario * ci.quantidade, 0);

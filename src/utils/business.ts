@@ -28,7 +28,7 @@ export function totals(items: CartItem[], discount = 0, service = 0, delivery = 
   return { subtotal: sub, desconto: discount, taxaServico: amount(service), taxaEntrega: amount(delivery), total: amount(sub - discount + service + delivery) };
 }
 export function reconcile(order: Order): Order {
-  const paid = money(order.pagamentos.filter(p => !p.estornado).reduce((sum, p) => sum + p.valor, 0));
+  const paid = money((order.pagamentos || []).filter((p) => !p.estornado).reduce((sum, p) => sum + p.valor, 0));
   const balance = money(Math.max(0, order.total - paid));
   return { ...order, valorTotalPago: paid, saldoRestante: balance,
     statusPagamento: balance === 0 ? 'pago' : paid > 0 ? 'pago_parcial' : 'pendente' };

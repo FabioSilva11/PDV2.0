@@ -79,6 +79,17 @@ describe('mesas cozinha recuperacao e estresse', () => {
   it('REC remontagem offline preserva venda caixa', () => { const first = boot(); const o = sale(first.result); act(() => first.result.current.addManualPaymentToOrder(o.id, 'dinheiro', 20, 20)); first.unmount(); const { result } = boot(); expect(result.current.orders[0].id).toBe(o.id); expect(result.current.orders[0].statusPagamento).toBe('pago'); expect(result.current.cashRegister.saldoAtualGaveta).toBe(220); });
   it('CHAOS estresse 500 pedidos no mesmo lote têm IDs e números únicos', () => { const { result } = boot(); act(() => { for (let i = 0; i < 500; i++) result.current.createOrder({ itens: [item()] }); }); expect(result.current.orders).toHaveLength(500); expect(new Set(result.current.orders.map(o => o.id)).size).toBe(500); expect(new Set(result.current.orders.map(o => o.numero)).size).toBe(500); });
   it('DIA jornada sintética reconcilia caixa após estorno e sangria', () => { const { result } = boot(); const a = sale(result); act(() => result.current.addManualPaymentToOrder(a.id, 'dinheiro', 20, 50)); const b = sale(result); act(() => result.current.addManualPaymentToOrder(b.id, 'pix', 20)); const c = sale(result); act(() => result.current.addManualPaymentToOrder(c.id, 'dinheiro', 20, 20)); act(() => result.current.reverseOrderPayment(c.id, result.current.orders[0].pagamentos[0].id, 'QA')); act(() => result.current.cancelOrder(c.id, 'QA')); act(() => result.current.addCashMovement('sangria', 10, 'QA')); act(() => result.current.closeCashRegister()); expect(result.current.cashRegister.saldoAtualGaveta).toBe(210); expect(result.current.orders.filter(o => o.statusPagamento === 'pago').reduce((s, o) => s + o.total, 0)).toBe(40); });
+  it('LEG pedido antigo sem pagamentos/itens é normalizado e ainda aceita edição', () => {
+    localStorage.setItem(key, JSON.stringify({ staffResetApplied: true, operationalDemoResetApplied: true,
+      menu: [product], orders: [{ id: 'legacy-1', operacaoId: 'op-1', numero: 1000, tipo: 'balcao', status: 'pendente', criadoEm: new Date().toISOString(), itens: [item()], subtotal: 20, desconto: 0, taxaServico: 0, taxaEntrega: 0, total: 20, statusPagamento: 'pendente', saldoRestante: 20, valorTotalPago: 0 }],
+      alerts: [], printQueue: [], tables: [], cashRegister: { ...INITIAL_CASH_REGISTER, aberto: true, saldoInicial: 200, saldoAtualGaveta: 200, transacoes: [] } }));
+    const { result } = boot();
+    expect(result.current.orders[0].pagamentos).toEqual([]);
+    act(() => result.current.cancelOrderItem('legacy-1', 'qa-line', 'QA'));
+    expect(result.current.orders[0].itens).toHaveLength(0);
+    act(() => result.current.addItemsToOrder('legacy-1', [item({ cartItemId: 'new' })]));
+    expect(result.current.orders[0].itens).toHaveLength(1);
+  });
 });
 
 describe('interface pagamento', () => {
@@ -99,7 +110,7 @@ describe('interface pagamento', () => {
     fireEvent.change(view.container.querySelector('#pos-search-input')!, { target: { value: query } });
     expect(view.container.querySelector('#product-card-qa-product')).not.toBeNull();
   });
-  it('EDIT KDS abre editor de pedido pelo lápis (pendente, em preparo e pronto)', () => {
+  it('EDIT KDS lápis só aparece em pendentes e abre o editor', () => {
     let api!: ReturnType<typeof useRestaurant>;
     const Screen = () => { api = useRestaurant(); return <KDSView />; };
     const view = render(<RestaurantProvider><Screen /></RestaurantProvider>);
@@ -107,15 +118,17 @@ describe('interface pagamento', () => {
     let preparando!: Order;
     let pronto!: Order;
     act(() => {
-      pendente = api.createOrder({ itens: [item()], status: 'pendente' });
-      preparando = api.createOrder({ itens: [item()], status: 'preparando' });
-      pronto = api.createOrder({ itens: [item()], status: 'pronto' });
+      pendente = api.createOrder({ itens: [item()] });
+      preparando = api.createOrder({ itens: [item()] });
+      pronto = api.createOrder({ itens: [item()] });
+      api.updateOrderStatus(preparando.id, 'preparando');
+      api.updateOrderStatus(pronto.id, 'pronto');
     });
     expect(view.container.querySelector(`#kds-edit-btn-${pendente.id}`)).not.toBeNull();
-    expect(view.container.querySelector(`#kds-edit-btn-${preparando.id}`)).not.toBeNull();
-    expect(view.container.querySelector(`#kds-edit-btn-${pronto.id}`)).not.toBeNull();
-    fireEvent.click(view.container.querySelector(`#kds-edit-btn-${preparando.id}`)!);
-    expect(api.selectedOrderForModal?.id).toBe(preparando.id);
+    expect(view.container.querySelector(`#kds-edit-btn-${preparando.id}`)).toBeNull();
+    expect(view.container.querySelector(`#kds-edit-btn-${pronto.id}`)).toBeNull();
+    fireEvent.click(view.container.querySelector(`#kds-edit-btn-${pendente.id}`)!);
+    expect(api.selectedOrderForModal?.id).toBe(pendente.id);
   });
   it('UI dinheiro insuficiente desabilita confirmação', () => { const view = render(<PaymentModal isOpen total={100} onClose={vi.fn()} onConfirm={vi.fn()} onReceiptTrigger={vi.fn()} />); fireEvent.change(view.container.querySelector('#cash-amount-input')!, { target: { value: '50' } }); expect(view.container.querySelector('#payment-confirm-only-btn')).toBeDisabled(); });
   it('CHAOS UI duplo clique 10 confirmações dispara uma operação', () => { const confirm = vi.fn(() => ({} as Order)); const view = render(<PaymentModal isOpen total={100} onClose={vi.fn()} onConfirm={confirm} onReceiptTrigger={vi.fn()} />); const button = view.container.querySelector('#payment-confirm-only-btn')!; act(() => { for (let i = 0; i < 10; i++) fireEvent.click(button); }); expect(confirm).toHaveBeenCalledTimes(1); });

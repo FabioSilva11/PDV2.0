@@ -27,6 +27,7 @@ const remoteDatabase = firebaseApp ? getDatabase(firebaseApp) : null;
 const databasePath = 'restaurants/murupi/database';
 
 let writeQueue: Promise<unknown> = Promise.resolve();
+let confirmedSnapshot: Record<string, any> | undefined;
 
 const removeUndefinedValues = (value: unknown): unknown => {
   if (Array.isArray(value)) {
@@ -47,7 +48,11 @@ export async function loadRemoteDatabase<T>(): Promise<T | undefined> {
 
   try {
     const snapshot = await get(ref(remoteDatabase, databasePath));
-    return snapshot.exists() ? snapshot.val() as T : undefined;
+    if (snapshot.exists()) {
+      confirmedSnapshot = normalizeSnapshot(removeUndefinedValues(snapshot.val()));
+      return snapshot.val() as T;
+    }
+    return undefined;
   } catch (error) {
     throw new Error('Não foi possível consultar o servidor. Os dados locais foram preservados.');
   }
@@ -55,15 +60,16 @@ export async function loadRemoteDatabase<T>(): Promise<T | undefined> {
 
 export function saveRemoteDatabase(snapshot: object, baseline?: object): Promise<any> {
   if (!remoteDatabase) return Promise.resolve(snapshot);
+  const base = normalizeSnapshot(removeUndefinedValues(baseline || confirmedSnapshot || {}));
   const local = normalizeSnapshot(removeUndefinedValues(snapshot));
-  const base = normalizeSnapshot(removeUndefinedValues(baseline || {}));
   const task = writeQueue.catch(() => undefined).then(async () => {
     const result = await runTransaction(ref(remoteDatabase, databasePath), current => {
       const remote = normalizeSnapshot(current);
       return removeUndefinedValues(mergeSnapshots(base, local, remote));
     }, { applyLocally: false });
     if (!result.committed) throw new Error('Sincronização não confirmada. Dados locais preservados.');
-    return normalizeSnapshot(result.snapshot.val());
+    confirmedSnapshot = normalizeSnapshot(result.snapshot.val());
+    return confirmedSnapshot;
   });
   writeQueue = task;
   return task;

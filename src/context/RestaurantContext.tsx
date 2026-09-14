@@ -181,6 +181,12 @@ interface RestaurantDatabaseSnapshot {
   printQueue?: PrintJob[];
 }
 
+const normalizeOrder = (order: any): Order => ({
+  ...order,
+  itens: asArray(order.itens, [] as CartItem[]),
+  pagamentos: asArray(order.pagamentos, [] as Order['pagamentos'])
+});
+
 const loadRestaurantDatabase = (): RestaurantDatabaseSnapshot => {
   const parse = <T,>(raw: string | null): T | undefined => {
     if (!raw) return undefined;
@@ -192,7 +198,9 @@ const loadRestaurantDatabase = (): RestaurantDatabaseSnapshot => {
   };
 
   const savedDatabase = parse<RestaurantDatabaseSnapshot>(localStorage.getItem(DATABASE_STORAGE_KEY));
-  if (savedDatabase) return savedDatabase;
+  if (savedDatabase) {
+    return { ...savedDatabase, orders: (savedDatabase.orders || []).map(normalizeOrder) };
+  }
 
   // Migração única: importa o armazenamento antigo para o banco unificado.
   const readLegacy = <T,>(name: string): T | undefined => {
@@ -206,7 +214,7 @@ const loadRestaurantDatabase = (): RestaurantDatabaseSnapshot => {
   return {
     alerts: readLegacy<SystemAlert[]>('alerts'),
     menu: readLegacy<MenuItem[]>('menu'),
-    orders: readLegacy<Order[]>('orders'),
+    orders: (readLegacy<Order[]>('orders') || []).map(normalizeOrder),
     paymentOptions: readLegacy<ManualPaymentOption[]>('payment_options'),
     tables: readLegacy<Table[]>('tables'),
     comandas: readLegacy<Comanda[]>('comandas'),
@@ -516,10 +524,10 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const cancelOrderItem = (orderId: string, itemId: string, motivo: string) => {
     const order = store.state.orders.find((o: Order) => o.id === orderId) as Order | undefined;
     if (!order || order.status === 'cancelado') return;
-    const removed = order.itens.find(i => i.cartItemId === itemId);
+    const removed = asArray(order.itens, []).find(i => i.cartItemId === itemId);
     if (!removed) return;
     if (!motivo.trim()) throw new Error('Informe o motivo.');
-    const items = order.itens.filter(i => i.cartItemId !== itemId);
+    const items = asArray(order.itens, []).filter(i => i.cartItemId !== itemId);
     const values = totals(items, Math.min(order.desconto, calculateSubtotal(items)), order.taxaServico, order.taxaEntrega);
     if (values.total < order.valorTotalPago) throw new Error('Estorne o valor excedente antes de remover o item.');
     const next = reconcile({ ...order, ...values, itens: items });
@@ -533,7 +541,7 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     if (!order || order.status === 'cancelado' || !newItems.length) return;
     if (!store.state.cashRegister.aberto) throw new Error('Abra o caixa.');
     const added = snapshotItems(newItems);
-    const items = [...order.itens, ...added];
+    const items = [...asArray(order.itens, []), ...added];
     const values = totals(items, order.desconto, order.taxaServico, order.taxaEntrega);
     const next = reconcile({ ...order, ...values, itens: items, status: 'em_preparacao' });
     setOrders(prev => prev.map(o => o.id === orderId ? next : o));

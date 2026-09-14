@@ -67,6 +67,7 @@ export const KDSView: React.FC = () => {
 
   const renderOrderCard = (order: Order, nextStatus?: OrderStatus, nextLabel?: string) => {
     const minutes = getElapsedMinutes(order.criadoEm);
+    const canEdit = order.status === 'pendente' || order.status === 'novo' || order.status === 'confirmado';
 
     return (
       <div
@@ -162,15 +163,17 @@ export const KDSView: React.FC = () => {
             <Receipt className="w-4 h-4" />
           </button>
 
-          <button
-            type="button"
-            id={`kds-edit-btn-${order.id}`}
-            onClick={() => setSelectedOrderForModal(order)}
-            className="p-2 text-stone-400 hover:text-stone-200 hover:bg-stone-800 rounded-xl transition-colors"
-            title="Editar Pedido (corrigir itens, quantidades, observações ou erros)"
-          >
-            <Pencil className="w-4 h-4" />
-          </button>
+          {canEdit && (
+            <button
+              type="button"
+              id={`kds-edit-btn-${order.id}`}
+              onClick={() => setSelectedOrderForModal(order)}
+              className="p-2 text-stone-400 hover:text-stone-200 hover:bg-stone-800 rounded-xl transition-colors"
+              title="Editar Pedido (corrigir itens, quantidades, observações ou erros)"
+            >
+              <Pencil className="w-4 h-4" />
+            </button>
+          )}
 
           {nextStatus && (
             <button
