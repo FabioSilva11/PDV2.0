@@ -1,9 +1,11 @@
 import React from 'react';
 import { act, renderHook, render, fireEvent } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { RestaurantProvider, useRestaurant } from '../context/RestaurantContext';
+import { RestaurantProvider, useRestaurant, normalizePrinter } from '../context/RestaurantContext';
 import { PaymentModal } from '../components/pdv/PaymentModal';
 import { POSView } from '../components/pdv/POSView';
+import { OrderDetailsModal } from '../components/orders/OrderDetailsModal';
+import { mergeSnapshots, SyncConflict } from '../lib/mergeSnapshots';
 import { INITIAL_CASH_REGISTER, INITIAL_TABLES } from '../data/seedData';
 import type { CartItem, MenuItem, Order, PaymentMethodId } from '../types';
 
@@ -892,4 +894,293 @@ describe('melhorias operacionais v2 — edicao, caixa zerado, destaque e produto
     expect(updated.impressoes?.length).toBe(printBatchesBefore);
   });
 });
+
+describe('melhorias operacionais v3 — UI edicao completa e sincronizacao deterministica', () => {
+  it('1. UI edicao: botao Restaurante e Lanche existem e alternam catalogo', () => {
+    const p1: MenuItem = { id: 'm-rest', nome: 'Bife Acebolado', preco: 30, categoria: 'Pratos principais', catalogo: 'restaurante', disponivel: true };
+    const p2: MenuItem = { id: 'm-lanc', nome: 'X-Burger Artesanal', preco: 25, categoria: 'Lanches & Burgers', catalogo: 'lanche', disponivel: true };
+
+    const Harness: React.FC = () => {
+      const api = useRestaurant();
+      React.useEffect(() => {
+        api.saveMenuItem(p1);
+        api.saveMenuItem(p2);
+        const o = api.createOrder({ itens: [item()] });
+        api.setSelectedOrderForModal(o);
+      }, []);
+      return <OrderDetailsModal />;
+    };
+
+    const { getByText, queryByText } = render(
+      <RestaurantProvider>
+        <Harness />
+      </RestaurantProvider>
+    );
+
+    // Clicar em Editar Pedido
+    const editBtn = getByText('Editar Pedido');
+    fireEvent.click(editBtn);
+
+    // Botões de catálogo
+    const restBtn = getByText('Restaurante');
+    const lancBtn = getByText('Lanche');
+    expect(restBtn).toBeDefined();
+    expect(lancBtn).toBeDefined();
+
+    // No catálogo Restaurante (default), aparece Bife Acebolado e não X-Burger
+    expect(getByText('Bife Acebolado')).toBeDefined();
+    expect(queryByText('X-Burger Artesanal')).toBeNull();
+
+    // Ao alternar para Lanche
+    fireEvent.click(lancBtn);
+    expect(getByText('X-Burger Artesanal')).toBeDefined();
+    expect(queryByText('Bife Acebolado')).toBeNull();
+  });
+
+  it('2. UI edicao: categorias sao filtradas conforme o catalogo selecionado', () => {
+    const p1: MenuItem = { id: 'm-suco', nome: 'Suco de Laranja', preco: 8, categoria: 'Sucos de Frutas', catalogo: 'restaurante', disponivel: true };
+    const p2: MenuItem = { id: 'm-sobremesa', nome: 'Pudim de Leite', preco: 12, categoria: 'Sobremesas', catalogo: 'lanche', disponivel: true };
+
+    const Harness: React.FC = () => {
+      const api = useRestaurant();
+      React.useEffect(() => {
+        api.saveMenuItem(p1);
+        api.saveMenuItem(p2);
+        const o = api.createOrder({ itens: [item()] });
+        api.setSelectedOrderForModal(o);
+      }, []);
+      return <OrderDetailsModal />;
+    };
+
+    const { getByText, queryByText, container } = render(
+      <RestaurantProvider>
+        <Harness />
+      </RestaurantProvider>
+    );
+
+    fireEvent.click(getByText('Editar Pedido'));
+
+    // Catálogo Restaurante deve ter pílula de Sucos de Frutas
+    const sucoPill = container.querySelector('#edit-cat-pill-sucos-de-frutas');
+    expect(sucoPill).not.toBeNull();
+    expect(container.querySelector('#edit-cat-pill-sobremesas')).toBeNull();
+
+    // Alternar para Lanche
+    fireEvent.click(getByText('Lanche'));
+    expect(container.querySelector('#edit-cat-pill-sobremesas')).not.toBeNull();
+    expect(container.querySelector('#edit-cat-pill-sucos-de-frutas')).toBeNull();
+  });
+
+  it('3. UI edicao: busca por texto filtra dentro do catalogo ativo', () => {
+    const p1: MenuItem = { id: 'm-goiaba', nome: 'Suco de Goiaba Natural', preco: 10, categoria: 'Sucos de Frutas', catalogo: 'restaurante', disponivel: true };
+    const p2: MenuItem = { id: 'm-manga', nome: 'Suco de Manga', preco: 10, categoria: 'Sucos de Frutas', catalogo: 'restaurante', disponivel: true };
+
+    const Harness: React.FC = () => {
+      const api = useRestaurant();
+      React.useEffect(() => {
+        api.saveMenuItem(p1);
+        api.saveMenuItem(p2);
+        const o = api.createOrder({ itens: [item()] });
+        api.setSelectedOrderForModal(o);
+      }, []);
+      return <OrderDetailsModal />;
+    };
+
+    const { getByText, queryByText, container } = render(
+      <RestaurantProvider>
+        <Harness />
+      </RestaurantProvider>
+    );
+
+    fireEvent.click(getByText('Editar Pedido'));
+
+    const searchInput = container.querySelector('#edit-product-search-input') as HTMLInputElement;
+    expect(searchInput).toBeDefined();
+
+    fireEvent.change(searchInput, { target: { value: 'goiaba' } });
+    expect(getByText('Suco de Goiaba Natural')).toBeDefined();
+    expect(queryByText('Suco de Manga')).toBeNull();
+  });
+
+  it('4. UI edicao: mais de 10 produtos aparecem sem truncamento arbitrario (sem .slice(0, 10))', () => {
+    const Harness: React.FC = () => {
+      const api = useRestaurant();
+      React.useEffect(() => {
+        for (let i = 1; i <= 15; i++) {
+          api.saveMenuItem({
+            id: `prod-${i}`,
+            nome: `Prato Teste ${i}`,
+            preco: 20 + i,
+            categoria: 'Pratos principais',
+            catalogo: 'restaurante',
+            disponivel: true
+          });
+        }
+        const o = api.createOrder({ itens: [item()] });
+        api.setSelectedOrderForModal(o);
+      }, []);
+      return <OrderDetailsModal />;
+    };
+
+    const { getByText, container } = render(
+      <RestaurantProvider>
+        <Harness />
+      </RestaurantProvider>
+    );
+
+    fireEvent.click(getByText('Editar Pedido'));
+
+    // Verifica que o 15º produto é renderizado no DOM
+    expect(getByText('Prato Teste 15')).toBeDefined();
+    const productElements = container.querySelectorAll('[id^="edit-menu-product-"]');
+    expect(productElements.length).toBeGreaterThanOrEqual(15);
+  });
+
+  it('5. UI edicao: produto simples e adicionado diretamente aos itens em edicao', () => {
+    const simple: MenuItem = { id: 'agua-sem-gas', nome: 'Água Mineral', preco: 5, categoria: 'Bebidas', catalogo: 'restaurante', disponivel: true };
+
+    const Harness: React.FC = () => {
+      const api = useRestaurant();
+      React.useEffect(() => {
+        api.saveMenuItem(simple);
+        const o = api.createOrder({ itens: [item()] });
+        api.setSelectedOrderForModal(o);
+      }, []);
+      return <OrderDetailsModal />;
+    };
+
+    const { getByText, container } = render(
+      <RestaurantProvider>
+        <Harness />
+      </RestaurantProvider>
+    );
+
+    fireEvent.click(getByText('Editar Pedido'));
+    const addBtn = container.querySelector('#edit-add-product-btn-agua-sem-gas') as HTMLButtonElement;
+    expect(addBtn).toBeDefined();
+
+    fireEvent.click(addBtn);
+    // Água Mineral agora deve estar na lista de itens em edição
+    expect(getByText('Itens em Edição (2)')).toBeDefined();
+  });
+
+  it('6. UI edicao: produto com guarnicoes/variacoes abre AccompanimentModal com texto Configurar', () => {
+    const withSides: MenuItem = {
+      id: 'prato-exec',
+      nome: 'Parmegiana de Carne',
+      preco: 45,
+      categoria: 'Pratos principais',
+      catalogo: 'restaurante',
+      disponivel: true,
+      acompanhamentos: ['Arroz', 'Fritas', 'Farofa'],
+      variacoes: [{ id: 'v1', nome: 'Individual', preco: 45, custoEstimado: 15 }]
+    };
+
+    const Harness: React.FC = () => {
+      const api = useRestaurant();
+      React.useEffect(() => {
+        api.saveMenuItem(withSides);
+        const o = api.createOrder({ itens: [item()] });
+        api.setSelectedOrderForModal(o);
+      }, []);
+      return <OrderDetailsModal />;
+    };
+
+    const { getByText, container } = render(
+      <RestaurantProvider>
+        <Harness />
+      </RestaurantProvider>
+    );
+
+    fireEvent.click(getByText('Editar Pedido'));
+    const configBtn = container.querySelector('#edit-add-product-btn-prato-exec') as HTMLButtonElement;
+    expect(configBtn.textContent).toContain('Configurar');
+
+    fireEvent.click(configBtn);
+    // Modal de acompanhamentos aberto
+    expect(getByText('Guarnições & Acompanhamentos')).toBeDefined();
+  });
+
+  it('7. SYNC: normalizePrinter e idempotente e nao gera novos IDs em chamadas sucessivas', () => {
+    const rawPrinter = {
+      id: 'prn-cozinha',
+      nome: 'Cozinha Principal',
+      tipo: 'rede',
+      local: 'Cozinha',
+      finalidade: 'pedido',
+      ip: '192.168.1.200',
+      porta: 9100,
+      modelo: 'ESC/POS',
+      larguraPapel: '80mm',
+      status: 'online',
+      ativa: true,
+      itensNaFila: 0,
+      regras: [
+        { nome: 'Regra Pratos', categorias: ['Pratos principais'] },
+        { id: 'custom-rule-id', nome: 'Regra Fixa' }
+      ]
+    };
+
+    const first = normalizePrinter(rawPrinter);
+    const second = normalizePrinter(first);
+
+    // Idempotência
+    expect(second).toEqual(first);
+    // Regra sem ID recebe ID determinístico baseado no printer.id e índice
+    expect(first.regras![0].id).toBe('prn-cozinha-rule-0');
+    // Regra que já possui ID preserva o ID existente
+    expect(first.regras![1].id).toBe('custom-rule-id');
+  });
+
+  it('8. SYNC: mesma regra sem ID sempre gera o mesmo ID deterministico em cargas separadas', () => {
+    const p1 = normalizePrinter({ id: 'prn-1', regras: [{ nome: 'Pizza' }] });
+    const p2 = normalizePrinter({ id: 'prn-1', regras: [{ nome: 'Pizza' }] });
+
+    expect(p1.regras![0].id).toBe('prn-1-rule-0');
+    expect(p2.regras![0].id).toBe(p1.regras![0].id);
+  });
+
+  it('9. SYNC: mergeSnapshots faz merge inteligente em campos independentes de impressora', () => {
+    const base = {
+      printers: [
+        { id: 'prn-1', status: 'online', ultimaImpressao: '2026-09-25T10:00:00Z', itensNaFila: 0 }
+      ]
+    };
+    // Local mudou apenas status
+    const local = {
+      printers: [
+        { id: 'prn-1', status: 'offline', ultimaImpressao: '2026-09-25T10:00:00Z', itensNaFila: 0 }
+      ]
+    };
+    // Remoto mudou apenas ultimaImpressao
+    const remote = {
+      printers: [
+        { id: 'prn-1', status: 'online', ultimaImpressao: '2026-09-25T10:05:00Z', itensNaFila: 0 }
+      ]
+    };
+
+    const merged = mergeSnapshots(base, local, remote);
+    expect(merged.printers[0].status).toBe('offline');
+    expect(merged.printers[0].ultimaImpressao).toBe('2026-09-25T10:05:00Z');
+  });
+
+  it('10. SYNC: conflito real no mesmo campo lanca SyncConflict com detalhes tecnicos sem corromper estado', () => {
+    const base = { config: { modo: 'padrao' } };
+    const local = { config: { modo: 'express' } };
+    const remote = { config: { modo: 'completo' } };
+
+    try {
+      mergeSnapshots(base, local, remote);
+      expect.fail('Deveria ter lançado SyncConflict');
+    } catch (err: any) {
+      expect(err).toBeInstanceOf(SyncConflict);
+      expect(err.details).toBeDefined();
+      expect(err.details.path).toBe('database/config/modo');
+      expect(err.details.local).toBe('express');
+      expect(err.details.remote).toBe('completo');
+      expect(err.details.base).toBe('padrao');
+    }
+  });
+});
+
 

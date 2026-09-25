@@ -1,5 +1,25 @@
+export interface ConflictDetail {
+  path: string;
+  local: unknown;
+  remote: unknown;
+  base: unknown;
+  dataHora: string;
+}
+
 export class SyncConflict extends Error {
-  constructor(public field: string) { super('Conflito de sincronização em ' + field + '. Os dados locais foram preservados para conferência.'); }
+  public details?: ConflictDetail;
+  constructor(public field: string, detail?: Omit<ConflictDetail, 'path' | 'dataHora'>) { 
+    super('Conflito de sincronização em ' + field + '. Os dados locais foram preservados para conferência.');
+    if (detail) {
+      this.details = {
+        path: field,
+        local: detail.local,
+        remote: detail.remote,
+        base: detail.base,
+        dataHora: new Date().toISOString()
+      };
+    }
+  }
 }
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 const object = (value: any) => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -24,7 +44,7 @@ export function mergeSnapshots(base: any, local: any, remote: any, path = 'datab
     }
     return result;
   }
-  throw new SyncConflict(path);
+  throw new SyncConflict(path, { local, remote, base });
 }
 
 const arrayFields = ['alerts', 'menu', 'orders', 'paymentOptions', 'tables', 'printers', 'printQueue', 'cashHistory'];

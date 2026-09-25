@@ -190,11 +190,13 @@ const normalizeOrder = (order: any): Order => ({
   impressoes: asArray(order.impressoes, [])
 });
 
-const normalizePrinter = (printer: any): PrinterDevice => ({
+export const normalizePrinter = (printer: any): PrinterDevice => ({
   ...printer,
   finalidade: printer.finalidade || (String(printer.local || '').toLowerCase().includes('balc') ? 'pedido' : 'espelho'),
   regras: asArray(printer.regras, []).map((r: any, index: number) => ({
-    id: r.id || uid(`route-${index}`),
+    // ID determinístico: nunca gerar UUID aleatório — mesma regra = mesmo ID em toda carga.
+    // Usar printer.id (estável) + índice para evitar colisões entre impressoras.
+    id: r.id || `${String(printer.id || 'prn')}-rule-${index}`,
     nome: r.nome || `Regra ${index + 1}`,
     documentos: asArray(r.documentos, []),
     catalogos: asArray(r.catalogos, []),
