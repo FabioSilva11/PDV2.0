@@ -1,3 +1,17 @@
+/**
+ * ============================================================
+ * SEED INICIAL / FIXTURE LEGADO
+ * ============================================================
+ * Este arquivo NÃO é fonte runtime do sistema: funciona apenas
+ * como seed de primeira instalação (quando o banco local está
+ * vazio) e fixture de migração/teste. NUNCA sobrescreve dados
+ * reais já persistidos.
+ *
+ * Os nomes de produtos aqui são dados de demonstração legados e
+ * podem ser substituídos livremente pelo usuário após a
+ * instalação (via Restaurar Padrão ou edição do cardápio).
+ * ============================================================
+ */
 import { 
   MenuItem, 
   Table, 
@@ -265,6 +279,7 @@ export const INITIAL_TABLES: Table[] = [
   { id: 'tbl-16', numero: 16, capacidade: 2, status: 'livre', posX: 390, posY: 350, formato: 'redonda', setor: 'Deck Externo', valorAtual: 0 }
 ];
 
+/** Seeds de demonstração (IPs/nomes são exemplos — configure impressoras reais na UI). */
 export const INITIAL_PRINTERS: PrinterDevice[] = [
   { id: 'prn-1', nome: 'Impressora Cozinha / Chapa', tipo: 'rede', local: 'Cozinha Principal', finalidade: 'espelho', ip: '192.168.1.120', porta: 9100, modelo: 'Epson TM-T20X', larguraPapel: '80mm', status: 'online', ativa: true, itensNaFila: 0, ultimaImpressao: '2026-09-10 12:18:12' },
   { id: 'prn-2', nome: 'Impressora Bar & Bebidas', tipo: 'rede', local: 'Balcão de Chopp & Sucos', finalidade: 'geral', ip: '192.168.1.121', porta: 9100, modelo: 'Bematech MP-4200 TH', larguraPapel: '80mm', status: 'online', ativa: true, itensNaFila: 0, ultimaImpressao: '2026-09-10 12:05:30' },

@@ -4,7 +4,7 @@ import { formatCurrency } from '../../utils/formatters';
 import { Printer, X, Download } from 'lucide-react';
 
 export const ThermalReceiptModal: React.FC = () => {
-  const { selectedReceiptOrder, setSelectedReceiptOrder, currentUser } = useRestaurant();
+  const { selectedReceiptOrder, setSelectedReceiptOrder, currentUser, settings } = useRestaurant();
 
   if (!selectedReceiptOrder) return null;
 
@@ -45,12 +45,12 @@ export const ThermalReceiptModal: React.FC = () => {
         {/* Paper receipt preview */}
         <div className="p-6 overflow-y-auto bg-stone-200/50 flex justify-center">
           <div id="thermal-receipt" className="w-[300px] bg-white p-5 rounded shadow-sm border border-stone-300 font-mono text-[11px] leading-tight text-stone-900 select-text">
-            {/* Store header */}
+            {/* Store header — dados vindos de RestaurantSettings */}
             <div className="text-center pb-3 border-b border-dashed border-stone-400 space-y-0.5">
-              <div className="font-bold text-sm tracking-wider">MURUPI RESTAURANTE</div>
-              <div>COMIDAS REGIONAIS &amp; LANCHES</div>
-              <div>CNPJ: 14.882.901/0001-44 - IE: ISENTO</div>
-              <div>Porto Velho - RO | Fone: (69) 99321-0000</div>
+              <div className="font-bold text-sm tracking-wider uppercase">{settings.nomeFantasia || settings.nomeAplicacao}</div>
+              {settings.razaoSocial && <div>{settings.razaoSocial}</div>}
+              {(settings.cnpj || settings.inscricaoEstadual) && <div>{settings.cnpj && `CNPJ: ${settings.cnpj}`}{settings.cnpj && settings.inscricaoEstadual ? ' - ' : ''}{settings.inscricaoEstadual && `IE: ${settings.inscricaoEstadual}`}</div>}
+              {(settings.cidade || settings.telefone) && <div>{[settings.cidade, settings.estado].filter(Boolean).join(' - ')}{settings.cidade && settings.telefone ? ' | ' : ''}{settings.telefone && `Fone: ${settings.telefone}`}</div>}
             </div>
 
             {/* Order info */}
@@ -170,10 +170,10 @@ export const ThermalReceiptModal: React.FC = () => {
 
             {/* Footer message */}
             <div className="pt-3 text-center text-[10px] text-stone-600 space-y-1">
-              <div className="font-bold">OBRIGADO PELA PREFERÊNCIA!</div>
+              <div className="font-bold">{settings.rodapeComprovante || 'Obrigado pela preferência!'}</div>
               <div>Documento emitido para conferência interna.</div>
-              <div>Sistema Murupi SaaS Pro v3.4</div>
-              <div>Operador: {currentUser.nome}</div>
+              <div>{settings.nomeAplicacao} v{settings.versaoExibida}</div>
+              <div>Operador: {currentUser?.nome}</div>
             </div>
           </div>
         </div>

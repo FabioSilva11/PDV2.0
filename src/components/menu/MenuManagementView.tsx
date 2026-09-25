@@ -37,23 +37,14 @@ export const MenuManagementView: React.FC = () => {
 
   // New/Edit item form state
   const [editingProduct, setEditingProduct] = useState<MenuItem | null>(null);
-  const [newItem, setNewItem] = useState<{
-    catalogo: 'restaurante' | 'lanche';
-    nome: string;
-    categoria: CategoryType;
-    preco: string;
-    descricao: string;
-    acompanhamentos: string[];
-    tamanho: string;
-    usarVariacoes: boolean;
-    volumes: { nome: string; quantidade: string; unidade: string; preco: string; disponivel: boolean }[];
-  }>({
-    catalogo: 'restaurante',
+  // Produto novo começa SEM guarnições: o usuário decide o que cadastrar.
+  const emptyProductForm = (catalogo: 'restaurante' | 'lanche' = 'restaurante') => ({
+    catalogo,
     nome: '',
-    categoria: 'Pratos principais',
+    categoria: 'Pratos principais' as CategoryType,
     preco: '',
     descricao: '',
-    acompanhamentos: ['Arroz branco', 'Macarrão', 'Farofa', 'Salada crua'],
+    acompanhamentos: [] as string[],
     tamanho: '',
     usarVariacoes: false,
     volumes: [
@@ -62,6 +53,7 @@ export const MenuManagementView: React.FC = () => {
       { nome: 'Opção 3', quantidade: '', unidade: 'un', preco: '', disponivel: true }
     ]
   });
+  const [newItem, setNewItem] = useState(emptyProductForm('restaurante'));
   const [formError, setFormError] = useState('');
 
   const filteredItems = menu.filter(item => {
@@ -152,17 +144,7 @@ export const MenuManagementView: React.FC = () => {
     saveMenuItem(item);
     setIsNewItemModalOpen(false);
     setEditingProduct(null);
-    setNewItem({
-      catalogo: selectedCatalog,
-      nome: '',
-      categoria: 'Pratos principais',
-      preco: '',
-      descricao: '',
-      acompanhamentos: ['Arroz branco', 'Macarrão', 'Farofa', 'Salada crua'],
-      tamanho: '',
-      usarVariacoes: false,
-      volumes: [{ nome: 'Opção 1', quantidade: '', unidade: 'un', preco: '', disponivel: true }, { nome: 'Opção 2', quantidade: '', unidade: 'un', preco: '', disponivel: true }, { nome: 'Opção 3', quantidade: '', unidade: 'un', preco: '', disponivel: true }]
-    });
+    setNewItem(emptyProductForm(selectedCatalog));
     setFormError('');
   };
 
@@ -196,7 +178,7 @@ export const MenuManagementView: React.FC = () => {
           <button
             type="button"
             onClick={() => {
-              if (confirm('Deseja redefinir o cardápio com os dados originais do Murupi Restaurante?')) {
+              if (confirm('Restaurar o cardápio padrão de fábrica? Esta ação substituirá o cardápio atual e não pode ser desfeita.')) {
                 resetMenuToDefaults();
               }
             }}

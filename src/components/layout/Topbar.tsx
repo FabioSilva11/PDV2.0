@@ -12,7 +12,8 @@ import {
   Building2, 
   Search,
   Maximize2,
-  Database
+  Database,
+  LogOut
 } from 'lucide-react';
 
 export const Topbar: React.FC = () => {
@@ -24,7 +25,10 @@ export const Topbar: React.FC = () => {
     setIsHealthModalOpen, 
     setActiveModule,
     soundEnabled, 
-    setSoundEnabled
+    setSoundEnabled,
+    settings,
+    logout,
+    currentUser
   } = useRestaurant();
 
   const [currentTime, setCurrentTime] = useState<string>('');
@@ -55,8 +59,7 @@ export const Topbar: React.FC = () => {
       <div className="flex items-center gap-2.5">
         <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-100/90 border border-slate-200 text-xs font-semibold text-slate-700">
           <Building2 className="w-3.5 h-3.5 text-blue-600" />
-          <span>Restaurante Murupi</span>
-          <span className="text-[10px] px-1.5 py-0.2 bg-emerald-100 text-emerald-700 rounded font-bold">Produção</span>
+          <span>{settings.nomeFantasia || settings.nomeAplicacao}</span>
         </div>
 
         {/* Global Quick Search */}
@@ -167,6 +170,16 @@ export const Topbar: React.FC = () => {
           title="Alternar Tela Cheia"
         >
           <Maximize2 className="w-3.5 h-3.5" />
+        </button>
+
+        {/* Logout */}
+        <button
+          id="topbar-logout-btn"
+          onClick={logout}
+          className="p-1.5 rounded-lg text-slate-600 hover:bg-rose-50 hover:text-rose-600 transition-colors hidden md:flex"
+          title={`Sair (${currentUser?.nome || 'usuário'})`}
+        >
+          <LogOut className="w-3.5 h-3.5" />
         </button>
 
         {/* Clock */}

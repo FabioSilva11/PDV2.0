@@ -13,11 +13,28 @@ function field(id: string, value: string): string {
   return id + value.length.toString().padStart(2, '0') + value;
 }
 
-export function buildPixPayload(key: string, amount: number, merchantName = 'MURUPI RESTAURANTE', merchantCity = 'PORTO VELHO'): string {
+/**
+ * Gera o payload PIX Copia e Cola.
+ * Os dados do recebedor (nome, cidade, descrição) vêm SEMPRE da
+ * configuração do estabelecimento (RestaurantSettings.pix) — a função
+ * exige que sejam passados explicitamente, sem fallback de negócio.
+ */
+export function buildPixPayload(
+  key: string,
+  amount: number,
+  merchantName: string,
+  merchantCity: string,
+  merchantDescription = 'PEDIDO'
+): string {
   const cleanKey = key.trim();
-  if (!cleanKey) throw new Error('Chave PIX não configurada.');
+  if (!cleanKey) throw new Error('Chave PIX não configurada. Defina em Configurações.');
+  const cleanName = (merchantName || '').trim();
+  if (!cleanName) throw new Error('Nome do recebedor PIX não configurado. Defina em Configurações.');
+  const cleanCity = (merchantCity || '').trim();
+  if (!cleanCity) throw new Error('Cidade do recebedor PIX não configurada. Defina em Configurações.');
+
   const merchantAccount = field('00', 'BR.GOV.BCB.PIX') + field('01', cleanKey);
-  const additional = field('05', 'MURUPI') + field('09', '***');
+  const additional = field('05', merchantDescription.slice(0, 25)) + field('09', '***');
   const payload = [
     field('00', '01'),
     field('26', merchantAccount),
@@ -25,8 +42,8 @@ export function buildPixPayload(key: string, amount: number, merchantName = 'MUR
     field('53', '986'),
     field('54', amount.toFixed(2)),
     field('58', 'BR'),
-    field('59', merchantName.normalize('NFD').replace(/[\u0300-\u036f]/g, '').slice(0, 25).toUpperCase()),
-    field('60', merchantCity.normalize('NFD').replace(/[\u0300-\u036f]/g, '').slice(0, 15).toUpperCase()),
+    field('59', cleanName.normalize('NFD').replace(/[\u0300-\u036f]/g, '').slice(0, 25).toUpperCase()),
+    field('60', cleanCity.normalize('NFD').replace(/[\u0300-\u036f]/g, '').slice(0, 15).toUpperCase()),
     field('62', additional),
     '6304'
   ].join('');

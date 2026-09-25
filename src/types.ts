@@ -43,6 +43,14 @@ export interface ProductVariation {
 
 export type MenuCatalog = 'restaurante' | 'lanche';
 
+export interface MenuCategory {
+  id: string;
+  nome: string;
+  catalogos: MenuCatalog[];
+  ordem: number;
+  ativo: boolean;
+}
+
 export interface MenuItem {
   id: string;
   codigo?: string;
@@ -51,6 +59,7 @@ export interface MenuItem {
   descricao?: string;
   imagem?: string;
   categoria: CategoryType;
+  categoriaId?: string;
   preco: number;
   custoEstimado?: number;
   disponivel: boolean;
@@ -196,8 +205,22 @@ export interface Customer { id: string; nome: string; telefone?: string; cpf?: s
 export type ReservationStatus = 'reservada' | 'confirmada' | 'chegou' | 'cancelada' | 'finalizada';
 export interface Reservation { id: string; clienteId?: string; clienteNome: string; telefone?: string; mesaNumero?: number; dataHora: string; pessoas: number; status: ReservationStatus; observacao?: string; criadoPor: string; }
 export type UserRole = 'administrador' | 'gerente' | 'caixa' | 'garcom';
-export type PermissionKey = 'pdv' | 'pedidos' | 'mesas' | 'caixa' | 'cardapio' | 'clientes' | 'reservas' | 'desconto' | 'cancelamento' | 'reabertura' | 'auditoria' | 'usuarios';
-export interface UserAccount { id: string; nome: string; usuario: string; cargo: string; perfil: UserRole; ativo: boolean; permissoes: PermissionKey[]; }
+export type PermissionKey = 'pdv' | 'pedidos' | 'mesas' | 'caixa' | 'cardapio' | 'clientes' | 'reservas' | 'desconto' | 'cancelamento' | 'reabertura' | 'auditoria' | 'usuarios' | 'impressoras' | 'configuracoes';
+export interface UserAccount {
+  id: string;
+  nome: string;
+  usuario: string;
+  /** Hash da senha (PBKDF2). NUNCA armazenar senha em texto puro. */
+  senhaHash?: string;
+  cargo: string;
+  perfil: UserRole;
+  ativo: boolean;
+  /** Exatamente um usuário do sistema pode ter isPrimaryAdmin = true. */
+  isPrimaryAdmin?: boolean;
+  permissoes: PermissionKey[];
+  criadoEm?: string;
+  lastLoginAt?: string;
+}
 export interface AuditLog { id: string; dataHora: string; usuarioId: string; usuarioNome: string; acao: string; entidade: string; entidadeId?: string; detalhes?: string; }
 
 export interface Table {
@@ -279,7 +302,10 @@ export interface PrinterRouteRule {
   documentos: PrintRouteDocument[];
   catalogos: MenuCatalog[];
   tiposPedido: OrderType[];
-  categorias: CategoryType[];
+  /** @deprecated legado: usar categoriaIds */
+  categorias?: CategoryType[];
+  /** IDs de MenuCategory (fonte de verdade para roteamento). */
+  categoriaIds?: string[];
   estacoes: KitchenStation[];
   prioridade: number;
   modo: PrintRouteMode;
@@ -319,6 +345,69 @@ export interface PrintJob {
   status: 'sucesso' | 'pendente' | 'falha';
   dataHora: string;
   tentativas: number;
+}
+
+// ------------------------------------------
+// CONFIGURAÇÃO ÚNICA DO ESTABELECIMENTO
+// Fonte de verdade dos dados de identidade e operação.
+// Nenhum componente deve conter dados de negócio fixos.
+// ------------------------------------------
+export interface RestaurantSettings {
+  id: 'singleton';
+  // Identidade
+  nomeFantasia: string;
+  razaoSocial: string;
+  nomeCurto: string;
+  cnpj: string;
+  inscricaoEstadual: string;
+  telefone: string;
+  email: string;
+  logradouro: string;
+  numero: string;
+  bairro: string;
+  cidade: string;
+  estado: string;
+  cep: string;
+  logo?: string;
+  // Branding / exibição
+  nomeAplicacao: string;
+  versaoExibida: string;
+  rodapeComprovante: string;
+  moeda: string;
+  locale: string;
+  // PIX
+  pix: {
+    chave: string;
+    nomeRecebedor: string;
+    cidade: string;
+    descricao: string;
+  };
+  // Configurações operacionais configuráveis
+  delivery: {
+    /** Taxa de entrega padrão sugerida no PDV. 0 = sem taxa fixa. */
+    defaultFee: number;
+  };
+  cashier: {
+    /** Botões de valor rápido no pagamento em dinheiro. */
+    quickAmounts: number[];
+  };
+  operations: {
+    /** Minutos para considerar um pedido atrasado. */
+    lateOrderThresholdMinutes: number;
+    /** Janela operacional do dashboard (horas). */
+    dashboardStartHour: number;
+    dashboardEndHour: number;
+    /** Quantidade de produtos no ranking do dashboard. */
+    topProductsLimit: number;
+  };
+  reservations: {
+    defaultGuests: number;
+    defaultAdvanceMinutes: number;
+  };
+  /** Marca que o assistente de primeira execução foi concluído. */
+  setupComplete: boolean;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 // ------------------------------------------
@@ -363,7 +452,8 @@ export type AppModule =
   | 'clientes'
   | 'reservas'
   | 'usuarios'
-  | 'auditoria';
+  | 'auditoria'
+  | 'configuracoes';
 
 // ==========================================
 // PATCH DE EDIÇÃO DE PEDIDO

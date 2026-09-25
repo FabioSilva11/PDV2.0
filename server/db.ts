@@ -11,7 +11,7 @@ export const dbConfig = {
   port: Number(process.env.DB_PORT) || 3306,
   user: process.env.DB_USER || 'root',
   password: process.env.DB_PASSWORD || '',
-  database: process.env.DB_NAME || 'pdv_murupi',
+  database: process.env.DB_NAME || 'pdv_murupi', // nome técnico do schema, não identidade de negócio
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0,
@@ -150,54 +150,93 @@ export async function saveStateToMariaDB(snapshot: any): Promise<boolean> {
        VALUES ('restaurant_snapshot', ?, 1) 
        ON DUPLICATE KEY UPDATE data = VALUES(data), version = version + 1`,
       [jsonStr]
-    );
+    );    // 2. Espelhar pedidos em tabela estruturada (DENTRO de transação;
+      //    nenhum erro é engolido — falha de espelhamento aborta o save).
+      if (Array.isArray(snapshot?.orders)) {
+        const conn = await p.getConnection();
+        try {
+          await conn.beginTransaction();
+          for (const order of snapshot.orders) {
+            if (!order?.id) continue;
+            const total = Number(order.total) || 0;
+            const desc = Number(order.desconto) || 0;
+            const taxa = Number(order.taxaEntrega) || 0;
+            const pago = Number(order.valorTotalPago) || 0;
+            const saldo = Number(order.saldoRestante) || 0;
+            const criadoEm = order.criadoEm ? new Date(order.criadoEm) : new Date();
 
-    // 2. Opcional: Atualizar tabela estruturada de pedidos se houver
-    if (Array.isArray(snapshot?.orders)) {
-      for (const order of snapshot.orders) {
-        if (!order?.id) continue;
-        const total = Number(order.total) || 0;
-        const desc = Number(order.desconto) || 0;
-        const taxa = Number(order.taxaEntrega) || 0;
-        const pago = Number(order.valorTotalPago) || 0;
-        const saldo = Number(order.saldoRestante) || 0;
-        const criadoEm = order.criadoEm ? new Date(order.criadoEm) : new Date();
-
-        await p.query(
-          `INSERT INTO orders 
-           (id, numero, tipo, status, status_pagamento, mesa_numero, codigo_mesa, cliente_nome, cliente_telefone, total, desconto, taxa_entrega, valor_total_pago, saldo_restante, criado_em, raw_data)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-           ON DUPLICATE KEY UPDATE
-             status = VALUES(status),
-             status_pagamento = VALUES(status_pagamento),
-             total = VALUES(total),
-             desconto = VALUES(desconto),
-             valor_total_pago = VALUES(valor_total_pago),
-             saldo_restante = VALUES(saldo_restante),
-             raw_data = VALUES(raw_data)`,
-          [
-            order.id,
-            order.numero || 0,
-            order.tipo || 'balcao',
-            order.status || 'novo',
-            order.statusPagamento || 'pendente',
-            order.mesaNumero || null,
-            order.codigoMesa || null,
-            order.nomeCliente || null,
-            order.telefoneCliente || null,
-            total,
-            desc,
-            taxa,
-            pago,
-            saldo,
-            criadoEm,
-            JSON.stringify(order)
-          ]
-        ).catch(() => {});
+            await conn.query(
+              `INSERT INTO orders 
+               (id, numero, tipo, status, status_pagamento, mesa_numero, codigo_mesa, cliente_nome, cliente_telefone, total, desconto, taxa_entrega, valor_total_pago, saldo_restante, criado_em, raw_data)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON DUPLICATE KEY UPDATE
+                 status = VALUES(status),
+                 status_pagamento = VALUES(status_pagamento),
+                 total = VALUES(total),
+                 desconto = VALUES(desconto),
+                 valor_total_pago = VALUES(valor_total_pago),
+                 saldo_restante = VALUES(saldo_restante),
+                 raw_data = VALUES(raw_data)`,
+              [
+                order.id,
+                order.numero || 0,
+                order.tipo || 'balcao',
+                order.status || 'novo',
+                order.statusPagamento || 'pendente',
+                order.mesaNumero || null,
+                order.codigoMesa || null,
+                order.nomeCliente || null,
+                order.telefoneCliente || null,
+                total,
+                desc,
+                taxa,
+                pago,
+                saldo,
+                criadoEm,
+                JSON.stringify(order)
+              ]
+            );
+          }
+          // Espelhar configuração do estabelecimento em tabela estruturada.
+          if (snapshot?.settings?.id) {
+            const s = snapshot.settings;
+            await conn.query(
+              `INSERT INTO restaurant_settings (id, nome_fantasia, razao_social, nome_curto, cnpj, telefone, cidade, estado, setup_complete, raw_data)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON DUPLICATE KEY UPDATE
+                 nome_fantasia = VALUES(nome_fantasia),
+                 razao_social = VALUES(razao_social),
+                 nome_curto = VALUES(nome_curto),
+                 cnpj = VALUES(cnpj),
+                 telefone = VALUES(telefone),
+                 cidade = VALUES(cidade),
+                 estado = VALUES(estado),
+                 setup_complete = VALUES(setup_complete),
+                 raw_data = VALUES(raw_data)`,
+              [
+                String(s.id),
+                s.nomeFantasia || null,
+                s.razaoSocial || null,
+                s.nomeCurto || null,
+                s.cnpj || null,
+                s.telefone || null,
+                s.cidade || null,
+                s.estado || null,
+                s.setupComplete ? 1 : 0,
+                JSON.stringify(s)
+              ]
+            );
+          }
+          await conn.commit();
+        } catch (e) {
+          await conn.rollback();
+          throw e;
+        } finally {
+          conn.release();
+        }
       }
-    }
 
-    return true;
+      return true;
   } catch (err: any) {
     lastError = err?.message;
     console.error('[MariaDB] Erro ao salvar dados:', err?.message);

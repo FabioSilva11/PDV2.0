@@ -1,5 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
-import { 
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';import {
   AppModule,
   MenuItem, 
   CartItem, 
@@ -14,38 +13,44 @@ import {
   PrintJob,
   SystemAlert,
   ManualPaymentOption,
-  CategoryType, Customer, Reservation, UserAccount, PermissionKey, AuditLog
+  CategoryType, Customer, Reservation, UserAccount, PermissionKey, AuditLog,
+  RestaurantSettings, MenuCategory
 } from '../types';
 import { 
   INITIAL_MENU, 
   INITIAL_TABLES, 
   INITIAL_PRINTERS, 
-  INITIAL_ALERTS, 
-  INITIAL_CASH_REGISTER, 
   INITIAL_MANUAL_PAYMENTS
 } from '../data/seedData';
 import { LocalStore, useStoreField } from '../lib/localStore';
 import { uid, money, amount, subtotal as calculateSubtotal, totals, reconcile } from '../utils/business';
 import { sounds } from '../utils/audio';
 import {
-  firebaseDatabaseEnabled,
-  loadRemoteDatabase,
-  saveRemoteDatabase
-} from '../lib/firebaseDatabase';
+  DEFAULT_MENU_CATEGORIES,
+  getMenuCategoryByLegacyName,
+  getCategoryById,
+  isCategoryAllowedForCatalog as checkCategoryAllowed
+} from '../data/menuCategories';
 import {
   loadMariaDatabase,
   saveMariaDatabase,
   checkMariaDbHealth,
   mariaDatabaseEnabled
 } from '../lib/mariaDatabase';
+import {
+  DEFAULT_RESTAURANT_SETTINGS,
+  normalizeRestaurantSettings
+} from '../config/defaultSettings';
+import { AUDIT_LOG_MAX_ENTRIES, STORAGE_KEYS } from '../config/appConfig';
+import { hashPassword, verifyPassword, createSession, loadSession, clearSession } from '../lib/auth';
 
 interface HealthStatus {
-  internet: 'online' | 'offline' | 'atencao';
-  servidor: 'online' | 'offline' | 'atencao';
-  sistema: 'online' | 'offline' | 'atencao';
-  impressoras: 'online' | 'offline' | 'atencao';
-  mariadb?: 'online' | 'offline' | 'atencao';
-  ultimoBackup: string;
+  internet: 'online' | 'offline' | 'atencao' | 'unknown';
+  servidor: 'online' | 'offline' | 'atencao' | 'unknown';
+  sistema: 'online' | 'offline' | 'atencao' | 'unknown';
+  impressoras: 'online' | 'offline' | 'atencao' | 'unknown';
+  mariadb?: 'online' | 'offline' | 'atencao' | 'unknown';
+  ultimoBackup: string; // "Não configurado" até existir mecanismo real
   ultimaSincronizacao: string;
 }
 
@@ -53,23 +58,33 @@ export interface CurrentUser {
   id: string;
   nome: string;
   cargo: string;
+  perfil?: UserRole;
   usuario?: string;
+  isPrimaryAdmin?: boolean;
 }
-
-const DEFAULT_ADMIN: CurrentUser = {
-  id: 'usr-1',
-  nome: 'Carlos Mendes',
-  cargo: 'Administrador',
-  usuario: 'admin'
-};
+import type { UserRole } from '../types';
 
 interface RestaurantContextType {
   // Navigation & Active State
   activeModule: AppModule;
   setActiveModule: (mod: AppModule) => void;
-  currentUser: CurrentUser;
+  currentUser: CurrentUser | null;
   hasPermission: (permission: PermissionKey) => boolean;
   users: UserAccount[]; saveUser: (user: UserAccount) => void;
+  changeUserPassword: (userId: string, senha: string) => Promise<void>;
+  // Autenticação
+  login: (usuario: string, senha: string) => Promise<{ ok: boolean; error?: string }>;
+  logout: () => void;
+  authChecked: boolean;
+  needsSetup: boolean; // assistente de primeira execução
+  completeSetup: (payload: { settings: Partial<RestaurantSettings>; admin: { nome: string; usuario: string; senha: string } }) => Promise<void>;
+  // Configuração do estabelecimento
+  settings: RestaurantSettings;
+  saveSettings: (patch: Partial<RestaurantSettings>) => void;
+  menuCategories: MenuCategory[];
+  saveMenuCategory: (category: MenuCategory) => void;
+  deleteMenuCategory: (id: string) => void;
+  isCategoryAllowedForCatalog: (category: MenuCategory | undefined, catalogo: MenuCatalog) => boolean;
   customers: Customer[]; saveCustomer: (customer: Customer) => void; deleteCustomer: (id: string) => void;
   reservations: Reservation[]; saveReservation: (reservation: Reservation) => void; updateReservationStatus: (id: string, status: Reservation['status']) => void;
   auditLogs: AuditLog[];
@@ -159,13 +174,15 @@ interface RestaurantContextType {
 
 const RestaurantContext = createContext<RestaurantContextType | null>(null);
 
-const DATABASE_STORAGE_KEY = 'murupi_restaurant_database_v1';
-const LEGACY_STORAGE_PREFIXES = ['rest_saas_v6_', 'rest_saas_v5_', 'rest_saas_v4_', 'rest_saas_v3_'];
+const DATABASE_STORAGE_KEY = STORAGE_KEYS.database;
+const LEGACY_STORAGE_PREFIXES = ['murupi_restaurant_database_v1', 'rest_saas_v6_', 'rest_saas_v5_', 'rest_saas_v4_', 'rest_saas_v3_'];
 
 interface RestaurantDatabaseSnapshot {
   operationalDemoResetApplied?: boolean;
+  settings?: Partial<RestaurantSettings>;
   alerts?: SystemAlert[];
   menu?: MenuItem[];
+  menuCategories?: MenuCategory[];
   orders?: Order[];
   paymentOptions?: ManualPaymentOption[];
   tables?: Table[];
@@ -202,6 +219,7 @@ export const normalizePrinter = (printer: any): PrinterDevice => ({
     catalogos: asArray(r.catalogos, []),
     tiposPedido: asArray(r.tiposPedido, []),
     categorias: asArray(r.categorias, []),
+    categoriaIds: asArray(r.categoriaIds, []),
     estacoes: asArray(r.estacoes, []),
     prioridade: Number.isFinite(Number(r.prioridade)) ? Number(r.prioridade) : index + 1,
     modo: 'incluir',
@@ -270,28 +288,40 @@ const asArray = <T,>(value: T[] | Record<string, T> | undefined, fallback: T[]):
   return fallback;
 };
 
+/** Caixa em estado neutro: fechado, zerado, sem operador fixo. */
+const EMPTY_CASH_REGISTER: CashRegister = {
+  id: 'csh-current',
+  aberto: false,
+  saldoInicial: 0,
+  saldoAtualGaveta: 0,
+  transacoes: []
+};
+
 export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [database] = useState<RestaurantDatabaseSnapshot>(loadRestaurantDatabase);
   const [store] = useState(() => new LocalStore(DATABASE_STORAGE_KEY));
   const [operationError, setOperationError] = useState('');
-  // Navigation & User
+  // Navigation & User — o usuário atual vem SEMPRE da sessão (login) ou do
+  // assistente de instalação. Nunca é um usuário fixo no código.
   const [activeModule, setActiveModule] = useState<AppModule>('dashboard');
-  const currentUser = DEFAULT_ADMIN;
-  const [users, setUsers] = useStoreField<UserAccount[]>(store, 'users', () => database.users || [{ id: DEFAULT_ADMIN.id, nome: DEFAULT_ADMIN.nome, usuario: DEFAULT_ADMIN.usuario || 'admin', cargo: DEFAULT_ADMIN.cargo, perfil: 'administrador', ativo: true, permissoes: ['pdv','pedidos','mesas','caixa','cardapio','clientes','reservas','desconto','cancelamento','reabertura','auditoria','usuarios'] }]);
+  const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
+  const [authChecked, setAuthChecked] = useState(false);
+  const [users, setUsers] = useStoreField<UserAccount[]>(store, 'users', () => database.users || []);
   const [customers, setCustomers] = useStoreField<Customer[]>(store, 'customers', () => database.customers || []);
   const [reservations, setReservations] = useStoreField<Reservation[]>(store, 'reservations', () => database.reservations || []);
   const [auditLogs, setAuditLogs] = useStoreField<AuditLog[]>(store, 'auditLogs', () => database.auditLogs || []);
-  const hasPermission = useCallback((permission: PermissionKey) => { const user = users.find(u => u.id === currentUser.id); return user?.ativo !== false && (user?.perfil === 'administrador' || !!user?.permissoes?.includes(permission)); }, [users, currentUser.id]);
-  const recordAudit = useCallback((acao: string, entidade: string, entidadeId?: string, detalhes?: string) => { setAuditLogs(prev => [{ id: uid('audit'), dataHora: new Date().toISOString(), usuarioId: currentUser.id, usuarioNome: currentUser.nome, acao, entidade, entidadeId, detalhes }, ...prev].slice(0, 5000)); }, [setAuditLogs, currentUser]);
+  const hasPermission = useCallback((permission: PermissionKey) => { if (!currentUser) return false; const user = users.find(u => u.id === currentUser.id); return user?.ativo !== false && (user?.perfil === 'administrador' || !!user?.permissoes?.includes(permission)); }, [users, currentUser?.id]);
+  const recordAudit = useCallback((acao: string, entidade: string, entidadeId?: string, detalhes?: string) => { if (!currentUser) return; setAuditLogs(prev => [{ id: uid('audit'), dataHora: new Date().toISOString(), usuarioId: currentUser.id, usuarioNome: currentUser.nome, acao, entidade, entidadeId, detalhes }, ...prev].slice(0, AUDIT_LOG_MAX_ENTRIES)); }, [setAuditLogs, currentUser]);
 
-  // Operational Health
+  // Operational Health — valores iniciais "unknown": só exibimos métrica
+  // realmente medida. Backup só aparece quando existir mecanismo real.
   const [health, setHealth] = useState<HealthStatus>({
-    internet: 'online',
-    servidor: 'online',
-    sistema: 'online',
-    impressoras: 'atencao',
-    ultimoBackup: 'Hoje às 11:30',
-    ultimaSincronizacao: 'Há poucos segundos'
+    internet: 'unknown',
+    servidor: 'unknown',
+    sistema: 'unknown',
+    impressoras: 'unknown',
+    ultimoBackup: 'Não configurado',
+    ultimaSincronizacao: 'Aguardando verificação'
   });
   const [isHealthModalOpen, setIsHealthModalOpen] = useState(false);
 
@@ -305,6 +335,43 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const [menu, setMenu] = useStoreField<MenuItem[]>(store, 'menu', () => {
     return (database.menu || INITIAL_MENU).map(normalizeMenuItem);
   });
+
+  // =============================================================
+  // CONFIGURAÇÃO ÚNICA DO ESTABELECIMENTO (restaurant_settings)
+  // Fonte de verdade para identidade, PIX, taxas e limites.
+  // =============================================================
+  const [settings, setSettings] = useStoreField<RestaurantSettings>(store, 'settings', () => normalizeRestaurantSettings(database.settings));
+  const saveSettings = useCallback((patch: Partial<RestaurantSettings>) => {
+    if (!currentUser) throw new Error('Faça login para alterar a configuração.');
+    setSettings(prev => normalizeRestaurantSettings({ ...prev, ...patch, updatedAt: new Date().toISOString() }));
+    recordAudit('alterou configuração', 'configuracao', 'singleton', Object.keys(patch).join(', '));
+  }, [setSettings, currentUser, recordAudit]);
+
+  // =============================================================
+  // CATEGORIAS DINÂMICAS (menu_categories + catálogos)
+  // Uma categoria pode pertencer a restaurante, lanche ou ambos.
+  // =============================================================
+  const [menuCategories, setMenuCategories] = useStoreField<MenuCategory[]>(store, 'menuCategories', () => database.menuCategories || DEFAULT_MENU_CATEGORIES);
+  const saveMenuCategory = useCallback((category: MenuCategory) => {
+    if (!hasPermission('cardapio')) throw new Error('Sem permissão para alterar categorias.');
+    if (!category.nome?.trim()) throw new Error('Informe o nome da categoria.');
+    setMenuCategories(prev => {
+      const exists = prev.some(c => c.id === category.id);
+      if (exists) return prev.map(c => c.id === category.id ? category : c);
+      return [...prev, category];
+    });
+    recordAudit('alterou categoria', 'menu_category', category.id, `${category.nome} • ${category.catalogos.join('+')}`);
+  }, [setMenuCategories, hasPermission, recordAudit]);
+  const deleteMenuCategory = useCallback((id: string) => {
+    if (!hasPermission('cardapio')) throw new Error('Sem permissão para alterar categorias.');
+    const inUse = store.state.menu.some((m: MenuItem) => m.categoriaId === id || m.categoria === store.state.menuCategories?.find((c: MenuCategory) => c.id === id)?.nome);
+    if (inUse) throw new Error('Existem produtos usando esta categoria. Mova-os antes de excluí-la.');
+    setMenuCategories(prev => prev.filter(c => c.id !== id));
+    recordAudit('excluiu categoria', 'menu_category', id);
+  }, [setMenuCategories, hasPermission, recordAudit, store]);
+  const isCategoryAllowedForCatalog = useCallback((category: MenuCategory | undefined, catalogo: MenuCatalog) => {
+    return !!category && category.catalogos.includes(catalogo);
+  }, []);
 
   // Orders
   const [orders, setOrders] = useStoreField<Order[]>(store, 'orders', () => {
@@ -327,15 +394,30 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       : clearDemoTableOccupancy(database.tables || INITIAL_TABLES);
   });
 
-  const saveUser = useCallback((user: UserAccount) => { if (!hasPermission('usuarios')) throw new Error('Sem permissão para gerenciar usuários.'); setUsers(prev=>prev.some(u=>u.id===user.id)?prev.map(u=>u.id===user.id?user:u):[user,...prev]); recordAudit('alterou usuário','usuario',user.id,`${user.nome} • ${user.perfil}`); }, [hasPermission,setUsers,recordAudit]);
+  const saveUser = useCallback((user: UserAccount) => {
+    if (!hasPermission('usuarios')) throw new Error('Sem permissão para gerenciar usuários.');
+    setUsers(prev => {
+      // Regra de domínio: existe NO MÁXIMO UM administrador principal.
+      if (user.isPrimaryAdmin && prev.some(u => u.isPrimaryAdmin && u.id !== user.id)) {
+        throw new Error('Já existe um administrador principal. Apenas um é permitido.');
+      }
+      // Promover alguém a administrador sem ser o principal também é bloqueado:
+      const othersAdmin = prev.filter(u => u.perfil === 'administrador' && u.id !== user.id && !u.isPrimaryAdmin);
+      if (user.perfil === 'administrador' && !user.isPrimaryAdmin && othersAdmin.length === 0 && prev.some(u => u.isPrimaryAdmin)) {
+        throw new Error('Apenas o administrador principal pode ter perfil administrador.');
+      }
+      return prev.some(u => u.id === user.id) ? prev.map(u => u.id === user.id ? user : u) : [...prev, user];
+    });
+    recordAudit('alterou usuário','usuario',user.id,`${user.nome} • ${user.perfil}`);
+  }, [hasPermission,setUsers,recordAudit]);
   const saveCustomer = useCallback((c:Customer) => { setCustomers(prev=>prev.some(x=>x.id===c.id)?prev.map(x=>x.id===c.id?c:x):[c,...prev]); recordAudit('salvou cliente','cliente',c.id,c.nome); }, [setCustomers,recordAudit]);
   const deleteCustomer = useCallback((id:string)=>{setCustomers(prev=>prev.filter(c=>c.id!==id));recordAudit('excluiu cliente','cliente',id);},[setCustomers,recordAudit]);
   const saveReservation = useCallback((r:Reservation)=>{if(!hasPermission('reservas'))throw new Error('Sem permissão para gerenciar reservas.');setReservations(prev=>prev.some(x=>x.id===r.id)?prev.map(x=>x.id===r.id?r:x):[r,...prev]);if(r.mesaNumero&&r.status!=='cancelada'&&r.status!=='finalizada')setTables(prev=>prev.map(t=>t.numero===r.mesaNumero&&t.status==='livre'?{...t,status:'reservada'}:t));recordAudit('salvou reserva','reserva',r.id,`${r.clienteNome} • Mesa ${r.mesaNumero||'a definir'}`);},[hasPermission,setReservations,setTables,recordAudit]);
   const updateReservationStatus = useCallback((id:string,status:Reservation['status'])=>{const r=reservations.find(x=>x.id===id);setReservations(prev=>prev.map(x=>x.id===id?{...x,status}:x));if(r?.mesaNumero&&(status==='cancelada'||status==='finalizada'))setTables(prev=>prev.map(t=>t.numero===r.mesaNumero&&t.status==='reservada'?{...t,status:'livre'}:t));recordAudit('alterou status da reserva','reserva',id,status);},[reservations,setReservations,setTables,recordAudit]);
 
-  // Cash Register
+  // Cash Register — inicia FECHADO e zerado. Nenhum valor operacional fixo.
   const [cashRegister, setCashRegister] = useStoreField<CashRegister>(store, 'cashRegister', () => {
-    return database.cashRegister || INITIAL_CASH_REGISTER;
+    return database.cashRegister || EMPTY_CASH_REGISTER;
   });
 
   // Cash Register
@@ -382,33 +464,27 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     let cancelled = false;
 
     const hydrateDatabase = async () => {
-      // 1. Tentar carregar dados do MariaDB local
+      // MariaDB é a única persistência remota. Se estiver indisponível,
+      // mantemos o cache local (localStorage) sem sobrescrever o banco.
       let remote: RestaurantDatabaseSnapshot | undefined;
       try {
         remote = await loadMariaDatabase<RestaurantDatabaseSnapshot>();
       } catch {
-        // Fallback silencioso
-      }
-
-      // 2. Se MariaDB não retornou dados e Firebase estiver habilitado, tenta Firebase
-      if (!remote && firebaseDatabaseEnabled) {
-        try {
-          remote = await loadRemoteDatabase<RestaurantDatabaseSnapshot>();
-        } catch {
-          // Fallback silencioso
-        }
+        // MariaDB indisponível: segue com cache local
       }
 
       if (cancelled) return;
 
       if (remote) {
+        setSettings(normalizeRestaurantSettings(remote.settings || database.settings));
+        setMenuCategories(asArray(remote.menuCategories, DEFAULT_MENU_CATEGORIES));
         setAlerts(remote.operationalDemoResetApplied ? asArray(remote.alerts, []) : []);
         setMenu(asArray(remote.menu, database.menu || INITIAL_MENU).map(normalizeMenuItem));
         setOrders(remote.operationalDemoResetApplied ? asArray(remote.orders, []) : []);
         setPaymentOptions(asArray(remote.paymentOptions, database.paymentOptions || INITIAL_MANUAL_PAYMENTS));
         const remoteTables = asArray(remote.tables, database.tables || INITIAL_TABLES);
         setTables(remote.operationalDemoResetApplied ? remoteTables : clearDemoTableOccupancy(remoteTables));
-        setCashRegister(remote.cashRegister || database.cashRegister || INITIAL_CASH_REGISTER);
+        setCashRegister(remote.cashRegister || database.cashRegister || EMPTY_CASH_REGISTER);
         setPrinters(asArray(remote.printers, database.printers || INITIAL_PRINTERS).map(normalizePrinter));
         setPrintQueue(asArray(remote.printQueue, []).map(normalizePrintJob));
         setUsers(asArray(remote.users, users)); setCustomers(asArray(remote.customers, [])); setReservations(asArray(remote.reservations, [])); setAuditLogs(asArray(remote.auditLogs, []));
@@ -426,28 +502,88 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   store.state.operationalDemoResetApplied = true;
   useEffect(() => {
     store.onCommit = snapshot => {
-      // Salva no MariaDB
+      // Persistência: MariaDB (autoridade) + localStorage (cache via LocalStore)
       void saveMariaDatabase(snapshot);
-      // Se Firebase estiver configurado, salva também
-      if (firebaseDatabaseEnabled) {
-        void saveRemoteDatabase(snapshot).catch(error => setOperationError(error.message));
-      }
     };
     return () => { store.onCommit = undefined; };
   }, [store]);
 
+  // =============================================================
+  // AUTENTICAÇÃO — login no frontend (PBKDF2), sessão persistida.
+  // A sessão é restaurada de forma SÍNCRONA no primeiro render para que
+  // hasPermission/currentUser estejam válidos imediatamente.
+  // =============================================================
+  if (!authChecked) {
+    const session = loadSession();
+    const usersList = store.state.users as UserAccount[] | undefined;
+    if (session) {
+      const user = (usersList || []).find(u => u.id === session.userId && u.ativo);
+      if (user) {
+        setCurrentUser({ id: user.id, nome: user.nome, cargo: user.cargo, perfil: user.perfil, usuario: user.usuario, isPrimaryAdmin: user.isPrimaryAdmin });
+      } else {
+        clearSession();
+      }
+    }
+    setAuthChecked(true);
+  }
+
+  const needsSetup = !settings.setupComplete;
+
+  const login = useCallback(async (usuario: string, senha: string): Promise<{ ok: boolean; error?: string }> => {
+    const normalized = usuario.trim().toLowerCase();
+    const user = users.find(u => u.usuario?.toLowerCase() === normalized && u.ativo);
+    if (!user) return { ok: false, error: 'Usuário não encontrado ou inativo.' };
+    if (!user.senhaHash) return { ok: false, error: 'Usuário sem senha configurada. Recrie o usuário ou redefina a senha.' };
+    const valid = await verifyPassword(senha, user.senhaHash);
+    if (!valid) return { ok: false, error: 'Senha incorreta.' };
+    createSession(user);
+    setCurrentUser({ id: user.id, nome: user.nome, cargo: user.cargo, perfil: user.perfil, usuario: user.usuario, isPrimaryAdmin: user.isPrimaryAdmin });
+    setUsers(prev => prev.map(u => u.id === user.id ? { ...u, lastLoginAt: new Date().toISOString() } : u));
+    return { ok: true };
+  }, [users, setUsers]);
+
+  const logout = useCallback(() => {
+    clearSession();
+    setCurrentUser(null);
+    setActiveModule('dashboard');
+  }, []);
+
+  const changeUserPassword = useCallback(async (userId: string, senha: string) => {
+    if (!currentUser) throw new Error('Faça login para alterar senhas.');
+    if (!hasPermission('usuarios')) throw new Error('Sem permissão para gerenciar usuários.');
+    const hash = await hashPassword(senha);
+    setUsers(prev => prev.map(u => u.id === userId ? { ...u, senhaHash: hash } : u));
+    recordAudit('alterou senha', 'usuario', userId);
+  }, [currentUser, hasPermission, setUsers, recordAudit]);
+
+  const completeSetup = useCallback(async (payload: { settings: Partial<RestaurantSettings>; admin: { nome: string; usuario: string; senha: string } }) => {
+    const senhaHash = await hashPassword(payload.admin.senha);
+    const adminId = 'usr-primary-admin';
+    // Garante que existe NO MÁXIMO um administrador principal.
+    setUsers(prev => [
+      ...prev.filter(u => !u.isPrimaryAdmin && u.perfil !== 'administrador'),
+      { id: adminId, nome: payload.admin.nome.trim(), usuario: payload.admin.usuario.trim().toLowerCase(), senhaHash, cargo: 'Administrador', perfil: 'administrador' as const, ativo: true, isPrimaryAdmin: true, permissoes: ['pdv','pedidos','mesas','caixa','cardapio','clientes','reservas','desconto','cancelamento','reabertura','auditoria','usuarios','impressoras','configuracoes'], criadoEm: new Date().toISOString() }
+    ]);
+    setSettings(normalizeRestaurantSettings({ ...DEFAULT_RESTAURANT_SETTINGS, ...payload.settings, setupComplete: true }));
+    createSession({ id: adminId, nome: payload.admin.nome.trim(), usuario: payload.admin.usuario.trim().toLowerCase(), cargo: 'Administrador', perfil: 'administrador', ativo: true, isPrimaryAdmin: true, permissoes: [] });
+    setCurrentUser({ id: adminId, nome: payload.admin.nome.trim(), cargo: 'Administrador', perfil: 'administrador', usuario: payload.admin.usuario.trim().toLowerCase(), isPrimaryAdmin: true });
+    recordAudit('concluiu configuração inicial', 'configuracao', 'singleton');
+  }, [setUsers, setSettings, recordAudit]);
+
   // Refresh Health
   const refreshHealth = useCallback(() => {
-    const hasOfflinePrinters = store.state.printers.some(p => p.status === 'offline');
+    const hasOfflinePrinters = store.state.printers.some((p: PrinterDevice) => p.status === 'offline');
     void checkMariaDbHealth().then(({ dbStatus }) => {
       setHealth({
-        internet: 'online',
-        servidor: 'online',
-        sistema: 'online',
+        // Internet só é "online" se verificado de fato (fetch ao backend).
+        internet: dbStatus ? 'online' : 'offline',
+        servidor: dbStatus ? 'online' : 'offline',
+        sistema: dbStatus ? 'online' : 'atencao',
         impressoras: hasOfflinePrinters ? 'atencao' : 'online',
         mariadb: dbStatus?.connected ? 'online' : 'offline',
-        ultimoBackup: 'Hoje às ' + new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
-        ultimaSincronizacao: 'Sincronizado agora'
+        // Não há rotina de backup implementada: reportar "Não configurado".
+        ultimoBackup: 'Não configurado',
+        ultimaSincronizacao: dbStatus ? 'Sincronizado agora' : 'MariaDB indisponível'
       });
     });
     if (soundEnabled) sounds.click();
@@ -545,8 +681,10 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   };
   const activePrinters = () => store.state.printers.filter((p: PrinterDevice) => p.ativa && p.status === 'online');
   const buildOrderPrintContent = (order: Order, title: string, items = order.itens) => {
+    const s = store.state.settings as RestaurantSettings;
+    const headerName = (s?.nomeFantasia || s?.nomeCurto || 'ESTABELECIMENTO').toUpperCase();
     const lines = [
-      'MURUPI RESTAURANTE', title, `PEDIDO ${order.codigoMesa ? order.codigoMesa + ' • ' : ''}#${order.numero}`, `TIPO: ${order.tipo.toUpperCase()}`,
+      headerName, title, `PEDIDO ${order.codigoMesa ? order.codigoMesa + ' • ' : ''}#${order.numero}`, `TIPO: ${order.tipo.toUpperCase()}`,
       order.mesaNumero ? `MESA: ${order.mesaNumero}` : '', order.nomeCliente ? `CLIENTE: ${order.nomeCliente}` : '',
       order.telefoneCliente ? `TELEFONE: ${order.telefoneCliente}` : '',
       order.tipo === 'delivery' && order.enderecoEntrega ? `ENDEREÇO: ${order.enderecoEntrega.logradouro}, ${order.enderecoEntrega.numero} - ${order.enderecoEntrega.bairro}` : '',
@@ -573,12 +711,16 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const printerMatchesRule = (printer: PrinterDevice, order: Order, item: CartItem, tipo: PrintRouteDocument) => {
     const rules = (printer.regras || []).filter(r => r.ativo).sort((a, b) => a.prioridade - b.prioridade);
     if (!rules.length) return printerMatchesLegacyPurpose(printer, tipo);
+    const menuItem = store.state.menu.find((m: MenuItem) => m.id === item.menuItemId);
+    const catalogo = menuItem?.catalogo || 'restaurante';
     return rules.some(rule => {
       const docOk = !rule.documentos.length || rule.documentos.includes(tipo);
-      const catalogo = store.state.menu.find(m => m.id === item.menuItemId)?.catalogo || 'restaurante';
       const catalogoOk = !rule.catalogos.length || rule.catalogos.includes(catalogo as MenuCatalog);
       const tipoOk = !rule.tiposPedido.length || rule.tiposPedido.includes(order.tipo as OrderType);
-      const categoriaOk = !rule.categorias.length || rule.categorias.includes((store.state.menu.find(m => m.id === item.menuItemId)?.categoria || '') as CategoryType);
+      // Roteamento por categoria usa IDs (categoriaIds); o campo textual legado
+      // continua aceito para compatibilidade com dados antigos.
+      const categoriaOk = (!rule.categoriaIds?.length || rule.categoriaIds.includes(menuItem?.categoriaId || '')) &&
+        (!rule.categorias?.length || rule.categorias.includes((menuItem?.categoria || '') as CategoryType));
       const estacaoOk = !rule.estacoes.length || rule.estacoes.includes(item.estacaoProducao as KitchenStation);
       return docOk && catalogoOk && tipoOk && categoriaOk && estacaoOk;
     });
@@ -1278,7 +1420,10 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       value={guardActions({
         activeModule,
         setActiveModule,
-        currentUser, hasPermission, users, saveUser, customers, saveCustomer, deleteCustomer, reservations, saveReservation, updateReservationStatus, auditLogs,
+        currentUser, hasPermission, users, saveUser, changeUserPassword,
+        login, logout, authChecked, needsSetup, completeSetup,
+        settings, saveSettings, menuCategories, saveMenuCategory, deleteMenuCategory, isCategoryAllowedForCatalog,
+        customers, saveCustomer, deleteCustomer, reservations, saveReservation, updateReservationStatus, auditLogs,
 
         health,
         refreshHealth,

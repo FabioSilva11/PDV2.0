@@ -2,6 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { RestaurantProvider, useRestaurant } from './context/RestaurantContext';
 import { Sidebar } from './components/layout/Sidebar';
 import { Topbar } from './components/layout/Topbar';
+import { LoginView } from './components/admin/LoginView';
+import { SetupWizard } from './components/admin/SetupWizard';
+import { SettingsView } from './components/admin/SettingsView';
 import { DashboardView } from './components/dashboard/DashboardView';
 import { OrdersView } from './components/orders/OrdersView';
 import { POSView } from './components/pdv/POSView';
@@ -22,7 +25,7 @@ import { OperationHealthModal } from './components/layout/OperationHealthModal';
 import { AlertsDrawer } from './components/layout/AlertsDrawer';
 
 const MainAppContent: React.FC = () => {
-  const { activeModule, setActiveModule } = useRestaurant();
+  const { activeModule, setActiveModule, currentUser, authChecked, needsSetup, settings } = useRestaurant();
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(false);
 
   // Atalhos: F1 PDV, F2 Pedidos, F3 Mesas, F4 Caixa
@@ -46,6 +49,18 @@ const MainAppContent: React.FC = () => {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [setActiveModule]);
+
+  // Gate de autenticação: primeiro o assistente de configuração inicial
+  // (quando não há settings), depois o login. Nenhum usuário fixo no código.
+  if (!authChecked) {
+    return <div className="min-h-screen bg-slate-50 flex items-center justify-center text-slate-400 text-sm">Carregando…</div>;
+  }
+  if (needsSetup) {
+    return <SetupWizard />;
+  }
+  if (!currentUser) {
+    return <LoginView />;
+  }
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans selection:bg-sky-200 selection:text-sky-900">
@@ -71,15 +86,15 @@ const MainAppContent: React.FC = () => {
             {activeModule === 'reservas' && <ReservationsView />}
             {activeModule === 'usuarios' && <UsersView />}
             {activeModule === 'auditoria' && <AuditView />}
+            {activeModule === 'configuracoes' && <SettingsView />}
           </main>
 
           {/* Quick status bar at the bottom */}
           <footer className="bg-white border-t border-slate-200 py-1.5 px-4 text-slate-500 text-[11px] flex items-center justify-between z-10 shrink-0 print:hidden">
             <div className="flex items-center gap-2">
               <span className="w-2 h-2 rounded-full bg-emerald-500" />
-              <span className="font-semibold text-slate-700">Murupi Gastronomia & Lanches</span>
-              <span>• Ecossistema SaaS v3.2</span>
-              <span className="hidden md:inline text-slate-400">• MariaDB Localhost</span>
+              <span className="font-semibold text-slate-700">{settings.nomeFantasia || settings.nomeAplicacao}</span>
+              {settings.nomeFantasia && settings.nomeAplicacao && <span>• {settings.nomeAplicacao} v{settings.versaoExibida}</span>}
             </div>
 
             <div className="flex items-center gap-3 text-slate-400 text-[10px]">

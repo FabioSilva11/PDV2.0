@@ -1,0 +1,1047 @@
+Analise e refatore o projeto completo:
+
+https://github.com/FabioSilva11/PDV2.0.git
+
+OBJETIVO:
+
+Eliminar os hardcodes de dados de negócio, identidade, configuração
+operacional e infraestrutura que hoje impedem o sistema de ser
+realmente configurável.
+
+Não quero simplesmente transformar todos os números e strings em
+variáveis.
+
+Quero identificar o que é:
+
+1. dado de negócio;
+2. configuração do estabelecimento;
+3. configuração operacional;
+4. dado de seed;
+5. contrato técnico;
+6. regra de domínio;
+7. constante puramente visual/técnica.
+
+Somente os itens 1–4 devem sair do código para configuração/dados
+persistentes quando fizer sentido.
+
+Contratos técnicos e invariantes matemáticos podem continuar no código,
+mas devem ser centralizados quando apropriado.
+
+============================================================
+1. RESTAURANT SETTINGS
+============================================================
+
+Criar:
+
+RestaurantSettings
+
+com pelo menos:
+
+id
+nomeFantasia
+razaoSocial
+nomeCurto
+cnpj
+inscricaoEstadual
+telefone
+email
+endereco
+numero
+bairro
+cidade
+estado
+cep
+logo
+nomeAplicacao
+versaoExibida
+moeda
+locale
+timezone
+rodapeComprovante
+
+Esses dados devem ser persistidos.
+
+Remover hardcodes de:
+
+App.tsx
+Topbar.tsx
+Sidebar.tsx
+ReceiptModal.tsx
+ThermalReceiptModal.tsx
+pix.ts
+PDF do app Garçom
+
+Nenhuma tela deve conter nome, CNPJ, telefone ou cidade fixa do Murupi.
+
+============================================================
+2. RESTAURANT ID / TENANT
+============================================================
+
+Criar restaurantId/tenantId real.
+
+Remover:
+
+restaurants/murupi/database
+
+como caminho fixo.
+
+Usar:
+
+restaurants/{restaurantId}/database
+
+O restaurantId deve vir da configuração/sessão.
+
+Preservar compatibilidade com o banco antigo durante a migração.
+
+============================================================
+3. AUTH / CURRENT USER
+============================================================
+
+Remover:
+
+DEFAULT_ADMIN como usuário operacional real.
+
+Implementar:
+
+sessão do usuário
+↓
+usuário autenticado
+↓
+currentUser
+
+Auditoria, caixa, pagamentos, pedidos, reservas e impressões devem
+usar o usuário da sessão.
+
+Criar mecanismo de inicialização segura:
+
+primeiro usuário administrador
+
+sem fingir que o operador atual é sempre "Carlos Mendes".
+
+============================================================
+4. USERS / ROLES / PERMISSIONS
+============================================================
+
+Tirar do código como fonte de negócio:
+
+roles
+permissions
+
+Criar estruturas persistentes.
+
+Permitir:
+
+criar role
+editar role
+ativar/desativar role
+atribuir permissões
+
+Manter roles padrão somente como seed inicial:
+
+administrador
+gerente
+caixa
+garcom
+
+Não destruir usuários existentes.
+
+============================================================
+5. MENU CATEGORIES
+============================================================
+
+Criar:
+
+MenuCategory {
+  id
+  nome
+  catalogos: MenuCatalog[]
+  ordem
+  ativo
+}
+
+Uma categoria pode pertencer a:
+
+Restaurante
+Lanche
+ambos
+
+Exemplo:
+
+Porções:
+['restaurante','lanche']
+
+Bebidas:
+['restaurante','lanche']
+
+Sucos:
+['restaurante','lanche']
+
+Combos:
+['restaurante','lanche']
+
+Pratos principais:
+['restaurante']
+
+Hambúrgueres:
+['lanche']
+
+Remover CategoryType como fonte principal.
+
+MenuItem deve ter:
+
+categoriaId
+catalogo
+
+e categoria textual somente para compatibilidade.
+
+Centralizar:
+
+isCategoryAllowedForCatalog()
+
+============================================================
+6. MENU ITEMS
+============================================================
+
+O cardápio real deve vir do banco.
+
+INITIAL_MENU / INITIAL_MENU_ITEMS / LEGACY_INITIAL_MENU /
+cardapio_murupi_completo.json devem ser tratados somente como seed,
+migração ou importação.
+
+Não usar seed como fonte runtime.
+
+"Restaurar padrão" só pode sobrescrever dados mediante confirmação
+explícita e deve possuir comportamento claro de restauração.
+
+Nunca apagar menu personalizado automaticamente.
+
+============================================================
+7. PRODUTOS CONFIGURÁVEIS
+============================================================
+
+MenuItem deve suportar:
+
+categoria
+catálogo
+preço
+descrição
+disponibilidade
+variações
+guarnições
+adicionais
+ingredientes removíveis
+estação de produção
+
+Criar UX completa para todos esses recursos.
+
+============================================================
+8. INGREDIENTES REMOVÍVEIS
+============================================================
+
+Implementar corretamente:
+
+remocoesDisponiveis
+
+Cada produto pode possuir:
+
+Cebola
+Tempero da casa
+Molho especial
+Pimenta
+etc.
+
+Cadastro:
+
+[ + adicionar ]
+
+cards individuais.
+
+Pedido:
+
+Retirar ingredientes.
+
+Impressão:
+
+SEM:
+Cebola
+Tempero
+Molho
+
+Não transformar remoção em simples texto de observação.
+
+============================================================
+9. GUARNIÇÕES
+============================================================
+
+Remover defaults artificiais como:
+
+Arroz branco
+Macarrão
+Farofa
+Salada crua
+
+como conteúdo automático para produto novo.
+
+Produto novo começa sem guarnições.
+
+Usuário escolhe quais existem.
+
+Preservar dados antigos.
+
+============================================================
+10. ADICIONAIS
+============================================================
+
+Tratar:
+
+gruposAdicionais
+
+como configuração real.
+
+Suportar:
+
+mínimo
+máximo
+obrigatório
+preço
+
+no:
+
+PDV
+edição de pedido
+impressão
+
+============================================================
+11. KITCHEN STATIONS
+============================================================
+
+Criar configuração de estações.
+
+Seed inicial:
+
+cozinha
+chapa
+bar
+pizza
+sobremesa
+
+Mas permitir:
+
+criar
+editar
+desativar
+ordenar
+
+Roteamento de impressoras deve usar os IDs das estações.
+
+============================================================
+12. PAYMENT METHODS
+============================================================
+
+Mover INITIAL_MANUAL_PAYMENTS para seed/configuração.
+
+Criar:
+
+PaymentMethodConfig
+
+com:
+
+id
+nome
+ativo
+permiteTroco
+ordem
+
+Não assumir que todo restaurante usa exatamente:
+
+dinheiro
+pix
+debito
+credito
+VR
+VA
+cortesia
+fiado
+outro
+
+============================================================
+13. QUICK CASH
+============================================================
+
+Valores:
+
+20
+50
+100
+200
+
+não devem ficar no componente.
+
+Criar:
+
+cashier.quickAmounts
+
+Configurável.
+
+============================================================
+14. DELIVERY SETTINGS
+============================================================
+
+Remover:
+
+deliveryFee = 7
+
+Criar:
+
+deliverySettings.defaultFee
+
+Remover:
+
+Centro
+S/N
+Endereço informado no balcão
+
+como valores automáticos falsos.
+
+Não inventar endereço.
+
+Se endereço estiver incompleto:
+
+mostrar erro ou permitir complementação.
+
+============================================================
+15. TABLES
+============================================================
+
+Mesas devem ser dados persistentes.
+
+Permitir:
+
+criar
+editar
+excluir/desativar
+capacidade
+setor
+posição
+formato
+número
+
+Corrigir inconsistência:
+
+INITIAL_TABLES_COUNT = 15
+
+enquanto INITIAL_TABLES possui 16.
+
+Uma única fonte deve determinar o número real de mesas.
+
+============================================================
+16. PRINTERS
+============================================================
+
+Remover defaults de negócio:
+
+192.168.1.120
+192.168.1.121
+192.168.1.122
+192.168.1.123
+192.168.1.200
+
+E modelos/nomes de impressoras como seed apenas.
+
+Impressoras devem ser persistentes.
+
+Criar configuração real:
+
+nome
+local
+tipo
+IP
+porta
+modelo
+papel
+ativa
+status
+finalidade
+regras
+
+============================================================
+17. PRINTER ROUTING
+============================================================
+
+NÃO manter:
+
+CATEGORIAS = [...]
+
+dentro de PrinterModal.
+
+Consumir:
+
+MenuCategory
+
+da configuração central.
+
+Roteamento deve usar:
+
+documento
+catálogo
+categoriaId
+tipoPedido
+estação
+
+Não usar somente nome textual.
+
+Categoria compartilhada deve funcionar corretamente:
+
+Porções + Restaurante
+Porções + Lanche
+
+============================================================
+18. HEALTH
+============================================================
+
+Remover métricas fictícias:
+
+16ms
+0.00%
+12% uso
+Google Cloud Run
+v3.4.0 SaaS Pro
+Hoje às 11:30
+Há poucos segundos
+
+Health deve ser baseado em métricas reais.
+
+Inicialmente:
+
+unknown
+
+Depois de verificar:
+
+online
+offline
+atencao
+
+Mostrar:
+
+MariaDB
+backend
+Firebase quando habilitado
+impressoras
+internet
+última sincronização
+último backup
+
+Somente mostrar métricas que realmente são medidas.
+
+============================================================
+19. BACKUP / SYNC
+============================================================
+
+Não fingir backup.
+
+Registrar:
+
+ultimaSincronizacao real
+ultimoBackup real
+
+Se não existir backup configurado:
+
+mostrar:
+
+"Não configurado"
+
+e não:
+
+"Backup online".
+
+============================================================
+20. FIREBASE
+============================================================
+
+Remover:
+
+restaurants/murupi/database
+
+como caminho fixo.
+
+Usar restaurantId.
+
+Preservar mecanismo de merge.
+
+Não misturar identidade do banco com nome do restaurante.
+
+============================================================
+21. MARIADB
+============================================================
+
+Manter `.env` como configuração.
+
+Centralizar:
+
+DB_HOST
+DB_PORT
+DB_USER
+DB_PASSWORD
+DB_NAME
+SERVER_PORT
+
+Não depender de valores falsos silenciosos.
+
+Se configuração obrigatória estiver ausente:
+
+mostrar erro de configuração claro.
+
+Manter fallback local.
+
+Não quebrar o PDV por indisponibilidade do MariaDB.
+
+============================================================
+22. DATABASE SNAPSHOT
+============================================================
+
+Remover IDs globais fixos quando forem dados de tenant:
+
+restaurant_snapshot
+
+usar tenant/restaurantId.
+
+Manter schema técnico onde necessário.
+
+============================================================
+23. DASHBOARD
+============================================================
+
+Remover horários fixos:
+
+11
+12
+13
+14
+18
+19
+20
+21
+
+Calcular dinamicamente ou usar configuração:
+
+dashboard.salesStartHour
+dashboard.salesEndHour
+
+Remover:
+
+25 minutos
+
+como hardcode espalhado.
+
+Criar:
+
+operations.lateOrderThresholdMinutes
+
+Remover:
+
+top 5
+
+como regra espalhada.
+
+Criar configuração/constante centralizada.
+
+============================================================
+24. AUDIT
+============================================================
+
+Remover:
+
+slice(0,5000)
+
+como regra escondida.
+
+Criar:
+
+audit.retentionLimit
+
+ou fazer paginação.
+
+Nunca apagar histórico silenciosamente por limite arbitrário sem
+regra documentada.
+
+============================================================
+25. APP BRANDING
+============================================================
+
+Remover do JSX:
+
+Murupi Gastronomia & Lanches
+Ecossistema SaaS v3.2
+Murupi PDV
+Murupi Restaurante
+Murupi Garçom
+
+A versão deve vir do package/build.
+
+Nome da aplicação deve vir de RestaurantSettings.
+
+============================================================
+26. RECEIPTS
+============================================================
+
+ReceiptModal e ThermalReceiptModal devem usar:
+
+RestaurantSettings
+
+para:
+
+nome
+CNPJ
+IE
+endereço
+telefone
+cidade
+rodapé
+logo
+
+Nenhum dado empresarial deve ficar fixo.
+
+============================================================
+27. PIX
+============================================================
+
+Pix:
+
+chave
+merchantName
+merchantCity
+merchantDescription
+
+devem vir da configuração do estabelecimento.
+
+Não usar:
+
+MURUPI
+PORTO VELHO
+MURUPI RESTAURANTE
+
+como fallback de negócio.
+
+============================================================
+28. RESERVATIONS
+============================================================
+
+Remover defaults de negócio espalhados:
+
+2 pessoas
++1 hora
+Administrador
+
+Criar configuração:
+
+reservation.defaultGuests
+reservation.defaultAdvanceMinutes
+
+E usar usuário autenticado como criadoPor.
+
+============================================================
+29. SOUND SETTINGS
+============================================================
+
+Manter frequências técnicas em um único módulo.
+
+Criar configuração para:
+
+volume
+som ao adicionar
+som de pagamento
+som de cozinha
+som de impressão
+
+Não espalhar parâmetros.
+
+============================================================
+30. BUSINESS LIMITS
+============================================================
+
+Centralizar:
+
+valor máximo
+quantidade máxima
+nome máximo
+limites de desconto
+limites de auditoria
+
+Não deixar esses valores espalhados.
+
+============================================================
+31. SEEDS
+============================================================
+
+Todos os seeds devem:
+
+- executar apenas na primeira instalação;
+- ser importáveis;
+- nunca sobrescrever dados reais;
+- possuir IDs estáveis;
+- possuir migração de versão.
+
+Criar:
+
+databaseSchemaVersion
+
+ou equivalente.
+
+============================================================
+32. DUPLICAÇÃO DE DADOS
+============================================================
+
+Investigar e separar:
+
+INITIAL_MENU
+INITIAL_MENU_ITEMS
+LEGACY_INITIAL_MENU
+seedData
+cardapio_murupi_completo.json
+
+Definir:
+
+UMA fonte de seed oficial.
+
+As outras devem:
+
+- ser eliminadas;
+- virar migração;
+- virar fixture de teste;
+- ou ficar explicitamente marcadas como legado.
+
+Não deixar múltiplas fontes produzirem estados diferentes.
+
+============================================================
+33. APP GARÇOM / FLUTTER
+============================================================
+
+O projeto possui:
+
+src/meu app/
+
+Esse app também deve usar:
+
+restaurantId
+RestaurantSettings
+categories
+menu
+stations
+users
+
+Não deixar:
+
+restaurants/murupi/database
+
+fixo.
+
+Não deixar branding Murupi fixo.
+
+Não deixar regras de cargo fixas como única fonte.
+
+Preservar compatibilidade com Firebase.
+
+============================================================
+34. QA BACKUPS
+============================================================
+
+Arquivos em:
+
+.qa-backup/
+
+não devem ser utilizados pelo runtime.
+
+Marcar claramente como histórico.
+
+Avaliar remoção do repositório se não forem mais necessários.
+
+============================================================
+35. O QUE NÃO DEVE SER TRANSFORMADO EM BANCO
+============================================================
+
+Não transformar cegamente em configuração:
+
+- nomes de rotas da API;
+- status técnicos;
+- enums fundamentais;
+- formatos de moeda;
+- algoritmos matemáticos;
+- nomes de tabelas SQL;
+- nomes de campos;
+- regras invariantes de segurança.
+
+Centralizar apenas quando realmente for regra configurável.
+
+============================================================
+36. MIGRAÇÃO
+============================================================
+
+Implementar migração segura para os dados atuais:
+
+- menu
+- categorias
+- mesas
+- impressoras
+- pagamentos
+- usuários
+- reservas
+- pedidos
+- clientes
+- configurações
+
+Não perder dados existentes.
+
+Não apagar localStorage.
+
+Não apagar MariaDB.
+
+Não apagar Firebase.
+
+Criar normalizadores idempotentes.
+
+============================================================
+37. MULTI-RESTAURANTE
+============================================================
+
+Preparar o sistema para:
+
+Restaurante A
+Restaurante B
+Restaurante C
+
+sem que o código precise mudar.
+
+Todos os dados de negócio devem ser relacionados a:
+
+restaurantId
+
+quando aplicável.
+
+============================================================
+38. TESTES
+============================================================
+
+Criar testes para garantir:
+
+1. trocar nome do restaurante altera recibo;
+2. trocar telefone altera recibo;
+3. trocar CNPJ altera recibo;
+4. trocar cidade altera PIX;
+5. trocar taxa de entrega altera PDV;
+6. trocar quickAmounts altera pagamento;
+7. criar categoria para Restaurante funciona;
+8. criar categoria para Lanche funciona;
+9. compartilhar categoria entre os dois funciona;
+10. alterar categorias atualiza PDV;
+11. alterar categorias atualiza edição de pedidos;
+12. alterar categorias atualiza impressão;
+13. alterar estação atualiza roteamento;
+14. alterar impressora atualiza roteamento;
+15. trocar usuário atualiza auditoria;
+16. trocar usuário atualiza operador de caixa;
+17. trocar restaurantId isola dados;
+18. MariaDB offline não destrói dados;
+19. Firebase offline não destrói dados;
+20. health não exibe métrica fictícia;
+21. seed não sobrescreve dados;
+22. migração é idempotente;
+23. 15/16 mesas deixa de ser inconsistente;
+24. delivery sem endereço não inventa Centro/SN;
+25. ingredientes removíveis aparecem na impressão.
+
+============================================================
+39. VERIFICAÇÃO FINAL
+============================================================
+
+Executar:
+
+npm run lint
+npm run test
+npm run build
+npm run test:full
+
+E também executar os testes específicos:
+
+npm run test:vendas
+npm run test:caixa
+npm run test:matematica
+npm run test:ataque
+
+Depois verificar manualmente:
+
+- login;
+- usuário atual;
+- dashboard;
+- cardápio;
+- categorias;
+- PDV;
+- edição de pedido;
+- mesas;
+- caixa;
+- pagamentos;
+- impressoras;
+- roteamento;
+- recibos;
+- PIX;
+- reservas;
+- clientes;
+- auditoria;
+- health;
+- MariaDB;
+- Firebase;
+- app Garçom.
+
+============================================================
+RESULTADO FINAL
+============================================================
+
+Quero uma aplicação funcional e configurável.
+
+Não quero:
+
+"Murupi" espalhado pelo código.
+"Porto Velho" espalhado pelo código.
+IPs de impressora fixos.
+Taxa de entrega fixa.
+Categorias fixas.
+Formas de pagamento fixas.
+Usuário atual fixo.
+Métricas falsas.
+Mesas fixas.
+Cardápio fixo.
+Firebase fixo em /murupi.
+Defaults falsos de endereço.
+Dados empresariais no JSX.
+
+Quero:
+
+CONFIGURAÇÃO
+↓
+BANCO
+↓
+CONTEXT/SERVIÇO
+↓
+UI
+
+E:
+
+SEED
+↓
+somente instalação inicial
+
+Nunca:
+
+SEED
+↓
+fonte permanente do sistema.
+
+Ao finalizar, produzir um relatório:
+
+1. todos os hardcodes removidos;
+2. hardcodes técnicos mantidos e por quê;
+3. novas entidades/configurações;
+4. migrações;
+5. arquivos alterados;
+6. testes;
+7. build;
+8. possíveis hardcodes restantes.

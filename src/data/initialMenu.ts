@@ -1,3 +1,13 @@
+/**
+ * ============================================================
+ * SEED DO CARDÁPIO (fixture de primeira instalação)
+ * ============================================================
+ * Não é fonte runtime: é importado apenas como seed inicial do
+ * cardápio quando o banco local está vazio, ou como fixture de
+ * teste/migração. O cardápio real vive no banco (localStorage/
+ * MariaDB) e é editável pela UI.
+ * ============================================================
+ */
 import { MenuItem } from '../types';
 
 export const INITIAL_MENU_ITEMS: MenuItem[] = ([
@@ -606,4 +616,4 @@ export const INITIAL_MENU_ITEMS: MenuItem[] = ([
   } */
 ] as MenuItem[]).filter(item => item.categoria !== 'Lanches & Burgers');
 
-export const INITIAL_TABLES_COUNT = 15;
+export const INITIAL_TABLES_COUNT = 16; // sincronizado com INITIAL_TABLES em seedData.ts

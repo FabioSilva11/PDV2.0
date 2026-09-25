@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { PaymentMethod, Order } from '../../types';
+import { useRestaurant } from '../../context/RestaurantContext';
 import { formatCurrency } from '../../utils/formatters';
 import confetti from 'canvas-confetti';
 import { buildPixPayload } from '../../utils/pix';
@@ -30,13 +31,17 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
   onConfirm,
   onReceiptTrigger,
 }) => {
+  const { settings } = useRestaurant();
   const [method, setMethod] = useState<PaymentMethod>('dinheiro');
   const [cashGiven, setCashGiven] = useState<string>('');
   const [copiedPix, setCopiedPix] = useState(false);
   const locked = useRef(false);
   const [error, setError] = useState('');
   const [finished, setFinished] = useState(false);
-  const pixKey = String(import.meta.env.VITE_PIX_KEY || '').trim();
+  // PIX e valores rápidos vêm da configuração do estabelecimento (banco),
+  // não de variáveis de ambiente nem constantes no componente.
+  const pix = settings.pix;
+  const quickAmounts = settings.cashier.quickAmounts;
 
   useEffect(() => {
     if (isOpen) {
@@ -60,12 +65,12 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
   };
 
   const handleCopyPix = async () => {
-    if (!pixKey) {
-      setError('Chave PIX não configurada. Adicione VITE_PIX_KEY nas configurações do ambiente.');
+    if (!pix.chave) {
+      setError('Chave PIX não configurada. Defina em Configurações do Estabelecimento.');
       return;
     }
     try {
-      const pixCode = buildPixPayload(pixKey, total);
+      const pixCode = buildPixPayload(pix.chave, total, pix.nomeRecebedor, pix.cidade, pix.descricao || 'PEDIDO');
       await navigator.clipboard.writeText(pixCode);
       setCopiedPix(true);
       setTimeout(() => setCopiedPix(false), 2500);
@@ -242,7 +247,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
                 >
                   Exato ({formatCurrency(total)})
                 </button>
-                {[20, 50, 100, 200].map(val => (
+                {quickAmounts.map(val => (
                   <button
                     key={val}
                     type="button"
@@ -281,9 +286,9 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
 
           {method === 'pix' && (
             <div className="bg-stone-50 rounded-2xl p-5 border border-stone-200 flex flex-col items-center text-center space-y-4 animate-in fade-in">
-              <div className={`w-full rounded-2xl p-5 border ${pixKey ? 'bg-white border-teal-300' : 'bg-sky-50 border-sky-300'}`}>
+              <div className={`w-full rounded-2xl p-5 border ${pix.chave ? 'bg-white border-teal-300' : 'bg-sky-50 border-sky-300'}`}>
                 <div className="text-xs font-bold uppercase tracking-wider text-slate-500">PIX manual</div>
-                <div className="mt-2 text-sm font-bold text-slate-900">{pixKey ? 'Chave PIX configurada' : 'Chave PIX não configurada'}</div>
+                <div className="mt-2 text-sm font-bold text-slate-900">{pix.chave ? 'Chave PIX configurada' : 'Chave PIX não configurada'}</div>
                 <div className="mt-1 text-xs text-slate-500">O QR Code/copia e cola só deve ser exibido quando uma chave real estiver configurada.</div>
               </div>
 
@@ -295,7 +300,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
                   type="button"
                   id="copy-pix-btn"
                   onClick={handleCopyPix}
-                  disabled={!pixKey}
+                  disabled={!pix.chave}
                   className="w-full py-2.5 px-4 disabled:opacity-50 bg-white border border-teal-300 hover:bg-teal-50 text-teal-800 font-semibold text-xs rounded-xl flex items-center justify-center gap-2 transition-colors"
                 >
                   {copiedPix ? (

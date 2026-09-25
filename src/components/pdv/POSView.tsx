@@ -30,6 +30,7 @@ export const POSView: React.FC = () => {
     createOrder,
     orders,
     currentUser, customers,
+    settings,
   } = useRestaurant();
 
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -42,7 +43,8 @@ export const POSView: React.FC = () => {
   const [selectedCustomerId, setSelectedCustomerId] = useState<string>('');
   const [customerPhone, setCustomerPhone] = useState<string>('');
   const [deliveryAddress, setDeliveryAddress] = useState<string>('');
-  const [deliveryFee, setDeliveryFee] = useState<number>(7.00);
+  // Taxa de entrega padrão vem da configuração do estabelecimento.
+  const [deliveryFee, setDeliveryFee] = useState<number>(settings.delivery.defaultFee);
   const [discount, setDiscount] = useState<number>(0);
   const [notes, setNotes] = useState<string>('');
   const [selectedReceiptOrder, setSelectedReceiptOrder] = useState<Order | null>(null);
@@ -172,6 +174,16 @@ export const POSView: React.FC = () => {
     submissionLocked.current = true;
     setSaleError('');
     try {
+    // Validação de endereço: nunca inventar "Centro"/"S/N". Se faltarem
+    // dados obrigatórios, o pedido é bloqueado com mensagem clara.
+    const addressRequired = orderType === 'delivery';
+    const addressComplete = !addressRequired || (deliveryAddress.trim().length >= 5);
+    if (addressRequired && !addressComplete) {
+      submissionLocked.current = false;
+      setSaleError('Informe o endereço completo de entrega (rua e número, no mínimo).');
+      return;
+    }
+    const deliveryAddressParts = deliveryAddress.trim().split(',');
     const order = createOrder({
       operacaoId: operationId.current,
       tipo: orderType,
@@ -180,9 +192,9 @@ export const POSView: React.FC = () => {
       nomeCliente: customerName || undefined,
       telefoneCliente: customerPhone || undefined,
       enderecoEntrega: orderType === 'delivery' ? {
-        logradouro: deliveryAddress || 'Endereço informado no balcão',
-        numero: 'S/N',
-        bairro: 'Centro'
+        logradouro: deliveryAddressParts[0]?.trim() || '',
+        numero: deliveryAddressParts[1]?.trim() || 'S/N',
+        bairro: deliveryAddressParts[2]?.trim() || ''
       } : undefined,
       taxaEntrega: orderType === 'delivery' ? deliveryFee : 0,
       desconto: discount,
@@ -198,6 +210,11 @@ export const POSView: React.FC = () => {
   };
 
   const handlePaymentConfirm = (method: PaymentMethod, amountPaid?: number, change?: number): Order => {
+    // Mesma validação de endereço do fluxo sem pagamento imediato.
+    if (orderType === 'delivery' && deliveryAddress.trim().length < 5) {
+      throw new Error('Informe o endereço completo de entrega (rua e número, no mínimo).');
+    }
+    const deliveryAddressParts = deliveryAddress.trim().split(',');
     const order = createOrder({
       operacaoId: operationId.current,
       tipo: orderType,
@@ -206,18 +223,18 @@ export const POSView: React.FC = () => {
       nomeCliente: customerName || undefined,
       telefoneCliente: customerPhone || undefined,
       enderecoEntrega: orderType === 'delivery' ? {
-        logradouro: deliveryAddress || 'Endereço informado no balcão',
-        numero: 'S/N',
-        bairro: 'Centro'
+        logradouro: deliveryAddressParts[0]?.trim() || '',
+        numero: deliveryAddressParts[1]?.trim() || 'S/N',
+        bairro: deliveryAddressParts[2]?.trim() || ''
       } : undefined,
       taxaEntrega: orderType === 'delivery' ? deliveryFee : 0,
       desconto: discount,
       observacoesGerais: notes || undefined,
       itens: cart,
-      status: 'confirmado',
-      statusPagamento: 'pago',
-      valorTotalPago: cartTotal,
-      saldoRestante: 0,
+      status: 'novo',
+      statusPagamento: 'pendente',
+      valorTotalPago: 0,
+      saldoRestante: cartTotal,
       pagamentos: [{
         id: 'pay-' + Date.now(),
         formaId: method,
@@ -226,7 +243,7 @@ export const POSView: React.FC = () => {
         valorRecebido: amountPaid,
         troco: change,
         dataHora: new Date().toISOString(),
-        registradoPor: currentUser.nome
+        registradoPor: currentUser?.nome || 'Operador'
       }]
     });
     clearCart();
@@ -541,7 +558,7 @@ export const POSView: React.FC = () => {
                         id="pos-delivery-phone"
                         value={customerPhone}
                         onChange={(e) => setCustomerInfo({ phone: e.target.value })}
-                        placeholder="(69) 9..."
+                        placeholder="Telefone..."
                         className="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white text-xs"
                       />
                     </div>

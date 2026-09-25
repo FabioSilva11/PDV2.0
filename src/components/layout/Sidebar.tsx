@@ -10,7 +10,7 @@ import {
   Printer, 
   ChevronLeft, 
   ChevronRight,
-  ShoppingBag, Users, CalendarDays, ShieldCheck, ClipboardList
+  ShoppingBag, Users, CalendarDays, ShieldCheck, ClipboardList, Settings
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -25,6 +25,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed, setCollapsed }) => 
     orders, 
     tables, 
     currentUser,
+    settings,
   } = useRestaurant();
 
   // Computed badges
@@ -62,6 +63,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed, setCollapsed }) => 
         { id: 'reservas', label: 'Reservas', icon: CalendarDays },
         { id: 'usuarios', label: 'Usuários & Permissões', icon: ShieldCheck },
         { id: 'auditoria', label: 'Auditoria', icon: ClipboardList },
+        { id: 'configuracoes', label: 'Configurações', icon: Settings },
       ]
     }
   ];
@@ -77,19 +79,19 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed, setCollapsed }) => 
         {!collapsed ? (
           <div className="flex items-center gap-2 overflow-hidden">
             <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-sky-500 to-blue-600 flex items-center justify-center text-white font-bold text-sm shadow-xs shrink-0">
-              M
+              {(settings.nomeAplicacao || 'PDV').charAt(0).toUpperCase()}
             </div>
             <div className="truncate">
-              <div className="text-xs font-bold text-slate-800 tracking-wide truncate">Murupi PDV</div>
+              <div className="text-xs font-bold text-slate-800 tracking-wide truncate">{settings.nomeAplicacao || 'PDV'}</div>
               <div className="text-[10px] text-slate-400 truncate flex items-center gap-1 font-medium">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block" />
-                Matriz Centro
+                {settings.nomeFantasia || settings.nomeCurto || 'Estabelecimento'}
               </div>
             </div>
           </div>
         ) : (
           <div className="w-8 h-8 mx-auto rounded-lg bg-gradient-to-tr from-sky-500 to-blue-600 flex items-center justify-center text-white font-bold text-sm shadow-xs">
-            M
+            {(settings.nomeAplicacao || 'PDV').charAt(0).toUpperCase()}
           </div>
         )}
 

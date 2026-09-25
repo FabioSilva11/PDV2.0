@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { PrinterDevice, PrinterType, PrinterPurpose, PrinterRouteRule, PrintRouteDocument, MenuCatalog, OrderType, CategoryType, KitchenStation } from '../../types';
+import { useRestaurant } from '../../context/RestaurantContext';
+import { PrinterDevice, PrinterType, PrinterPurpose, PrinterRouteRule, PrintRouteDocument, MenuCatalog, OrderType, KitchenStation } from '../../types';
+import { KITCHEN_STATION_LABELS } from '../../config/appConfig';
 import { X, Save, Printer, Plus, Trash2, Copy } from 'lucide-react';
 
 interface PrinterModalProps { isOpen: boolean; onClose: () => void; onSave: (printer: PrinterDevice) => void; printerToEdit?: PrinterDevice | null; }
@@ -9,25 +11,26 @@ const DOCUMENTOS: { id: PrintRouteDocument; label: string }[] = [
 ];
 const CATALOGOS: { id: MenuCatalog; label: string }[] = [{ id: 'restaurante', label: 'Restaurante' }, { id: 'lanche', label: 'Lanche' }];
 const TIPOS: { id: OrderType; label: string }[] = [{ id: 'mesa', label: 'Mesa' }, { id: 'balcao', label: 'Balcão' }, { id: 'delivery', label: 'Delivery' }];
-const CATEGORIAS: CategoryType[] = ['Hambúrgueres','Lanches & Burgers','Pizzas','Pratos principais','Entradas','Porções Extras','Bebidas','Sucos de Frutas','Sobremesas','Combos'];
-const ESTACOES: { id: KitchenStation; label: string }[] = [{id:'cozinha',label:'Cozinha'},{id:'chapa',label:'Chapa'},{id:'bar',label:'Bar / Bebidas'},{id:'pizza',label:'Pizza'},{id:'sobremesa',label:'Sobremesa'}];
+const ESTACOES: { id: KitchenStation; label: string }[] = Object.entries(KITCHEN_STATION_LABELS).map(([id, label]) => ({ id: id as KitchenStation, label }));
 
 const toggle = <T,>(list: T[], value: T) => list.includes(value) ? list.filter(x => x !== value) : [...list, value];
 
 export const PrinterModal: React.FC<PrinterModalProps> = ({ isOpen, onClose, onSave, printerToEdit }) => {
-  const [nome,setNome]=useState(''); const [local,setLocal]=useState('Cozinha Chapa'); const [tipo,setTipo]=useState<PrinterType>('rede');
-  const [finalidade,setFinalidade]=useState<PrinterPurpose>('geral'); const [ip,setIp]=useState('192.168.1.200'); const [porta,setPorta]=useState(9100);
-  const [modelo,setModelo]=useState('Epson TM-T20X (ESC/POS)'); const [larguraPapel,setLarguraPapel]=useState<'80mm'|'58mm'>('80mm');
+  const { menuCategories } = useRestaurant();
+  const [nome,setNome]=useState(''); const [local,setLocal]=useState(''); const [tipo,setTipo]=useState<PrinterType>('rede');
+  const [finalidade,setFinalidade]=useState<PrinterPurpose>('geral'); const [ip,setIp]=useState(''); const [porta,setPorta]=useState(9100);
+  const [modelo,setModelo]=useState('Generic ESC/POS 80mm'); const [larguraPapel,setLarguraPapel]=useState<'80mm'|'58mm'>('80mm');
   const [regras,setRegras]=useState<PrinterRouteRule[]>([]);
   useEffect(()=>{
     if(printerToEdit){ setNome(printerToEdit.nome); setLocal(printerToEdit.local); setTipo(printerToEdit.tipo); setFinalidade(printerToEdit.finalidade||'geral'); setIp(printerToEdit.ip); setPorta(printerToEdit.porta); setModelo(printerToEdit.modelo); setLarguraPapel(printerToEdit.larguraPapel); setRegras(printerToEdit.regras||[]); }
-    else { setNome('');setLocal('Cozinha Chapa');setTipo('rede');setFinalidade('geral');setIp('192.168.1.200');setPorta(9100);setModelo('Epson TM-T20X (ESC/POS)');setLarguraPapel('80mm');setRegras([]); }
+    else { setNome('');setLocal('');setTipo('rede');setFinalidade('geral');setIp('');setPorta(9100);setModelo('Generic ESC/POS 80mm');setLarguraPapel('80mm');setRegras([]); }
   },[printerToEdit,isOpen]);
-  const addRule=()=>setRegras(prev=>[...prev,{id:`route-${Date.now()}`,nome:`Regra ${prev.length+1}`,documentos:['pedido'],catalogos:[],tiposPedido:[],categorias:[],estacoes:[],prioridade:prev.length+1,modo:'incluir',ativo:true}]);
+  const addRule=()=>setRegras(prev=>[...prev,{id:`route-${Date.now()}`,nome:`Regra ${prev.length+1}`,documentos:['pedido'],catalogos:[],tiposPedido:[],categorias:[],categoriaIds:[],estacoes:[],prioridade:prev.length+1,modo:'incluir',ativo:true}]);
   const updateRule=(id:string,patch:Partial<PrinterRouteRule>)=>setRegras(prev=>prev.map(r=>r.id===id?{...r,...patch}:r));
   const duplicateRule=(r:PrinterRouteRule)=>setRegras(prev=>[...prev,{...r,id:`route-${Date.now()}`,nome:`${r.nome} (cópia)`,prioridade:prev.length+1}]);
   const removeRule=(id:string)=>setRegras(prev=>prev.filter(r=>r.id!==id));
-  const allCategories=useMemo(()=>CATEGORIAS,[ ]);
+  // Categorias vêm da configuração central (MenuCategory), nunca de lista fixa.
+  const allCategories=useMemo(()=>menuCategories.filter(c=>c.ativo),[menuCategories]);
   if(!isOpen)return null;
   const submit=(e:React.FormEvent)=>{e.preventDefault();if(!nome.trim())return;onSave({id:printerToEdit?.id||`prn-${Date.now()}`,nome:nome.trim(),local:local.trim(),tipo,finalidade,ip:ip.trim(),porta:Number(porta)||9100,modelo:modelo.trim(),larguraPapel,status:printerToEdit?.status||'online',ativa:printerToEdit?.ativa!==false,itensNaFila:printerToEdit?.itensNaFila||0,regras});onClose();};
   return <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs">
@@ -53,12 +56,12 @@ export const PrinterModal: React.FC<PrinterModalProps> = ({ isOpen, onClose, onS
 
 const Field:React.FC<{label:string;children:React.ReactNode}> = ({label,children})=><div className="space-y-1"><label className="text-xs font-bold text-stone-700">{label}</label>{children}</div>;
 const ChipGroup:React.FC<{label:string;items:{id:string;label:string}[];selected:string[];onToggle:(id:string)=>void}> = ({label,items,selected,onToggle})=><div><div className="text-[10px] uppercase tracking-wide font-bold text-stone-500 mb-1.5">{label}</div><div className="flex flex-wrap gap-1.5">{items.map(x=><button type="button" key={x.id} onClick={()=>onToggle(x.id)} className={`px-2 py-1 rounded-lg border text-[10px] font-semibold ${selected.includes(x.id)?'bg-sky-100 border-sky-300 text-sky-900':'bg-white border-stone-200 text-stone-600'}`}>{x.label}</button>)}</div></div>;
-const RuleEditor:React.FC<{rule:PrinterRouteRule;index:number;onChange:(p:Partial<PrinterRouteRule>)=>void;onDelete:()=>void;onDuplicate:()=>void;allCategories:CategoryType[]}> = ({rule,index,onChange,onDelete,onDuplicate,allCategories})=> <div className="bg-white rounded-xl border border-stone-200 p-4 space-y-4">
+const RuleEditor:React.FC<{rule:PrinterRouteRule;index:number;onChange:(p:Partial<PrinterRouteRule>)=>void;onDelete:()=>void;onDuplicate:()=>void;allCategories:{id:string;nome:string}[]}> = ({rule,index,onChange,onDelete,onDuplicate,allCategories})=> <div className="bg-white rounded-xl border border-stone-200 p-4 space-y-4">
   <div className="flex items-center gap-2"><input value={rule.nome} onChange={e=>onChange({nome:e.target.value})} className="input font-bold"/><label className="ml-auto flex items-center gap-1.5 text-[10px] font-bold text-stone-600"><input type="checkbox" checked={rule.ativo} onChange={e=>onChange({ativo:e.target.checked})}/> Ativa</label><button type="button" onClick={onDuplicate} title="Duplicar" className="p-2 rounded-lg hover:bg-stone-100"><Copy className="w-4 h-4"/></button><button type="button" onClick={onDelete} title="Excluir" className="p-2 rounded-lg hover:bg-rose-50 text-rose-600"><Trash2 className="w-4 h-4"/></button></div>
   <ChipGroup label="Documentos" items={DOCUMENTOS} selected={rule.documentos} onToggle={id=>onChange({documentos:toggle(rule.documentos,id as PrintRouteDocument)})}/>
   <ChipGroup label="Cardápios" items={CATALOGOS} selected={rule.catalogos} onToggle={id=>onChange({catalogos:toggle(rule.catalogos,id as MenuCatalog)})}/>
   <ChipGroup label="Atendimento" items={TIPOS} selected={rule.tiposPedido} onToggle={id=>onChange({tiposPedido:toggle(rule.tiposPedido,id as OrderType)})}/>
   <ChipGroup label="Estações" items={ESTACOES} selected={rule.estacoes} onToggle={id=>onChange({estacoes:toggle(rule.estacoes,id as KitchenStation)})}/>
-  <div><div className="text-[10px] uppercase tracking-wide font-bold text-stone-500 mb-1.5">Categorias</div><div className="flex flex-wrap gap-1.5">{allCategories.map(c=><button type="button" key={c} onClick={()=>onChange({categorias:toggle(rule.categorias,c)})} className={`px-2 py-1 rounded-lg border text-[10px] font-semibold ${rule.categorias.includes(c)?'bg-sky-100 border-sky-300 text-sky-900':'bg-white border-stone-200 text-stone-600'}`}>{c}</button>)}</div></div>
+  <div><div className="text-[10px] uppercase tracking-wide font-bold text-stone-500 mb-1.5">Categorias</div><div className="flex flex-wrap gap-1.5">{allCategories.map(c=><button type="button" key={c.id} onClick={()=>onChange({categoriaIds:toggle(rule.categoriaIds||[],c.id), categorias:[]})} className={`px-2 py-1 rounded-lg border text-[10px] font-semibold ${(rule.categoriaIds||[]).includes(c.id)?'bg-sky-100 border-sky-300 text-sky-900':'bg-white border-stone-200 text-stone-600'}`}>{c.nome}</button>)}</div></div>
   <div className="text-[10px] text-stone-400">Prioridade {index+1}. Regras são acumulativas: se esta impressora casar com qualquer regra ativa, ela recebe os itens correspondentes.</div>
 </div>;

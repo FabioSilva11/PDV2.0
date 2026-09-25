@@ -1,5 +1,6 @@
 import React from 'react';
 import { Order } from '../../types';
+import { useRestaurant } from '../../context/RestaurantContext';
 import { formatCurrency, formatFullDate } from '../../utils/formatters';
 
 import { Printer, X } from 'lucide-react';
@@ -11,6 +12,7 @@ interface ReceiptModalProps {
 }
 
 export const ReceiptModal: React.FC<ReceiptModalProps> = ({ order, isOpen, onClose }) => {
+  const { settings } = useRestaurant();
   if (!isOpen || !order) return null;
 
   const handlePrint = () => {
@@ -46,20 +48,24 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ order, isOpen, onClo
             id="thermal-receipt" 
             className="w-full max-w-[340px] bg-white p-5 shadow-sm rounded-lg text-stone-900 font-mono text-xs leading-tight border border-stone-200"
           >
-            {/* Store Header */}
+            {/* Store Header — dados vindos de RestaurantSettings */}
             <div className="text-center pb-3 border-b border-dashed border-stone-400 space-y-1">
               <h3 className="font-extrabold text-base tracking-wider uppercase font-serif">
-                MURUPI RESTAURANTE
+                {(settings.nomeFantasia || settings.nomeAplicacao).toUpperCase()}
               </h3>
-              <p className="text-[10px] text-stone-600">
-                COMIDAS REGIONAIS & LANCHES
-              </p>
-              <p className="text-[10px] text-stone-600">
-                CNPJ: 14.882.901/0001-44 - IE: ISENTO
-              </p>
-              <p className="text-[10px] text-stone-600">
-                Porto Velho - RO | Fone: (69) 99321-0000
-              </p>
+              {settings.razaoSocial && (
+                <p className="text-[10px] text-stone-600">{settings.razaoSocial}</p>
+              )}
+              {(settings.cnpj || settings.inscricaoEstadual) && (
+                <p className="text-[10px] text-stone-600">
+                  {settings.cnpj && `CNPJ: ${settings.cnpj}`}{settings.cnpj && settings.inscricaoEstadual ? ' - ' : ''}{settings.inscricaoEstadual && `IE: ${settings.inscricaoEstadual}`}
+                </p>
+              )}
+              {(settings.cidade || settings.telefone) && (
+                <p className="text-[10px] text-stone-600">
+                  {[settings.cidade, settings.estado].filter(Boolean).join(' - ')}{settings.cidade && settings.telefone ? ' | ' : ''}{settings.telefone && `Fone: ${settings.telefone}`}
+                </p>
+              )}
               <div className="text-[9px] text-stone-500 uppercase tracking-widest pt-1">
                 *** CUPOM NÃO FISCAL ***
               </div>
@@ -191,10 +197,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ order, isOpen, onClo
             {/* Footer Message */}
             <div className="pt-4 text-center space-y-1">
               <p className="font-bold text-[11px] text-stone-800">
-                O Restaurante Murupi agradece a preferência.
-              </p>
-              <p className="text-[9px] text-stone-500">
-                Volte Sempre! www.murupirestaurante.com.br
+                {settings.rodapeComprovante || 'Obrigado pela preferência!'}
               </p>
             </div>
           </div>

@@ -63,7 +63,7 @@ app.post('/api/database', async (req, res) => {
 
 // Inicialização
 async function start() {
-  console.log('[Servidor Local] Iniciando serviço backend PDV Murupi...');
+  console.log('[Servidor Local] Iniciando serviço backend PDV...');
   await initMariaDatabase();
 
   app.listen(port, () => {

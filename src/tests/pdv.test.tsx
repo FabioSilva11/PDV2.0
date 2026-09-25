@@ -6,15 +6,39 @@ import { PaymentModal } from '../components/pdv/PaymentModal';
 import { POSView } from '../components/pdv/POSView';
 import { OrderDetailsModal } from '../components/orders/OrderDetailsModal';
 import { mergeSnapshots, SyncConflict } from '../lib/mergeSnapshots';
-import { INITIAL_CASH_REGISTER, INITIAL_TABLES } from '../data/seedData';
-import type { CartItem, MenuItem, Order, PaymentMethodId } from '../types';
+import { INITIAL_TABLES } from '../data/seedData';
+import { DEFAULT_RESTAURANT_SETTINGS } from '../config/defaultSettings';
+import { hashPassword } from '../lib/auth';
+import type { CartItem, MenuItem, Order, PaymentMethodId, UserAccount } from '../types';
 
-const key = 'murupi_restaurant_database_v1';
+const key = 'pdv_database_v2';
 const product: MenuItem = { id: 'qa-product', nome: 'Hambúrguer QA 🍔', preco: 20,
   categoria: 'Bebidas', disponivel: true };
 const item = (overrides: Partial<CartItem> = {}): CartItem => ({ cartItemId: 'qa-line',
   menuItemId: product.id, nome: product.nome, precoUnitario: 20, quantidade: 1,
   observacao: '', estacaoProducao: 'cozinha', ...overrides });
+
+let passwordHashPromise: Promise<string> | null = null;
+const QA_ADMIN: UserAccount = {
+  id: 'usr-qa-admin', nome: 'Operador QA', usuario: 'qa', cargo: 'Administrador',
+  perfil: 'administrador', ativo: true, isPrimaryAdmin: true,
+  permissoes: ['pdv','pedidos','mesas','caixa','cardapio','clientes','reservas','desconto','cancelamento','reabertura','auditoria','usuarios','impressoras','configuracoes'],
+  senhaHash: 'pendente' as any,
+};
+// Hash real (PBKDF2) gerado uma única vez por arquivo de teste.
+passwordHashPromise = hashPassword('1234');
+
+const seedDatabase = (extra: Record<string, unknown> = {}) => ({
+  operationalDemoResetApplied: true,
+  settings: { ...DEFAULT_RESTAURANT_SETTINGS, setupComplete: true },
+  users: [QA_ADMIN],
+  menu: [product],
+  orders: [], alerts: [], printQueue: [],
+  tables: INITIAL_TABLES.map(t => ({ ...t, status: 'livre', valorAtual: 0, pedidoAtivoId: undefined })),
+  cashRegister: { aberto: true, saldoInicial: 200, saldoAtualGaveta: 200, transacoes: [] },
+  ...extra,
+});
+
 const wrapper = ({ children }: { children: React.ReactNode }) => <RestaurantProvider>{children}</RestaurantProvider>;
 const boot = () => renderHook(() => useRestaurant(), { wrapper });
 type API = ReturnType<typeof boot>['result'];
@@ -24,12 +48,12 @@ function sale(api: API, overrides: Partial<Order> = {}) {
   return order;
 }
 function attempt(fn: () => unknown) { try { fn(); } catch { /* rejeição é permitida; verificar estado em seguida */ } }
-beforeEach(() => {
+beforeEach(async () => {
   localStorage.clear();
-  localStorage.setItem(key, JSON.stringify({ staffResetApplied: true, operationalDemoResetApplied: true,
-    menu: [product], orders: [], alerts: [], printQueue: [],
-    tables: INITIAL_TABLES.map(t => ({ ...t, status: 'livre', valorAtual: 0, pedidoAtivoId: undefined })),
-    cashRegister: { ...INITIAL_CASH_REGISTER, aberto: true, saldoInicial: 200, saldoAtualGaveta: 200, transacoes: [] } }));
+  QA_ADMIN.senhaHash = await passwordHashPromise!;
+  localStorage.setItem(key, JSON.stringify(seedDatabase()));
+  // Sessão do operador QA: o sistema não tem mais usuário fixo no código.
+  localStorage.setItem('pdv_session_v1', JSON.stringify({ userId: QA_ADMIN.id, token: 'qa-token-test', startedAt: new Date().toISOString() }));
 });
 
 describe('venda e matematica', () => {
@@ -81,9 +105,8 @@ describe('mesas cozinha recuperacao e estresse', () => {
   it('CHAOS estresse 500 pedidos no mesmo lote têm IDs e números únicos', () => { const { result } = boot(); act(() => { for (let i = 0; i < 500; i++) result.current.createOrder({ itens: [item()] }); }); expect(result.current.orders).toHaveLength(500); expect(new Set(result.current.orders.map(o => o.id)).size).toBe(500); expect(new Set(result.current.orders.map(o => o.numero)).size).toBe(500); });
   it('DIA jornada sintética reconcilia caixa após estorno e sangria', () => { const { result } = boot(); const a = sale(result); act(() => result.current.addManualPaymentToOrder(a.id, 'dinheiro', 20, 50)); const b = sale(result); act(() => result.current.addManualPaymentToOrder(b.id, 'pix', 20)); const c = sale(result); act(() => result.current.addManualPaymentToOrder(c.id, 'dinheiro', 20, 20)); act(() => result.current.reverseOrderPayment(c.id, result.current.orders[0].pagamentos[0].id, 'QA')); act(() => result.current.cancelOrder(c.id, 'QA')); act(() => result.current.addCashMovement('sangria', 10, 'QA')); act(() => result.current.closeCashRegister()); expect(result.current.cashRegister.saldoAtualGaveta).toBe(210); expect(result.current.orders.filter(o => o.statusPagamento === 'pago').reduce((s, o) => s + o.total, 0)).toBe(40); });
   it('LEG pedido antigo sem pagamentos/itens é normalizado e ainda aceita edição', () => {
-    localStorage.setItem(key, JSON.stringify({ staffResetApplied: true, operationalDemoResetApplied: true,
-      menu: [product], orders: [{ id: 'legacy-1', operacaoId: 'op-1', numero: 1000, tipo: 'balcao', status: 'pendente', criadoEm: new Date().toISOString(), itens: [item()], subtotal: 20, desconto: 0, taxaServico: 0, taxaEntrega: 0, total: 20, statusPagamento: 'pendente', saldoRestante: 20, valorTotalPago: 0 }],
-      alerts: [], printQueue: [], tables: [], cashRegister: { ...INITIAL_CASH_REGISTER, aberto: true, saldoInicial: 200, saldoAtualGaveta: 200, transacoes: [] } }));
+    localStorage.setItem(key, JSON.stringify({ ...seedDatabase(),
+      orders: [{ id: 'legacy-1', operacaoId: 'op-1', numero: 1000, tipo: 'balcao', status: 'pendente', criadoEm: new Date().toISOString(), itens: [item()], subtotal: 20, desconto: 0, taxaServico: 0, taxaEntrega: 0, total: 20, statusPagamento: 'pendente', saldoRestante: 20, valorTotalPago: 0 }] }));
     const { result } = boot();
     expect(result.current.orders[0].pagamentos).toEqual([]);
     act(() => result.current.cancelOrderItem('legacy-1', 'qa-line', 'QA'));
@@ -181,8 +204,8 @@ describe('interface pagamento', () => {
     fireEvent.change(view.container.querySelector('#pos-search-input')!, { target: { value: query } });
     expect(view.container.querySelector('#product-card-qa-product')).not.toBeNull();
   });
-  it('UI dinheiro insuficiente desabilita confirmação', () => { const view = render(<PaymentModal isOpen total={100} onClose={vi.fn()} onConfirm={vi.fn()} onReceiptTrigger={vi.fn()} />); fireEvent.change(view.container.querySelector('#cash-amount-input')!, { target: { value: '50' } }); expect(view.container.querySelector('#payment-confirm-only-btn')).toBeDisabled(); });
-  it('CHAOS UI duplo clique 10 confirmações dispara uma operação', () => { const confirm = vi.fn(() => ({} as Order)); const view = render(<PaymentModal isOpen total={100} onClose={vi.fn()} onConfirm={confirm} onReceiptTrigger={vi.fn()} />); const button = view.container.querySelector('#payment-confirm-only-btn')!; act(() => { for (let i = 0; i < 10; i++) fireEvent.click(button); }); expect(confirm).toHaveBeenCalledTimes(1); });
+  it('UI dinheiro insuficiente desabilita confirmação', () => { const view = render(<RestaurantProvider><PaymentModal isOpen total={100} onClose={vi.fn()} onConfirm={vi.fn()} onReceiptTrigger={vi.fn()} /></RestaurantProvider>); fireEvent.change(view.container.querySelector('#cash-amount-input')!, { target: { value: '50' } }); expect(view.container.querySelector('#payment-confirm-only-btn')).toBeDisabled(); });
+  it('CHAOS UI duplo clique 10 confirmações dispara uma operação', () => { const confirm = vi.fn(() => ({} as Order)); const view = render(<RestaurantProvider><PaymentModal isOpen total={100} onClose={vi.fn()} onConfirm={confirm} onReceiptTrigger={vi.fn()} /></RestaurantProvider>); const button = view.container.querySelector('#payment-confirm-only-btn')!; act(() => { for (let i = 0; i < 10; i++) fireEvent.click(button); }); expect(confirm).toHaveBeenCalledTimes(1); });
 });
 describe('fluxo oficial pedido + espelho', () => {
   it('IMP pedido confirmado gera exatamente uma via PEDIDO e fica aguardando espelho', () => {
@@ -381,12 +404,8 @@ describe('auditoria operacional aprofundada — impressão dupla e canais', () =
 
   it('SEG normalização elimina status legado de produção digital', () => {
     localStorage.setItem(key, JSON.stringify({
-      operationalDemoResetApplied: true,
-      menu: [product],
-      orders: [{ ...saleLegacyFixture(), status: 'preparando', itens: [({ ...item(), statusProducao: 'preparando' } as any)] }],
-      printQueue: [],
-      tables: [],
-      cashRegister: { ...INITIAL_CASH_REGISTER, aberto: true, saldoInicial: 200, saldoAtualGaveta: 200, transacoes: [] }
+      ...seedDatabase(),
+      orders: [{ ...saleLegacyFixture(), status: 'preparando', itens: [({ ...item(), statusProducao: 'preparando' } as any)] }]
     }));
     const { result } = boot();
     expect(result.current.orders[0].status).toBe('novo');
@@ -539,9 +558,9 @@ describe('testes extensivos adicionais — invariantes de operação', () => {
 describe('melhorias operacionais v2 — edicao, caixa zerado, destaque e produtos', () => {
   // 1. abrir caixa com R$ 0
   it('1. CAIXA abrir caixa com R$ 0,00 inicializa saldo corretamente', () => {
-    localStorage.setItem(key, JSON.stringify({
-      cashRegister: { ...INITIAL_CASH_REGISTER, aberto: false, saldoInicial: 0, saldoAtualGaveta: 0, transacoes: [] }
-    }));
+    localStorage.setItem(key, JSON.stringify(seedDatabase({
+      cashRegister: { aberto: false, saldoInicial: 0, saldoAtualGaveta: 0, transacoes: [] }
+    })));
     const { result } = boot();
     act(() => result.current.openCashRegister(0));
     expect(result.current.cashRegister.aberto).toBe(true);
@@ -552,9 +571,9 @@ describe('melhorias operacionais v2 — edicao, caixa zerado, destaque e produto
 
   // 2. abrir caixa com R$ 0 e vender
   it('2. CAIXA abrir caixa com R$ 0 e realizar venda em dinheiro incrementa gaveta', () => {
-    localStorage.setItem(key, JSON.stringify({
-      cashRegister: { ...INITIAL_CASH_REGISTER, aberto: false, saldoInicial: 0, saldoAtualGaveta: 0, transacoes: [] }
-    }));
+    localStorage.setItem(key, JSON.stringify(seedDatabase({
+      cashRegister: { aberto: false, saldoInicial: 0, saldoAtualGaveta: 0, transacoes: [] }
+    })));
     const { result } = boot();
     act(() => result.current.openCashRegister(0));
     const o = sale(result);
@@ -565,9 +584,9 @@ describe('melhorias operacionais v2 — edicao, caixa zerado, destaque e produto
 
   // 3. negar valor negativo na abertura
   it('3. CAIXA negar valor negativo na abertura', () => {
-    localStorage.setItem(key, JSON.stringify({
-      cashRegister: { ...INITIAL_CASH_REGISTER, aberto: false, saldoInicial: 0, saldoAtualGaveta: 0, transacoes: [] }
-    }));
+    localStorage.setItem(key, JSON.stringify(seedDatabase({
+      cashRegister: { aberto: false, saldoInicial: 0, saldoAtualGaveta: 0, transacoes: [] }
+    })));
     const { result } = boot();
     attempt(() => result.current.openCashRegister(-50));
     expect(result.current.cashRegister.aberto).toBe(false);

@@ -2,9 +2,7 @@ import React from 'react';
 import { useRestaurant } from '../../context/RestaurantContext';
 import { 
   Activity, 
-  Wifi, 
   Server, 
-  Cpu, 
   Printer, 
   DatabaseBackup, 
   RefreshCw, 
@@ -28,24 +26,17 @@ export const OperationHealthModal: React.FC = () => {
   const items = [
     {
       id: 'internet',
-      nome: 'Conexão com a Internet',
-      status: health.internet,
-      detalhe: 'Latência média 16ms • Conexão estável fibra',
-      icon: Wifi
-    },
-    {
-      id: 'servidor',
-      nome: 'Servidor SaaS Cloud',
+      nome: 'Conexão com o Backend Local',
       status: health.servidor,
-      detalhe: 'Google Cloud Run • Taxa de erro 0.00% • 12% uso',
+      detalhe: health.servidor === 'online' ? 'Backend respondeu à última verificação' : 'Sem resposta do backend local',
       icon: Server
     },
     {
-      id: 'sistema',
-      nome: 'Sistema Operacional Local',
-      status: health.sistema,
-      detalhe: 'v3.4.0 SaaS Pro • Sem travamentos detectados',
-      icon: Cpu
+      id: 'mariadb',
+      nome: 'MariaDB',
+      status: health.mariadb || 'unknown',
+      detalhe: health.mariadb === 'online' ? 'Conexão ativa com o banco' : 'Banco indisponível ou não verificado',
+      icon: DatabaseBackup
     },
     {
       id: 'impressoras',
@@ -57,20 +48,27 @@ export const OperationHealthModal: React.FC = () => {
     {
       id: 'backup',
       nome: 'Rotina de Backup dos Dados',
-      status: 'online' as const,
-      detalhe: health.ultimoBackup + ' (Nuvem redundante criptografada)',
+      status: (health.ultimoBackup === 'Não configurado' ? 'unknown' : 'online') as 'online' | 'offline' | 'atencao' | 'unknown',
+      detalhe: health.ultimoBackup,
       icon: DatabaseBackup
     },
     {
       id: 'sync',
       nome: 'Última Sincronização Local',
-      status: 'online' as const,
+      status: (health.ultimaSincronizacao === 'Aguardando verificação' ? 'unknown' : 'online') as 'online' | 'offline' | 'atencao' | 'unknown',
       detalhe: health.ultimaSincronizacao,
       icon: RefreshCw
     }
   ];
 
-  const getStatusBadge = (st: 'online' | 'offline' | 'atencao') => {
+  const getStatusBadge = (st: 'online' | 'offline' | 'atencao' | 'unknown') => {
+    if (st === 'unknown') {
+      return (
+        <span className="flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200">
+          Não verificado
+        </span>
+      );
+    }
     if (st === 'online') {
       return (
         <span className="flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200">

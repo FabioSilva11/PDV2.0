@@ -30,7 +30,8 @@ export const DashboardView: React.FC = () => {
     setIsAlertsDrawerOpen, 
     alerts,
     cashRegister,
-    menu
+    menu,
+    settings
   } = useRestaurant();
 
   // Metrics
@@ -53,12 +54,13 @@ export const DashboardView: React.FC = () => {
   const mesasOcupadas = tables.filter(t => t.status === 'ocupada' || t.status === 'conta').length;
   const emProducao = orders.filter(o => o.status === 'novo').length;
   
-  // Atrasados: pedidos criados há mais de 25 min que ainda não estão prontos
+  // Atrasados: limite configurável em RestaurantSettings.operations
+  const lateThreshold = settings.operations.lateOrderThresholdMinutes;
   const agora = Date.now();
   const pedidosAtrasados = orders.filter(o => {
     if (o.status === 'novo') {
       const diffMin = (agora - new Date(o.criadoEm).getTime()) / (1000 * 60);
-      return diffMin > 25;
+      return diffMin > lateThreshold;
     }
     return false;
   }).length;
@@ -89,14 +91,23 @@ export const DashboardView: React.FC = () => {
 
   const bestSellers = Object.values(productCountMap)
     .sort((a, b) => b.count - a.count)
-    .slice(0, 5);
+    .slice(0, settings.operations.topProductsLimit);
 
-  // Hourly distribution bars
-  const hourlyData = [11, 12, 13, 14, 18, 19, 20, 21].map(hour => ({
-    hora: `${hour}h`,
-    valor: todayOrders.filter(order => new Date(order.criadoEm).getHours() === hour && order.status !== 'cancelado').reduce((sum, order) => sum + order.total, 0)
-  }));
-  const maxHourly = Math.max(...hourlyData.map(h => h.valor));
+  // Histograma de vendas: usa a janela operacional configurada, mas só
+  // exibe horas que têm vendas reais (não mistura horário comercial fixo
+  // com horário de vendas existentes).
+  const startHour = settings.operations.dashboardStartHour;
+  const endHour = settings.operations.dashboardEndHour;
+  const hoursWithSales = new Set(
+    todayOrders.filter(o => o.status !== 'cancelado').map(o => new Date(o.criadoEm).getHours())
+  );
+  const hourlyData = Array.from({ length: Math.max(1, endHour - startHour) }, (_, i) => startHour + i)
+    .filter(hour => hoursWithSales.has(hour))
+    .map(hour => ({
+      hora: `${hour}h`,
+      valor: todayOrders.filter(order => new Date(order.criadoEm).getHours() === hour && order.status !== 'cancelado').reduce((sum, order) => sum + order.total, 0)
+    }));
+  const maxHourly = Math.max(1, ...hourlyData.map(h => h.valor));
 
   return (
     <div className="p-4 sm:p-6 max-w-7xl mx-auto space-y-6">

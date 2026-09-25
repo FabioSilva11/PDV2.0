@@ -1,9 +1,24 @@
 -- ============================================================
--- Schema MariaDB para PDV Murupi 2.0 (Localhost)
+-- Schema MariaDB para PDV 2.0 (Localhost)
 -- ============================================================
 
 CREATE DATABASE IF NOT EXISTS `pdv_murupi` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 USE `pdv_murupi`;
+
+-- 0. Configuração única do estabelecimento (singleton id=1/'singleton')
+CREATE TABLE IF NOT EXISTS `restaurant_settings` (
+  `id` VARCHAR(64) NOT NULL PRIMARY KEY,
+  `nome_fantasia` VARCHAR(255) NULL,
+  `razao_social` VARCHAR(255) NULL,
+  `nome_curto` VARCHAR(128) NULL,
+  `cnpj` VARCHAR(32) NULL,
+  `telefone` VARCHAR(64) NULL,
+  `cidade` VARCHAR(128) NULL,
+  `estado` VARCHAR(4) NULL,
+  `setup_complete` TINYINT(1) NOT NULL DEFAULT 0,
+  `raw_data` LONGTEXT NULL,
+  `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 1. Snapshot consolidado de estado operacional (Sincronização Atômica)
 CREATE TABLE IF NOT EXISTS `app_state` (

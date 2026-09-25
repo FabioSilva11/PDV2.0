@@ -1,0 +1,2584 @@
+ANÁLISE E REFATORAÇÃO COMPLETA DO PROJETO
+
+Repositório:
+
+https://github.com/FabioSilva11/PDV2.0.git
+
+OBJETIVO GERAL
+
+Refatorar o PDV para que ele seja:
+
+- de um único estabelecimento;
+- com um único administrador principal;
+- com usuários operacionais adicionais;
+- sem Firebase;
+- sem sincronização Firebase;
+- sem dependência de Realtime Database;
+- com MariaDB como única fonte persistente de dados;
+- com localStorage apenas como cache/fallback temporário do frontend quando o MariaDB estiver indisponível;
+- com toda a configuração do estabelecimento armazenada no MariaDB;
+- sem dados de negócio importantes hardcoded no código;
+- sem dados empresariais fictícios;
+- sem métricas de operação fictícias;
+- sem IPs de impressoras fictícios como configuração real;
+- sem usuário administrador fixo no código.
+
+IMPORTANTE:
+
+Não fazer uma simples substituição de:
+
+Firebase → MariaDB
+
+Mantendo o restante da arquitetura inconsistente.
+
+Reestruturar as fontes de verdade para que:
+
+BANCO MARIA DB
+↓
+API BACKEND
+↓
+FRONTEND / APP GARÇOM
+↓
+CACHE LOCAL OPCIONAL
+
+O MariaDB é a autoridade.
+
+localStorage NÃO é a fonte definitiva.
+
+Firebase deve ser completamente removido.
+
+============================================================
+1. ARQUITETURA DEFINITIVA
+============================================================
+
+O sistema representa UM ÚNICO estabelecimento.
+
+Não implementar:
+
+- multi-tenant;
+- múltiplos restaurantes;
+- seleção de restaurante;
+- restaurantId para separar estabelecimentos;
+- tenantId;
+- restaurants/{restaurantId};
+- vários bancos por restaurante.
+
+Existe apenas:
+
+1 estabelecimento
+1 configuração global
+1 administrador principal
+N usuários operacionais
+
+Estrutura:
+
+ESTABELECIMENTO
+│
+├── Configurações
+├── Administrador principal
+├── Usuários
+├── Cardápio
+├── Categorias
+├── Estações
+├── Impressoras
+├── Mesas
+├── Formas de pagamento
+├── Clientes
+├── Reservas
+├── Pedidos
+├── Pagamentos
+├── Caixa
+└── Auditoria
+
+============================================================
+2. REMOVER FIREBASE COMPLETAMENTE
+============================================================
+
+Eliminar a dependência do Firebase do sistema web.
+
+Remover:
+
+firebase
+firebase/app
+firebase/database
+firebaseDatabase.ts
+mergeSnapshots.ts
+
+quando não forem mais utilizados.
+
+Remover:
+
+firebaseDatabaseEnabled
+loadRemoteDatabase()
+saveRemoteDatabase()
+
+Remover qualquer:
+
+runTransaction()
+getDatabase()
+get()
+ref()
+
+do Firebase.
+
+Remover configurações:
+
+VITE_FIREBASE_API_KEY
+VITE_FIREBASE_AUTH_DOMAIN
+VITE_FIREBASE_DATABASE_URL
+VITE_FIREBASE_PROJECT_ID
+VITE_FIREBASE_STORAGE_BUCKET
+VITE_FIREBASE_MESSAGING_SENDER_ID
+VITE_FIREBASE_APP_ID
+VITE_FIREBASE_MEASUREMENT_ID
+
+Remover Firebase da documentação do projeto.
+
+Remover Firebase do fluxo de inicialização.
+
+Não deixar fallback silencioso para Firebase.
+
+A partir da nova arquitetura:
+
+MARIA DB
+é a única persistência remota/central.
+
+============================================================
+3. APP GARÇOM / FLUTTER
+============================================================
+
+O projeto possui:
+
+src/meu app/
+
+Esse app também deve deixar de utilizar Firebase.
+
+Remover:
+
+firebase_core
+firebase_database
+
+e qualquer:
+
+FirebaseDatabase.instance
+Firebase.initializeApp()
+
+A aplicação Flutter deve consumir a API do backend local:
+
+HTTP/REST
+
+Exemplo:
+
+GET /api/health
+GET /api/menu
+GET /api/tables
+GET /api/payment-methods
+GET /api/stations
+
+e:
+
+POST /api/auth/login
+POST /api/orders
+POST /api/orders/:id/items
+POST /api/orders/:id/mirror
+POST /api/tables/:id/orders
+
+etc.
+
+Não permitir que Flutter fale diretamente com MariaDB.
+
+Arquitetura:
+
+Flutter
+↓
+API Express
+↓
+MariaDB
+
+Nunca:
+
+Flutter
+↓
+MariaDB diretamente
+
+============================================================
+4. RESTAURANT SETTINGS
+============================================================
+
+Criar uma configuração única do estabelecimento.
+
+Tabela:
+
+restaurant_settings
+
+Deve existir apenas um registro.
+
+Campos sugeridos:
+
+id
+nome_fantasia
+razao_social
+nome_curto
+cnpj
+inscricao_estadual
+telefone
+email
+cep
+logradouro
+numero
+complemento
+bairro
+cidade
+estado
+logo
+rodape_comprovante
+moeda
+locale
+timezone
+delivery_taxa_padrao
+reservation_default_guests
+reservation_default_advance_minutes
+order_late_threshold_minutes
+dashboard_start_hour
+dashboard_end_hour
+versao_exibida
+created_at
+updated_at
+
+Usar:
+
+id = 1
+
+ou outro identificador singleton estável.
+
+Garantir que só exista uma configuração.
+
+============================================================
+5. NÃO DEIXAR DADOS DO MURUPI HARDCODED
+============================================================
+
+Remover do código:
+
+Murupi Restaurante
+Murupi Gastronomia & Lanches
+Murupi Garçom
+Porto Velho
+CNPJ
+telefone
+endereço
+IE
+qualquer outro dado empresarial específico.
+
+Esses valores devem estar no MariaDB.
+
+ReceiptModal
+ThermalReceiptModal
+PIX
+App
+Topbar
+Sidebar
+rodapé
+PDF
+Flutter
+
+devem consumir RestaurantSettings.
+
+============================================================
+6. CONFIGURAÇÃO INICIAL
+============================================================
+
+Criar fluxo de primeira execução.
+
+Se:
+
+restaurant_settings
+não existe
+
+mostrar:
+
+CONFIGURAÇÃO INICIAL
+
+Etapa 1:
+Dados do estabelecimento
+
+Etapa 2:
+Criar administrador principal
+
+Etapa 3:
+Configurações operacionais básicas
+
+Etapa 4:
+Concluir instalação
+
+Depois disso:
+
+Login
+↓
+Dashboard
+
+Não criar automaticamente:
+
+Carlos Mendes
+admin
+
+como administrador real.
+
+============================================================
+7. ADMINISTRADOR PRINCIPAL
+============================================================
+
+Existe apenas UM administrador principal.
+
+O sistema deve garantir:
+
+apenas um usuário com:
+
+perfil = administrador
+
+e:
+
+is_primary_admin = true
+
+Não permitir criar um segundo administrador principal.
+
+Pode existir:
+
+gerente
+caixa
+garçom
+
+como usuários operacionais.
+
+A conta administradora deve ser configurável na instalação.
+
+Nunca hardcode:
+
+Carlos Mendes
+admin
+
+============================================================
+8. USUÁRIOS
+============================================================
+
+Criar tabela:
+
+users
+
+Campos:
+
+id
+nome
+usuario
+senha_hash
+cargo
+perfil
+ativo
+is_primary_admin
+created_at
+updated_at
+last_login_at
+
+IMPORTANTE:
+
+NUNCA armazenar senha em texto puro.
+
+Não usar:
+
+senha = "1234"
+
+ou equivalente.
+
+Usar hash seguro no backend.
+
+A autenticação deve acontecer no backend.
+
+Frontend não deve determinar sozinho quem é o usuário atual.
+
+============================================================
+9. SESSÃO / CURRENT USER
+============================================================
+
+Remover:
+
+DEFAULT_ADMIN
+
+do fluxo operacional.
+
+O backend deve autenticar.
+
+Após login:
+
+backend retorna sessão/token.
+
+Frontend mantém:
+
+currentUser
+
+derivado da sessão.
+
+Toda operação deve registrar:
+
+usuarioId
+usuarioNome
+
+com base no usuário autenticado.
+
+Isso vale para:
+
+- pedidos;
+- caixa;
+- pagamentos;
+- reservas;
+- cancelamentos;
+- descontos;
+- auditoria;
+- impressões;
+- edições;
+- reabertura.
+
+============================================================
+10. PERMISSÕES
+============================================================
+
+Manter os perfis:
+
+administrador
+gerente
+caixa
+garcom
+
+por seed inicial.
+
+Permissões devem ser centralizadas.
+
+Exemplo:
+
+pdv
+pedidos
+mesas
+caixa
+cardapio
+clientes
+reservas
+desconto
+cancelamento
+reabertura
+auditoria
+usuarios
+impressoras
+configuracoes
+
+Não espalhar arrays de permissões diretamente nos componentes.
+
+============================================================
+11. MARIA DB COMO FONTE DE VERDADE
+============================================================
+
+Todas as entidades de negócio devem persistir no MariaDB.
+
+Não armazenar apenas um grande JSON como mecanismo principal.
+
+Criar tabelas estruturadas.
+
+app_state pode ser mantido temporariamente apenas para compatibilidade/migração,
+mas NÃO deve continuar sendo a única fonte da aplicação.
+
+============================================================
+12. TABELAS MARIA DB
+============================================================
+
+Criar/revisar:
+
+restaurant_settings
+
+users
+
+roles
+
+role_permissions
+
+menu_categories
+
+menu_items
+
+menu_item_variations
+
+menu_item_addon_groups
+
+menu_item_addons
+
+menu_item_removals
+
+menu_item_accompaniments
+
+kitchen_stations
+
+payment_methods
+
+tables
+
+printers
+
+printer_rules
+
+customers
+
+reservations
+
+orders
+
+order_items
+
+order_item_accompaniments
+
+order_item_removals
+
+order_item_addons
+
+payments
+
+cash_registers
+
+cash_transactions
+
+print_jobs
+
+print_batches
+
+audit_logs
+
+system_settings
+
+Opcional:
+
+app_state
+
+somente para compatibilidade/migração.
+
+============================================================
+13. MENU CATEGORIES
+============================================================
+
+Criar:
+
+menu_categories
+
+Campos:
+
+id
+nome
+ordem
+ativo
+created_at
+updated_at
+
+IMPORTANTE:
+
+Uma categoria pode pertencer a:
+
+Restaurante
+Lanche
+AMBOS
+
+Criar tabela:
+
+menu_category_catalogs
+
+Campos:
+
+category_id
+catalogo
+
+onde:
+
+catalogo =
+restaurante
+lanche
+
+Assim:
+
+Porções
+→ restaurante
+→ lanche
+
+é uma única categoria.
+
+Bebidas
+→ restaurante
+→ lanche
+
+é uma única categoria.
+
+Sucos
+→ restaurante
+→ lanche
+
+é uma única categoria.
+
+Pratos principais
+→ restaurante
+
+Hambúrgueres
+→ lanche
+
+============================================================
+14. CATEGORIAS PADRÃO
+============================================================
+
+Criar seed inicial.
+
+RESTAURANTE:
+
+Pratos principais
+Porções
+Entradas
+Pizzas
+Bebidas
+Sucos
+Sobremesas
+Combos
+
+LANCHE:
+
+Hambúrgueres
+Lanches & Burgers
+Porções
+Bebidas
+Sucos
+Combos
+
+IMPORTANTE:
+
+Porções não deve existir duplicada.
+
+Deve ser uma categoria compartilhada.
+
+Bebidas pode ser compartilhada.
+
+Sucos pode ser compartilhada.
+
+Combos pode ser compartilhada.
+
+============================================================
+15. MENU ITEMS
+============================================================
+
+menu_items:
+
+id
+codigo
+nome
+descricao
+imagem
+category_id
+catalogo
+preco
+custo_estimado
+disponivel
+tamanho
+estacao_id
+permite_meio_a_meio
+por_peso
+created_at
+updated_at
+
+Manter compatibilidade com produtos antigos.
+
+Não usar mais:
+
+CategoryType
+
+como fonte definitiva.
+
+Não permitir:
+
+categoria inexistente.
+
+Não permitir:
+
+categoria não pertencente ao catálogo do produto.
+
+Criar validação central:
+
+isCategoryAllowedForCatalog()
+
+============================================================
+16. PRODUTOS DE RESTAURANTE E LANCHE
+============================================================
+
+Cadastro deve ter:
+
+[ Restaurante ]
+[ Lanche ]
+
+Depois:
+
+mostrar categorias compatíveis.
+
+Exemplo Restaurante:
+
+Pratos principais
+Porções
+Entradas
+Pizzas
+Bebidas
+Sucos
+Sobremesas
+Combos
+
+Exemplo Lanche:
+
+Hambúrgueres
+Lanches & Burgers
+Porções
+Bebidas
+Sucos
+Combos
+
+Categoria compartilhada deve aparecer nos dois.
+
+============================================================
+17. GUARNIÇÕES
+============================================================
+
+Não usar um único campo de texto.
+
+Cada produto pode possuir:
+
+menu_item_accompaniments
+
+ou tabela equivalente.
+
+Cada item:
+
+id
+menu_item_id
+nome
+ordem
+ativo
+
+Cadastro:
+
+[ + Adicionar guarnição ]
+
+cards individuais.
+
+Produto novo começa SEM guarnições.
+
+Não preencher automaticamente:
+
+Arroz
+Macarrão
+Farofa
+Salada
+
+etc.
+
+============================================================
+18. INGREDIENTES REMOVÍVEIS
+============================================================
+
+Criar:
+
+menu_item_removals
+
+Campos:
+
+id
+menu_item_id
+nome
+ordem
+ativo
+
+Exemplo:
+
+X-Bacon:
+
+Cebola
+Tempero da casa
+Molho especial
+Pimenta
+
+Cadastro por cards:
+
+[ + Adicionar ingrediente ]
+
+NÃO misturar com guarnições.
+
+============================================================
+19. ADICIONAIS
+============================================================
+
+Criar:
+
+menu_item_addon_groups
+
+menu_item_addons
+
+Suportar:
+
+nome
+preço
+mínimo
+máximo
+obrigatório
+ativo
+ordem
+
+No PDV e edição:
+
+Variação
+Adicionais
+Guarnições
+Retirar ingredientes
+Observações
+
+============================================================
+20. CONFIGURADOR DO PDV
+============================================================
+
+AccompanimentModal deve ser renomeado conceitualmente para
+ProductConfigurationModal se necessário.
+
+Suportar:
+
+- variações;
+- adicionais;
+- guarnições;
+- ingredientes removíveis;
+- observações.
+
+Exemplo:
+
+X-Bacon
+
+Variação:
+Normal
+
+Adicionais:
++ Bacon R$ 5
++ Queijo R$ 3
+
+Guarnições:
+Arroz
+Farofa
+
+Retirar ingredientes:
+Cebola
+Pimenta
+Molho especial
+
+Observação:
+Sem pimenta
+
+============================================================
+21. IMPRESSÃO DE REMOÇÕES
+============================================================
+
+As remoções precisam aparecer no:
+
+VIA DO PEDIDO
+ESPELHO
+COMPROVANTE quando pertinente
+
+Exemplo:
+
+1x X-Bacon
+
+SEM:
+- Cebola
+- Molho especial
+
+============================================================
+22. EDIÇÃO REAL DE PEDIDOS
+============================================================
+
+Preservar:
+
+editOrder()
+
+Mas deixar completo.
+
+Permitir:
+
+- quantidade;
+- adicionar produto;
+- remover produto;
+- variação;
+- adicionais;
+- guarnições;
+- ingredientes removidos;
+- observação;
+- cliente;
+- telefone;
+- endereço;
+- taxa de entrega.
+
+Não alterar:
+
+id
+numero
+operacaoId
+histórico anterior
+pagamentos
+
+Recalcular:
+
+subtotal
+desconto
+taxa
+total
+valorPago
+saldoRestante
+
+============================================================
+23. REGRAS DE EDIÇÃO POR STATUS
+============================================================
+
+novo:
+editar normalmente.
+
+pronto:
+exigir reabertura.
+
+entregue:
+não editar diretamente.
+
+finalizado:
+não editar.
+
+cancelado:
+não editar.
+
+Não apagar histórico de impressão.
+
+============================================================
+24. PAGAMENTO NA EDIÇÃO
+============================================================
+
+Nunca permitir:
+
+valorTotalPago > novo total
+
+Se o novo total for menor que o pago:
+
+bloquear.
+
+Exigir estorno.
+
+Recalcular:
+
+saldoRestante
+
+corretamente.
+
+============================================================
+25. CENTRAL DE PEDIDOS
+============================================================
+
+Fluxo:
+
+CONFIRMAR PEDIDO
+↓
+pedido novo
+↓
+VIA DO PEDIDO
+↓
+Central
+↓
+Espelho
+↓
+Pronto
+
+Quando:
+
+status = pronto
+
+e:
+
+saldoRestante > 0
+
+card deve ficar vermelho claro.
+
+Mensagem:
+
+"Pagamento pendente — realizar baixa manual"
+
+Quando:
+
+saldoRestante = 0
+
+remover destaque vermelho.
+
+============================================================
+26. MESA EM DESTAQUE
+============================================================
+
+Mostrar:
+
+MESA 5
+
+em badge destacada.
+
+Não mostrar apenas:
+
+Mesa 5
+
+como texto secundário.
+
+Mesa deve ser claramente identificável.
+
+============================================================
+27. MAPA DE MESAS
+============================================================
+
+Eliminar os dados falsos como fonte runtime.
+
+Criar tabelas reais.
+
+Permitir:
+
+criar mesa
+editar mesa
+desativar mesa
+número
+capacidade
+setor
+posição
+formato
+
+Corrigir a inconsistência:
+
+INITIAL_TABLES_COUNT = 15
+
+versus
+
+16 mesas.
+
+Não manter duas fontes.
+
+Na inicialização:
+seed somente se a tabela estiver vazia.
+
+============================================================
+28. MAPA DE MESAS — RENDERIZAÇÃO
+============================================================
+
+Corrigir a regressão onde:
+
+Todas (16)
+Livres (14)
+Ocupadas (1)
+Pedindo Conta (1)
+
+aparecem, mas os cards não são renderizados.
+
+Verificar:
+
+filteredTables
+grid
+overflow
+height
+display
+visibility
+position
+z-index
+CSS
+
+Os cards precisam aparecer.
+
+============================================================
+29. CAIXA
+============================================================
+
+Abertura:
+
+R$ 0,00
+
+deve ser válida.
+
+Não usar:
+
+150
+200
+
+como valor padrão operacional.
+
+Configuração de abertura deve começar:
+
+0.00
+
+Permitir:
+
+0
+positivo
+
+Negar:
+
+negativo
+
+============================================================
+30. CAIXA
+============================================================
+
+Persistir:
+
+cash_registers
+cash_transactions
+
+No fechamento:
+
+registrar usuário.
+
+No pagamento:
+
+registrar usuário.
+
+No suprimento:
+
+registrar usuário.
+
+Na sangria:
+
+registrar usuário.
+
+Não usar operador hardcoded.
+
+============================================================
+31. FORMAS DE PAGAMENTO
+============================================================
+
+Criar tabela:
+
+payment_methods
+
+Campos:
+
+id
+nome
+ativo
+ordem
+permite_troco
+
+Seed inicial pode conter:
+
+dinheiro
+pix
+debito
+credito
+vale_refeicao
+vale_alimentacao
+cortesia
+fiado
+outro
+
+Mas depois tudo deve vir do banco.
+
+============================================================
+32. TAXA DE ENTREGA
+============================================================
+
+Não usar:
+
+7.00
+
+como regra fixa.
+
+Criar:
+
+restaurant_settings.delivery_taxa_padrao
+
+Permitir alteração no painel de configuração.
+
+Não inventar:
+
+Centro
+S/N
+Endereço informado no balcão
+
+para pedidos delivery.
+
+Se faltarem campos obrigatórios:
+solicitar/preencher corretamente.
+
+============================================================
+33. VALORES RÁPIDOS DE DINHEIRO
+============================================================
+
+Não deixar:
+
+20
+50
+100
+200
+
+fixos no componente.
+
+Criar configuração:
+
+cash_quick_amounts
+
+ou JSON da configuração do caixa.
+
+============================================================
+34. DASHBOARD
+============================================================
+
+Remover horários:
+
+11
+12
+13
+14
+18
+19
+20
+21
+
+como conjunto fixo.
+
+Calcular dinamicamente com base nos pedidos.
+
+Se houver horário operacional configurado:
+
+usar configuração.
+
+Não misturar:
+
+horário comercial
+
+com:
+
+horário de vendas existentes.
+
+============================================================
+35. PEDIDO ATRASADO
+============================================================
+
+Não deixar:
+
+25 minutos
+
+espalhado no código.
+
+Criar:
+
+order_late_threshold_minutes
+
+na configuração.
+
+Default inicial pode ser 25.
+
+Mas vem do banco.
+
+============================================================
+36. LIMITES DE UI
+============================================================
+
+Centralizar:
+
+número de itens visíveis
+número de regras exibidas
+top produtos
+limite de auditoria
+
+Não espalhar:
+
+slice(0,5)
+slice(0,3)
+slice(0,5000)
+
+como regras de negócio.
+
+Pode usar limite visual local quando necessário,
+mas deve ser constante nomeada.
+
+============================================================
+37. IMPRESSORAS
+============================================================
+
+Migrar tudo para MariaDB.
+
+Não usar:
+
+192.168.1.120
+192.168.1.121
+192.168.1.122
+192.168.1.123
+192.168.1.200
+
+como configuração real.
+
+Esses valores podem existir apenas em seed inicial de demonstração.
+
+Criar:
+
+printers
+
+id
+nome
+local
+tipo
+finalidade
+ip
+porta
+modelo
+largura_papel
+status
+ativa
+impressora_reserva_id
+created_at
+updated_at
+
+============================================================
+38. REGRAS DE IMPRESSÃO
+============================================================
+
+Criar:
+
+printer_rules
+
+Campos:
+
+id
+printer_id
+nome
+documentos
+catalogos
+tipos_pedido
+categoria_ids
+estacao_ids
+prioridade
+modo
+ativo
+
+NÃO armazenar somente nomes de categorias.
+
+Usar:
+
+category_id
+
+Usar IDs de estações.
+
+Uma categoria compartilhada pode ser filtrada corretamente pelo catálogo.
+
+Exemplo:
+
+Porções
+Restaurante
+≠
+Porções
+Lanche
+
+mesmo sendo a mesma categoria.
+
+============================================================
+39. ESTAÇÕES
+============================================================
+
+Criar tabela:
+
+kitchen_stations
+
+Seed:
+
+cozinha
+chapa
+bar
+pizza
+sobremesa
+
+Permitir configurar futuramente.
+
+============================================================
+40. FILA DE IMPRESSÃO
+============================================================
+
+Criar:
+
+print_jobs
+
+print_batches
+
+Persistir no MariaDB.
+
+Manter:
+
+pedido
+espelho
+comprovante
+retry
+tentativas
+status
+datas
+impressora
+grupo
+
+Não usar apenas fila em memória.
+
+============================================================
+41. IMPRESSÃO FÍSICA
+============================================================
+
+Separar claramente:
+
+PrintJob criado
+≠
+comando enviado para impressora
+≠
+impressão confirmada
+
+Nunca mostrar:
+
+"Comando enviado com sucesso"
+
+se apenas criou o job local.
+
+Status real:
+
+pendente
+enviando
+impresso
+erro
+cancelado
+
+============================================================
+42. CONFIGURAÇÃO DE RECIBO
+============================================================
+
+ReceiptModal e ThermalReceiptModal devem ler:
+
+restaurant_settings
+
+Não possuir:
+
+nome
+CNPJ
+cidade
+telefone
+rodapé
+
+hardcoded.
+
+============================================================
+43. PIX
+============================================================
+
+Criar configurações:
+
+pix_chave
+pix_nome_recebedor
+pix_cidade
+pix_descricao
+
+no MariaDB.
+
+pix.ts deve receber os dados.
+
+Não usar:
+
+MURUPI RESTAURANTE
+PORTO VELHO
+MURUPI
+
+como fallback de negócio.
+
+============================================================
+44. CLIENTES
+============================================================
+
+Persistir:
+
+customers
+
+Manter:
+
+nome
+telefone
+cpf
+endereco
+observacoes
+totalComprado
+created_at
+updated_at
+
+Não criar dados de demonstração no fluxo real.
+
+============================================================
+45. RESERVAS
+============================================================
+
+Persistir:
+
+reservations
+
+Usar:
+
+usuário atual
+
+como criadoPor.
+
+Não usar:
+
+Administrador
+
+fixo.
+
+Configurações:
+
+defaultGuests
+advanceMinutes
+
+vêm de restaurant_settings.
+
+============================================================
+46. AUDITORIA
+============================================================
+
+Persistir:
+
+audit_logs
+
+Registrar:
+
+usuário
+ação
+entidade
+entidadeId
+detalhes
+timestamp
+
+Exemplos:
+
+criou pedido
+editou pedido
+cancelou pedido
+reabriu pedido
+alterou cardápio
+alterou impressora
+abriu caixa
+fechou caixa
+registrou pagamento
+
+============================================================
+47. HEALTH REAL
+============================================================
+
+Remover métricas fictícias:
+
+16ms
+0.00%
+12%
+Google Cloud Run
+v3.4.0 SaaS Pro
+
+Health deve ser real.
+
+Verificar:
+
+backend
+MariaDB
+impressoras
+sincronização
+backup
+
+Não informar internet como online sem verificar.
+
+Não mostrar:
+
+"Backup criptografado"
+
+se não houver mecanismo real.
+
+Se não houver backup:
+"Não configurado"
+
+============================================================
+48. VERSIONAMENTO
+============================================================
+
+Não hardcode:
+
+v3.2
+v3.4.0
+
+como texto.
+
+Versão exibida deve vir do build/package ou configuração.
+
+============================================================
+49. MARIA DB API
+============================================================
+
+Criar API organizada.
+
+Exemplos:
+
+GET /api/health
+
+GET /api/settings
+PUT /api/settings
+
+POST /api/auth/login
+POST /api/auth/logout
+GET /api/auth/me
+
+GET /api/menu
+POST /api/menu
+PUT /api/menu/:id
+DELETE /api/menu/:id
+
+GET /api/categories
+POST /api/categories
+PUT /api/categories/:id
+DELETE /api/categories/:id
+
+GET /api/tables
+POST /api/tables
+PUT /api/tables/:id
+
+GET /api/orders
+GET /api/orders/:id
+POST /api/orders
+PUT /api/orders/:id
+POST /api/orders/:id/reopen
+POST /api/orders/:id/mirror
+POST /api/orders/:id/payment
+
+GET /api/payments/methods
+GET /api/printers
+POST /api/printers
+PUT /api/printers/:id
+
+GET /api/customers
+GET /api/reservations
+
+GET /api/cash/register
+POST /api/cash/open
+POST /api/cash/close
+POST /api/cash/movement
+
+GET /api/audit
+
+Não implementar endpoints desnecessários.
+
+============================================================
+50. TRANSAÇÕES MARIA DB
+============================================================
+
+Operações críticas devem usar transação.
+
+Exemplo:
+
+CRIAR PEDIDO:
+
+BEGIN
+↓
+validar mesa
+↓
+criar order
+↓
+criar order_items
+↓
+atualizar mesa
+↓
+criar print_batch
+↓
+criar print_job
+↓
+COMMIT
+
+Se qualquer etapa falhar:
+
+ROLLBACK
+
+Não deixar:
+
+pedido criado
+mas mesa não atualizada.
+
+Ou:
+
+pedido criado
+mas print job parcialmente criado.
+
+============================================================
+51. PAGAMENTO
+============================================================
+
+Pagamento deve usar transação:
+
+BEGIN
+↓
+validar pedido
+↓
+validar caixa
+↓
+inserir payment
+↓
+atualizar saldo do pedido
+↓
+atualizar caixa
+↓
+audit log
+↓
+COMMIT
+
+============================================================
+52. EDIÇÃO DO PEDIDO
+============================================================
+
+Editar pedido deve usar transação.
+
+BEGIN
+
+validar status
+↓
+validar pagamento
+↓
+atualizar order
+↓
+substituir/atualizar items
+↓
+recalcular totals
+↓
+atualizar mesa
+↓
+registrar auditoria
+↓
+criar nova impressão se necessário
+↓
+COMMIT
+
+============================================================
+53. NÃO ENGOLIR ERROS NO BACKEND
+============================================================
+
+Existe código que faz:
+
+.catch(() => {})
+
+na persistência de orders.
+
+REMOVER isso.
+
+Nenhum erro importante de persistência pode ser simplesmente ignorado.
+
+Registrar log apropriado.
+
+Retornar erro para o chamador.
+
+Rollback quando necessário.
+
+============================================================
+54. CONCORRÊNCIA
+============================================================
+
+Garantir que dois terminais não possam:
+
+editar a mesma mesa simultaneamente;
+baixar o mesmo pagamento duas vezes;
+duplicar pedido;
+duplicar impressão;
+duplicar fechamento;
+duplicar abertura.
+
+Usar:
+
+transações
+constraints
+índices
+locks quando necessário
+idempotency keys
+
+============================================================
+55. DUPLO CLIQUE / DUPLICAÇÃO
+============================================================
+
+Manter proteção de:
+
+operationId
+
+mas persistir idempotency key no MariaDB.
+
+Se a mesma operação chegar duas vezes:
+
+retornar o mesmo resultado.
+
+Não criar dois pedidos.
+
+============================================================
+56. SEEDS
+============================================================
+
+INITIAL_MENU
+INITIAL_TABLES
+INITIAL_PRINTERS
+INITIAL_ALERTS
+INITIAL_CASH_REGISTER
+INITIAL_MANUAL_PAYMENTS
+
+deixarão de ser a fonte principal.
+
+Eles podem existir somente como:
+
+seed inicial
+migração
+fixture de teste
+
+Seed deve rodar:
+
+somente se banco estiver vazio.
+
+Nunca sobrescrever produção.
+
+============================================================
+57. DADOS ANTIGOS
+============================================================
+
+Criar migração para:
+
+localStorage
+snapshot antigo
+Firebase antigo quando necessário durante migração única
+
+IMPORTANTE:
+
+O Firebase não será utilizado depois.
+
+Se existirem dados antigos no Firebase e houver necessidade de
+preservá-los:
+
+criar ferramenta/script de migração:
+
+Firebase export
+↓
+MariaDB
+
+Depois:
+
+remover Firebase.
+
+Nunca manter sincronização híbrida.
+
+============================================================
+58. LOCALSTORAGE
+============================================================
+
+Pode continuar como cache local.
+
+Mas:
+
+MariaDB = autoridade
+
+Se localStorage divergir do MariaDB:
+
+MariaDB vence.
+
+EXCEÇÃO:
+
+se MariaDB estiver offline durante uma operação local:
+
+permitir modo offline controlado.
+
+Guardar operações pendentes em outbox local.
+
+Quando MariaDB voltar:
+
+enviar outbox.
+
+Não simplesmente sobrescrever MariaDB com um snapshot local inteiro.
+
+============================================================
+59. OUTBOX OFFLINE
+============================================================
+
+Criar mecanismo:
+
+local_outbox
+
+ou estrutura equivalente.
+
+Cada operação pendente:
+
+id
+tipo
+payload
+created_at
+tentativas
+status
+
+Exemplo:
+
+CREATE_ORDER
+
+Quando servidor retornar:
+
+processar sequencialmente.
+
+Garantir idempotência.
+
+============================================================
+60. FRONTEND
+============================================================
+
+O React deve consumir APIs.
+
+Não deve decidir sozinho:
+
+quem é usuário;
+qual é a configuração;
+qual é a categoria válida;
+qual é o preço real;
+qual é a forma de pagamento ativa.
+
+Essas decisões vêm do backend/database.
+
+============================================================
+61. HARD CODES QUE DEVEM SER REMOVIDOS
+============================================================
+
+Remover dados de negócio como:
+
+Murupi
+Porto Velho
+CNPJ
+telefone
+endereço
+Carlos Mendes
+admin
+taxa de entrega 7
+categorias globais
+formas de pagamento
+IPs de impressora
+nomes das impressoras
+mesas fixas
+horários fixos
+métricas falsas
+versões fixas
+defaults empresariais
+Centro
+S/N
+quick cash values
+Administrador como criador de reserva
+estações como única fonte fixa
+Firebase path
+dados de recibo
+dados de PIX
+
+============================================================
+62. HARD CODES QUE PODEM PERMANECER
+============================================================
+
+Não transformar indiscriminadamente em banco:
+
+status técnicos:
+
+novo
+pronto
+entregue
+finalizado
+cancelado
+
+tipos:
+
+mesa
+balcao
+delivery
+
+formatos de impressão:
+
+ESC/POS
+
+rotas da API
+
+nomes das tabelas técnicas
+
+regras matemáticas invariantes
+
+validações de segurança
+
+constantes visuais puramente técnicas
+
+Mas centralizar limites de negócio.
+
+============================================================
+63. HEALTH STATUS INICIAL
+============================================================
+
+Não iniciar como:
+
+online
+
+sem verificar.
+
+Inicial:
+
+atencao
+
+ou:
+
+desconhecido
+
+Depois rodar health check.
+
+============================================================
+64. DASHBOARD
+============================================================
+
+Métricas reais:
+
+vendas
+pagamentos
+pedidos
+ticket médio
+formas de pagamento
+produtos vendidos
+mesas
+caixa
+
+Não utilizar valores fictícios.
+
+============================================================
+65. MAPA DE MESAS
+============================================================
+
+Banco:
+
+tables
+
+Renderização:
+
+todas as mesas.
+
+Filtros:
+
+Todas
+Livres
+Ocupadas
+Pedindo Conta
+Reservadas
+Fechando
+
+Contadores derivados do banco/estado real.
+
+============================================================
+66. CONFIGURAÇÃO DO CARDÁPIO
+============================================================
+
+Criar painel de configuração:
+
+Categorias
+Estações
+Formas de pagamento
+Configuração delivery
+Configuração de recibo
+Configuração PIX
+Configuração caixa
+Dados do estabelecimento
+Usuários
+
+Tudo persistente no MariaDB.
+
+============================================================
+67. MENU MANAGEMENT
+============================================================
+
+Corrigir:
+
+catálogo
+categoria
+produto
+guarnições
+ingredientes removíveis
+variações
+adicionais
+
+Tudo com edição completa.
+
+============================================================
+68. IMPRESSORAS
+============================================================
+
+PrinterModal não deve possuir:
+
+const CATEGORIAS = [...]
+
+Ele deve carregar categorias da API.
+
+Mesma fonte usada pelo:
+
+PDV
+cardápio
+edição
+roteamento.
+
+============================================================
+69. TESTES
+============================================================
+
+Criar testes para:
+
+INSTALAÇÃO:
+
+1. criar estabelecimento;
+2. criar administrador;
+3. impedir segundo admin principal.
+
+AUTH:
+
+4. login;
+5. senha inválida;
+6. usuário inativo;
+7. permissão;
+8. auditoria com usuário correto.
+
+CARDÁPIO:
+
+9. criar categoria;
+10. categoria Restaurante;
+11. categoria Lanche;
+12. categoria compartilhada;
+13. criar produto;
+14. editar produto;
+15. variação;
+16. adicional;
+17. guarnição;
+18. ingrediente removível.
+
+PDV:
+
+19. filtrar Restaurante;
+20. filtrar Lanche;
+21. categoria compartilhada;
+22. configurar produto;
+23. adicionar ao carrinho;
+24. remover ingrediente;
+25. adicional;
+26. variação.
+
+PEDIDO:
+
+27. criar pedido;
+28. não duplicar no duplo clique;
+29. imprimir job;
+30. editar pedido;
+31. editar quantidade;
+32. remover item;
+33. adicionar item;
+34. reabrir;
+35. gerar espelho;
+36. destaque de pagamento.
+
+PAGAMENTO:
+
+37. pagamento integral;
+38. pagamento parcial;
+39. estorno;
+40. impedir pagamento excedente.
+
+CAIXA:
+
+41. abrir R$0;
+42. abrir valor positivo;
+43. negar negativo;
+44. suprimento;
+45. sangria;
+46. fechamento.
+
+MESAS:
+
+47. abrir mesa;
+48. adicionar pedido;
+49. pedir conta;
+50. fechar conta;
+51. transferir;
+52. juntar;
+53. mapa renderizar todas.
+
+IMPRESSÃO:
+
+54. criar job;
+55. retry;
+56. erro;
+57. reimpressão;
+58. remoções aparecem no documento.
+
+MARIA DB:
+
+59. conexão;
+60. desconexão;
+61. transação;
+62. rollback;
+63. retry;
+64. outbox;
+65. idempotência.
+
+FLUTTER:
+
+66. login;
+67. carregar mesas;
+68. carregar cardápio;
+69. criar pedido;
+70. atualizar mesa;
+71. registrar impressão;
+72. erro offline.
+
+============================================================
+70. MIGRAÇÃO DE FIREBASE
+============================================================
+
+Criar script:
+
+scripts/migrate-firebase-to-mariadb
+
+Esse script deve:
+
+- ler export existente;
+- validar estrutura;
+- mapear categorias;
+- mapear produtos;
+- mapear usuários;
+- mapear mesas;
+- mapear impressoras;
+- mapear pedidos;
+- mapear clientes;
+- mapear reservas;
+- mapear pagamentos;
+- mapear auditoria;
+- inserir MariaDB usando transações;
+- produzir relatório;
+- não apagar Firebase automaticamente.
+
+Depois da validação:
+
+Firebase pode ser removido do código.
+
+============================================================
+71. LIMPEZA DO PROJETO
+============================================================
+
+Remover:
+
+firebaseDatabase.ts
+mergeSnapshots.ts
+
+se não forem mais usados.
+
+Remover dependências Firebase do package.json.
+
+Remover Firebase do Flutter.
+
+Remover Firebase das variáveis de ambiente.
+
+Remover documentação Firebase.
+
+Remover código morto.
+
+Remover:
+
+.qa-backup
+
+ou mover para documentação histórica fora do runtime, se não for
+necessário.
+
+============================================================
+72. BANCO SCHEMA
+============================================================
+
+Reescrever:
+
+server/schema.sql
+
+com todas as entidades.
+
+Adicionar:
+
+PRIMARY KEY
+FOREIGN KEY
+UNIQUE
+INDEX
+CHECK
+
+quando MariaDB suportar adequadamente.
+
+Garantir integridade referencial.
+
+Exemplo:
+
+menu_items.category_id
+→ menu_categories.id
+
+orders
+→ order_items
+
+order_items
+→ menu_items
+
+payments
+→ orders
+
+cash_transactions
+→ cash_registers
+
+printer_rules
+→ printers
+
+etc.
+
+============================================================
+73. BACKUP
+============================================================
+
+Criar mecanismo real de backup MariaDB.
+
+O sistema não deve afirmar:
+
+backup realizado
+
+sem existir registro real.
+
+Criar:
+
+backup metadata
+
+com:
+
+id
+datahora
+tipo
+status
+arquivo/referencia
+usuario
+erro
+
+Se não configurado:
+
+mostrar:
+
+"Backup não configurado".
+
+============================================================
+74. SAÚDE DO MARIA DB
+============================================================
+
+GET /api/health deve retornar:
+
+server
+database
+pool
+latency
+lastError
+timestamp
+
+Nunca expor senha.
+
+============================================================
+75. LOGS
+============================================================
+
+Backend deve registrar:
+
+erro de banco
+erro de transação
+erro de autenticação
+erro de impressão
+erro de sincronização offline
+
+Sem expor:
+
+senha
+tokens
+segredos
+
+============================================================
+76. RESULTADO ESPERADO
+============================================================
+
+Fluxo final:
+
+PRIMEIRA EXECUÇÃO
+↓
+Configurar estabelecimento
+↓
+Criar administrador principal
+↓
+Configurar cardápio
+↓
+Configurar categorias
+↓
+Configurar impressoras
+↓
+Configurar formas de pagamento
+↓
+Sistema pronto
+
+LOGIN
+↓
+usuário autenticado
+↓
+Dashboard
+
+PDV
+↓
+produto
+↓
+configurar
+↓
+pedido
+↓
+MariaDB
+↓
+print_job
+↓
+Central
+
+Central
+↓
+Espelho
+↓
+Pronto
+↓
+saldo pendente
+↓
+card vermelho claro
+↓
+Cobrar
+↓
+Pagamento
+↓
+Caixa
+↓
+MariaDB
+
+MESAS
+↓
+MariaDB
+
+CARDÁPIO
+↓
+MariaDB
+
+IMPRESSORAS
+↓
+MariaDB
+
+CLIENTES
+↓
+MariaDB
+
+RESERVAS
+↓
+MariaDB
+
+AUDITORIA
+↓
+MariaDB
+
+APP GARÇOM
+↓
+API
+↓
+MariaDB
+
+Não deve existir nenhum fluxo funcional dependendo do Firebase.
+
+============================================================
+77. VERIFICAÇÃO FINAL
+============================================================
+
+Executar:
+
+npm run lint
+npm run test
+npm run build
+npm run test:full
+npm run test:vendas
+npm run test:caixa
+npm run test:matematica
+npm run test:ataque
+
+Se houver código Flutter:
+
+flutter analyze
+flutter test
+
+Verificar também:
+
+npm install
+
+sem Firebase.
+
+============================================================
+78. CRITÉRIO DE CONCLUSÃO
+============================================================
+
+Não considerar concluído apenas porque compila.
+
+A tarefa somente está concluída quando:
+
+1. Firebase não participa do runtime;
+2. MariaDB contém os dados de negócio;
+3. usuário autenticado funciona;
+4. administrador principal funciona;
+5. categorias vêm do banco;
+6. categoria compartilhada funciona;
+7. cardápio vem do banco;
+8. produtos configuráveis funcionam;
+9. remoções funcionam;
+10. guarnições funcionam;
+11. adicionais funcionam;
+12. edição de pedido funciona;
+13. espelho funciona;
+14. pagamento funciona;
+15. caixa R$0 funciona;
+16. mesas funcionam;
+17. impressoras funcionam;
+18. print jobs persistem;
+19. auditoria funciona;
+20. health mostra dados reais;
+21. não existem dados empresariais fictícios hardcoded;
+22. não existem IPs de impressora fictícios sendo tratados como
+configuração real;
+23. não existe administrador hardcoded;
+24. não existe Firebase;
+25. MariaDB é a autoridade;
+26. localStorage serve somente como cache/outbox;
+27. transações críticas possuem rollback;
+28. duplo clique não duplica operação;
+29. dados antigos são migrados sem perda;
+30. build e testes passam.
+
+Ao finalizar, apresentar um relatório contendo:
+
+- arquitetura final;
+- tabelas criadas;
+- migrações;
+- endpoints criados;
+- arquivos removidos;
+- arquivos modificados;
+- hardcodes removidos;
+- hardcodes técnicos mantidos;
+- estratégia offline;
+- estratégia de autenticação;
+- estratégia de impressão;
+- estratégia do app Garçom;
+- testes executados;
+- resultado do build;
+- problemas restantes, caso existam.
+
+IMPORTANTE:
+
+Não reescrever o projeto inteiro sem necessidade.
+
+Aproveitar:
+
+RestaurantContext
+LocalStore
+editOrder
+printQueue
+tipos existentes
+regras financeiras existentes
+
+mas mudar as fontes de verdade para MariaDB e eliminar as fontes
+duplicadas/hardcoded.
