@@ -107,6 +107,8 @@ interface RestaurantContextType {
   rerouteOrderPrintBatch: (orderId: string, grupoId?: string) => void;
   setOrderPriority: (orderId: string, prioridade: 'normal' | 'urgente') => void;
   reopenOrder: (orderId: string, motivo: string) => void;
+  /** Edita campos de um pedido existente com recálculo de totais e auditoria. */
+  editOrder: (orderId: string, patch: import('../types').OrderEditPatch) => void;
   selectedOrderForModal: Order | null;
   setSelectedOrderForModal: (order: Order | null) => void;
   selectedReceiptOrder: Order | null;
@@ -336,7 +338,7 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   // Cash Register
   const openCashRegister = useCallback((initialAmount: number) => {
-    const valor = amount(initialAmount, 'Abertura', false);
+    const valor = amount(initialAmount, 'Abertura', true);
     if (valor < 0) throw new Error('Valor inicial inválido.');
     if (store.state.cashRegister.aberto) return;
     setCashRegister(prev => ({ ...prev, aberto: true, operadorAbertura: currentUser.nome, abertoEm: new Date().toISOString(), fechadoEm: undefined, saldoInicial: valor, saldoAtualGaveta: valor, transacoes: [...prev.transacoes, { id: uid('tx-open'), tipo: 'abertura', valor, motivo: 'Abertura de caixa', horario: new Date().toISOString(), operador: currentUser.nome }] }));
@@ -860,6 +862,80 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     }
   };
 
+  // ---------------------------------------------------------------------------
+  // editOrder — edição real de pedido com recálculo de totais e auditoria.
+  // Permite alterar: itens, cliente, telefone, endereço, observação, taxaEntrega.
+  // Não altera: id, numero, status, impressoes, pagamentos, operacaoId.
+  // ---------------------------------------------------------------------------
+  const editOrder = (orderId: string, patch: import('../types').OrderEditPatch) => {
+    const order = store.state.orders.find((o: Order) => o.id === orderId) as Order | undefined;
+    if (!order) throw new Error('Pedido não encontrado.');
+    if (order.status === 'cancelado') throw new Error('Não é possível editar um pedido cancelado.');
+    if (order.status === 'finalizado') throw new Error('Não é possível editar um pedido finalizado.');
+    if (order.status === 'entregue') throw new Error('Não é possível editar um pedido entregue. Reabra o pedido primeiro.');
+    if (order.status === 'pronto') {
+      throw new Error(
+        'Este pedido já foi espelhado. Use "Reabrir Pedido" antes de editar. ' +
+        'Após a reabertura, as alterações gerarão uma nova via de impressão.'
+      );
+    }
+    if (!store.state.cashRegister.aberto) throw new Error('Abra o caixa antes de editar pedidos.');
+
+    // Montar objeto atualizado com os campos do patch
+    const updated: Order = {
+      ...order,
+      ...(patch.nomeCliente !== undefined && { nomeCliente: patch.nomeCliente }),
+      ...(patch.telefoneCliente !== undefined && { telefoneCliente: patch.telefoneCliente }),
+      ...(patch.enderecoEntrega !== undefined && { enderecoEntrega: patch.enderecoEntrega }),
+      ...(patch.observacoesGerais !== undefined && { observacoesGerais: patch.observacoesGerais }),
+      ...(patch.taxaEntrega !== undefined && { taxaEntrega: Math.max(0, patch.taxaEntrega) }),
+      ...(patch.itens !== undefined && { itens: patch.itens }),
+    };
+
+    // Recalcular totais financeiros com as mesmas funções do contexto
+    const calcTotals = totals(
+      updated.itens,
+      updated.desconto || 0,
+      updated.taxaServico || 0,
+      updated.taxaEntrega || 0
+    );
+
+    const withTotals: Order = {
+      ...updated,
+      subtotal: calcTotals.subtotal,
+      desconto: calcTotals.desconto,
+      taxaServico: calcTotals.taxaServico,
+      taxaEntrega: calcTotals.taxaEntrega,
+      total: calcTotals.total,
+    };
+
+    const recalculated = reconcile(withTotals);
+
+    // Guardar validação financeira: nunca pode ficar com valorTotalPago > total
+    if (recalculated.valorTotalPago > recalculated.total + 0.001) {
+      throw new Error(
+        `Impossível salvar: o valor já pago (${recalculated.valorTotalPago.toFixed(2)}) ` +
+        `supera o novo total (${recalculated.total.toFixed(2)}). ` +
+        `Estorne o excedente antes de reduzir o pedido.`
+      );
+    }
+
+    // Gerar resumo de auditoria
+    const changes: string[] = [];
+    if (patch.nomeCliente !== undefined && patch.nomeCliente !== order.nomeCliente) changes.push(`cliente: "${order.nomeCliente}" → "${patch.nomeCliente}"`);
+    if (patch.telefoneCliente !== undefined && patch.telefoneCliente !== order.telefoneCliente) changes.push(`telefone alterado`);
+    if (patch.observacoesGerais !== undefined && patch.observacoesGerais !== order.observacoesGerais) changes.push(`observação alterada`);
+    if (patch.taxaEntrega !== undefined && patch.taxaEntrega !== order.taxaEntrega) changes.push(`taxaEntrega: ${order.taxaEntrega?.toFixed(2)} → ${patch.taxaEntrega.toFixed(2)}`);
+    if (patch.itens !== undefined) changes.push(`itens editados (${order.itens.length} → ${patch.itens.length} itens)`);
+    if (order.total !== recalculated.total) changes.push(`total: R$${order.total.toFixed(2)} → R$${recalculated.total.toFixed(2)}`);
+    const auditDetail = changes.length > 0 ? changes.join('; ') : 'sem alterações relevantes';
+
+    setOrders(prev => prev.map(o => o.id === orderId ? recalculated : o));
+    syncTableTotals(recalculated);
+    recordAudit('editou pedido', 'pedido', orderId, auditDetail);
+  };
+
+
   const addManualPaymentToOrder = (orderId: string, formaId: PaymentMethodId, valor: number, valorRecebido?: number, observacao?: string): boolean => {
     const order = store.state.orders.find((o: Order) => o.id === orderId) as Order | undefined;
     const option = store.state.paymentOptions.find((p: ManualPaymentOption) => p.id === formaId) as ManualPaymentOption | undefined;
@@ -1232,6 +1308,7 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         applyOrderDiscount,
         setOrderPriority,
         reopenOrder,
+        editOrder,
         selectedOrderForModal,
         setSelectedOrderForModal,
         selectedReceiptOrder,

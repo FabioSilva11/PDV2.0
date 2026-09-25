@@ -21,7 +21,10 @@ import {
   Plus,
   Minus,
   ShoppingBag,
-  Search
+  Search,
+  Edit3,
+  UtensilsCrossed,
+  Save
 } from 'lucide-react';
 
 export const OrderDetailsModal: React.FC = () => {
@@ -41,8 +44,19 @@ export const OrderDetailsModal: React.FC = () => {
     setSelectedReceiptOrder,
     currentUser,
     tables,
-    menu
+    menu,
+    editOrder
   } = useRestaurant();
+
+  const [isEditMode, setIsEditMode] = useState(false);
+  const [editCustomerName, setEditCustomerName] = useState('');
+  const [editCustomerPhone, setEditCustomerPhone] = useState('');
+  const [editNotes, setEditNotes] = useState('');
+  const [editItems, setEditItems] = useState<CartItem[]>([]);
+  const [editDeliveryFee, setEditDeliveryFee] = useState<string>('0');
+  const [editAddress, setEditAddress] = useState<Order['enderecoEntrega']>({ logradouro: '', numero: '', bairro: '', complemento: '' });
+  const [editSearch, setEditSearch] = useState('');
+  const [editError, setEditError] = useState('');
 
   const [showCancelOrderInput, setShowCancelOrderInput] = useState(false);
   const [cancelOrderReason, setCancelOrderReason] = useState('');
@@ -131,6 +145,84 @@ export const OrderDetailsModal: React.FC = () => {
     setSelectedOrderForModal(null);
   };
 
+  const startEditOrder = () => {
+    if (order.status === 'pronto') {
+      setEditError('Este pedido já foi espelhado. Use o botão "Reabrir Conta" antes de editar.');
+      return;
+    }
+    if (order.status === 'cancelado' || order.status === 'finalizado' || order.status === 'entregue') {
+      setEditError('Não é possível editar pedidos com este status.');
+      return;
+    }
+    setEditError('');
+    setEditCustomerName(order.nomeCliente || '');
+    setEditCustomerPhone(order.telefoneCliente || '');
+    setEditNotes(order.observacoesGerais || '');
+    setEditDeliveryFee((order.taxaEntrega || 0).toString());
+    setEditAddress(order.enderecoEntrega || { logradouro: '', numero: '', bairro: '', complemento: '' });
+    setEditItems([...order.itens]);
+    setIsEditMode(true);
+  };
+
+  const cancelEditOrder = () => {
+    setIsEditMode(false);
+    setEditError('');
+  };
+
+  const saveEditOrder = () => {
+    setEditError('');
+    if (editItems.length === 0) {
+      setEditError('O pedido não pode ficar sem itens.');
+      return;
+    }
+    const fee = parseFloat(editDeliveryFee) || 0;
+    try {
+      editOrder(order.id, {
+        nomeCliente: editCustomerName.trim() || undefined,
+        telefoneCliente: editCustomerPhone.trim() || undefined,
+        observacoesGerais: editNotes.trim() || undefined,
+        taxaEntrega: order.tipo === 'delivery' ? fee : undefined,
+        enderecoEntrega: order.tipo === 'delivery' ? editAddress : undefined,
+        itens: editItems
+      });
+      setIsEditMode(false);
+    } catch (err: any) {
+      setEditError(err.message || 'Erro ao salvar alterações no pedido.');
+    }
+  };
+
+  const changeEditItemQty = (cartItemId: string, delta: number) => {
+    setEditItems(prev => prev.map(it => {
+      if (it.cartItemId === cartItemId) {
+        const nQty = it.quantidade + delta;
+        return nQty > 0 ? { ...it, quantidade: nQty } : null;
+      }
+      return it;
+    }).filter(Boolean) as CartItem[]);
+  };
+
+  const removeEditItem = (cartItemId: string) => {
+    setEditItems(prev => prev.filter(it => it.cartItemId !== cartItemId));
+  };
+
+  const addProductToEdit = (menuItem: MenuItem) => {
+    setEditItems(prev => {
+      const existing = prev.find(it => it.menuItemId === menuItem.id && !it.adicionais?.length && !it.remocoes?.length);
+      if (existing) {
+        return prev.map(it => it.cartItemId === existing.cartItemId ? { ...it, quantidade: it.quantidade + 1 } : it);
+      }
+      return [...prev, {
+        cartItemId: 'item-edit-' + Date.now() + '-' + Math.random().toString(36).substring(2, 5),
+        menuItemId: menuItem.id,
+        nome: menuItem.nome,
+        precoUnitario: menuItem.preco,
+        quantidade: 1,
+        observacao: '',
+        estacaoProducao: menuItem.estacaoProducao || 'cozinha'
+      }];
+    });
+  };
+
   const addCartSubtotal = addCart.reduce((acc, ci) => acc + ci.precoUnitario * ci.quantidade, 0);
   const availableMenu = menu.filter(item => item.disponivel !== false
     && item.nome.toLowerCase().includes(addItemSearch.toLowerCase()));
@@ -188,16 +280,244 @@ export const OrderDetailsModal: React.FC = () => {
 
         {/* Content */}
         <div className="p-6 overflow-y-auto space-y-5">
+          {/* MODO DE EDIÇÃO COMPLETA DO PEDIDO */}
+          {isEditMode ? (
+            <div className="space-y-4 animate-in fade-in">
+              <div className="flex items-center justify-between pb-3 border-b border-blue-200 bg-blue-50/60 p-3 rounded-xl">
+                <div>
+                  <h4 className="font-bold text-sm text-blue-950 flex items-center gap-2">
+                    <Edit3 className="w-4 h-4 text-blue-600" />
+                    Edição do Pedido #{order.codigoMesa || order.numero}
+                  </h4>
+                  <p className="text-[11px] text-blue-700">
+                    Altere itens, quantidades, dados do cliente e taxas. Os totais serão recalculados automaticamente.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    id="cancel-edit-order-btn"
+                    onClick={cancelEditOrder}
+                    className="px-3 py-1.5 rounded-lg border border-slate-300 text-slate-700 bg-white hover:bg-slate-50 text-xs font-semibold"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    id="save-edit-order-btn"
+                    onClick={saveEditOrder}
+                    className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-xs"
+                  >
+                    <Save className="w-3.5 h-3.5" />
+                    Salvar Alterações
+                  </button>
+                </div>
+              </div>
+
+              {editError && (
+                <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-800 font-semibold flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                  <span>{editError}</span>
+                </div>
+              )}
+
+              {/* Dados do Cliente / Pedido */}
+              <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-3 text-xs">
+                <div className="font-bold text-slate-800 uppercase tracking-wider text-[10px]">Dados do Cliente & Entrega</div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-slate-600 font-medium mb-1">Nome do Cliente:</label>
+                    <input
+                      id="edit-order-customer-name"
+                      type="text"
+                      value={editCustomerName}
+                      onChange={(e) => setEditCustomerName(e.target.value)}
+                      placeholder="Nome do cliente..."
+                      className="w-full p-2 border border-slate-300 rounded-lg text-xs bg-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-slate-600 font-medium mb-1">Telefone:</label>
+                    <input
+                      id="edit-order-customer-phone"
+                      type="text"
+                      value={editCustomerPhone}
+                      onChange={(e) => setEditCustomerPhone(e.target.value)}
+                      placeholder="(99) 99999-9999"
+                      className="w-full p-2 border border-slate-300 rounded-lg text-xs bg-white"
+                    />
+                  </div>
+                </div>
+
+                {order.tipo === 'delivery' && (
+                  <div className="pt-2 border-t border-slate-200 space-y-2">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                      <div className="sm:col-span-2">
+                        <label className="block text-slate-600 font-medium mb-1">Logradouro:</label>
+                        <input
+                          type="text"
+                          value={editAddress?.logradouro || ''}
+                          onChange={(e) => setEditAddress(prev => ({ ...(prev || { numero: '', bairro: '' }), logradouro: e.target.value }))}
+                          placeholder="Rua, Av..."
+                          className="w-full p-2 border border-slate-300 rounded-lg text-xs bg-white"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-slate-600 font-medium mb-1">Número:</label>
+                        <input
+                          type="text"
+                          value={editAddress?.numero || ''}
+                          onChange={(e) => setEditAddress(prev => ({ ...(prev || { logradouro: '', bairro: '' }), numero: e.target.value }))}
+                          placeholder="123"
+                          className="w-full p-2 border border-slate-300 rounded-lg text-xs bg-white"
+                        />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <div>
+                        <label className="block text-slate-600 font-medium mb-1">Bairro:</label>
+                        <input
+                          type="text"
+                          value={editAddress?.bairro || ''}
+                          onChange={(e) => setEditAddress(prev => ({ ...(prev || { logradouro: '', numero: '' }), bairro: e.target.value }))}
+                          placeholder="Bairro"
+                          className="w-full p-2 border border-slate-300 rounded-lg text-xs bg-white"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-slate-600 font-medium mb-1">Taxa de Entrega (R$):</label>
+                        <input
+                          id="edit-order-delivery-fee"
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          value={editDeliveryFee}
+                          onChange={(e) => setEditDeliveryFee(e.target.value)}
+                          className="w-full p-2 border border-slate-300 rounded-lg text-xs bg-white font-mono"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                <div>
+                  <label className="block text-slate-600 font-medium mb-1">Observações Gerais:</label>
+                  <input
+                    id="edit-order-notes"
+                    type="text"
+                    value={editNotes}
+                    onChange={(e) => setEditNotes(e.target.value)}
+                    placeholder="Instruções de preparo, entrega, etc."
+                    className="w-full p-2 border border-slate-300 rounded-lg text-xs bg-white"
+                  />
+                </div>
+              </div>
+
+              {/* Itens em Edição */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between text-xs font-bold text-slate-700 uppercase tracking-wider">
+                  <span>Itens ({editItems.reduce((acc, it) => acc + it.quantidade, 0)})</span>
+                  <span>Subtotal: {formatCurrency(editItems.reduce((acc, it) => acc + it.precoUnitario * it.quantidade, 0))}</span>
+                </div>
+
+                <div className="divide-y divide-slate-100 border border-slate-200 rounded-xl overflow-hidden bg-white shadow-xs">
+                  {editItems.map((it) => (
+                    <div key={it.cartItemId} className="p-3 flex items-center justify-between gap-3 hover:bg-slate-50/60">
+                      <div className="min-w-0 flex-1">
+                        <div className="font-bold text-slate-900 text-sm">{it.nome}</div>
+                        {it.variacaoNome && <span className="text-[11px] text-slate-500 mr-2">{it.variacaoNome}</span>}
+                        <span className="text-xs text-blue-700 font-mono font-semibold">{formatCurrency(it.precoUnitario)} cada</span>
+                        {it.observacao && <div className="text-[11px] text-slate-500 italic mt-0.5">Obs: {it.observacao}</div>}
+                      </div>
+
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          onClick={() => changeEditItemQty(it.cartItemId, -1)}
+                          className="w-7 h-7 rounded-lg border border-slate-300 hover:bg-slate-100 flex items-center justify-center text-slate-700 font-bold"
+                          title="Diminuir quantidade"
+                        >
+                          <Minus className="w-3.5 h-3.5" />
+                        </button>
+                        <span className="w-8 text-center font-bold text-xs font-mono">{it.quantidade}</span>
+                        <button
+                          onClick={() => changeEditItemQty(it.cartItemId, 1)}
+                          className="w-7 h-7 rounded-lg border border-slate-300 hover:bg-slate-100 flex items-center justify-center text-slate-700 font-bold"
+                          title="Aumentar quantidade"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                        </button>
+
+                        <div className="w-20 text-right font-extrabold text-xs text-slate-900 font-mono">
+                          {formatCurrency(it.precoUnitario * it.quantidade)}
+                        </div>
+
+                        <button
+                          id={`edit-remove-item-${it.cartItemId}`}
+                          onClick={() => removeEditItem(it.cartItemId)}
+                          className="p-1.5 rounded-lg text-rose-500 hover:bg-rose-50"
+                          title="Remover item"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Busca de Produtos para Adicionar na Edição */}
+              <div className="p-3 bg-sky-50/50 border border-sky-200 rounded-xl space-y-2">
+                <div className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                  <Plus className="w-3.5 h-3.5 text-blue-600" />
+                  <span>Adicionar Produto ao Pedido</span>
+                </div>
+                <div className="relative">
+                  <Search className="w-4 h-4 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    placeholder="Buscar prato ou bebida para adicionar..."
+                    value={editSearch}
+                    onChange={(e) => setEditSearch(e.target.value)}
+                    className="w-full pl-8 pr-3 py-1.5 text-xs rounded-lg border border-slate-300 bg-white focus:outline-none"
+                  />
+                </div>
+                <div className="max-h-36 overflow-y-auto divide-y divide-slate-100 border border-slate-200 rounded-lg bg-white">
+                  {menu
+                    .filter(m => m.disponivel !== false && m.nome.toLowerCase().includes(editSearch.toLowerCase()))
+                    .slice(0, 10)
+                    .map(m => (
+                      <div key={m.id} className="p-2 flex items-center justify-between text-xs hover:bg-slate-50">
+                        <div>
+                          <span className="font-bold text-slate-900">{m.nome}</span>
+                          <span className="text-[11px] text-slate-500 ml-2">({m.categoria})</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-blue-700 font-mono">{formatCurrency(m.preco)}</span>
+                          <button
+                            type="button"
+                            onClick={() => addProductToEdit(m)}
+                            className="px-2 py-1 rounded bg-blue-600 hover:bg-blue-700 text-white font-bold text-[11px] flex items-center gap-1"
+                          >
+                            <Plus className="w-3 h-3" />
+                            Adicionar
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                </div>
+              </div>
+            </div>
+          ) : (
+            <>
           {/* Customer / Destination Info */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 p-3.5 bg-slate-50 rounded-xl border border-slate-200 text-xs">
             <div className="space-y-1">
               <div className="font-semibold text-slate-500 uppercase tracking-wide text-[10px]">Destino / Identificação</div>
-              <div className="font-bold text-slate-900 text-sm flex items-center gap-1.5">
+              <div className="font-bold text-slate-900 text-sm flex items-center gap-1.5 flex-wrap">
                 <User className="w-4 h-4 text-blue-600" />
                 <span>{order.nomeCliente || 'Cliente Balcão'}</span>
                 {order.mesaNumero && (
-                  <span className="ml-2 px-2 py-0.5 bg-sky-100 text-blue-800 rounded font-bold text-xs">
-                    Mesa {order.mesaNumero}
+                  <span className="ml-2 inline-flex items-center gap-1 px-2.5 py-0.5 bg-blue-600 text-white rounded-lg font-bold text-xs shadow-2xs border border-blue-700">
+                    <UtensilsCrossed className="w-3 h-3" />
+                    MESA {order.mesaNumero}
                   </span>
                 )}
               </div>
@@ -592,11 +912,25 @@ export const OrderDetailsModal: React.FC = () => {
               </div>
             </div>
           )}
+          </>
+          )}
         </div>
 
         {/* Footer toolbar with primary operational actions */}
         <div className="p-4 bg-stone-100 border-t border-stone-200 flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2">
+            {order.status === 'novo' && (
+              <button
+                id="order-details-edit-btn"
+                onClick={startEditOrder}
+                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-blue-600 text-white hover:bg-blue-700 text-xs font-bold shadow-xs transition-colors"
+                title="Editar itens e informações do pedido"
+              >
+                <Edit3 className="w-4 h-4" />
+                <span>Editar Pedido</span>
+              </button>
+            )}
+
             {canGenerateMirror && (
               <button
                 id="order-details-generate-mirror-btn"

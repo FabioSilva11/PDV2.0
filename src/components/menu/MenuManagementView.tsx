@@ -35,22 +35,25 @@ export const MenuManagementView: React.FC = () => {
   const [editingPrice, setEditingPrice] = useState<string>('');
   const [isNewItemModalOpen, setIsNewItemModalOpen] = useState(false);
 
-  // New item form state
+  // New/Edit item form state
+  const [editingProduct, setEditingProduct] = useState<MenuItem | null>(null);
   const [newItem, setNewItem] = useState<{
+    catalogo: 'restaurante' | 'lanche';
     nome: string;
     categoria: CategoryType;
     preco: string;
     descricao: string;
-    acompanhamentos: string;
+    acompanhamentos: string[];
     tamanho: string;
     usarVariacoes: boolean;
     volumes: { nome: string; quantidade: string; unidade: string; preco: string; disponivel: boolean }[];
   }>({
+    catalogo: 'restaurante',
     nome: '',
     categoria: 'Pratos principais',
     preco: '',
     descricao: '',
-    acompanhamentos: 'Arroz branco, Macarrão, Farofa, Maionese, Salada crua, Batata frita',
+    acompanhamentos: ['Arroz branco', 'Macarrão', 'Farofa', 'Salada crua'],
     tamanho: '',
     usarVariacoes: false,
     volumes: [
@@ -82,6 +85,35 @@ export const MenuManagementView: React.FC = () => {
     setEditingItemId(null);
   };
 
+  const handleStartFullEdit = (item: MenuItem) => {
+    setEditingProduct(item);
+    setNewItem({
+      catalogo: item.catalogo || 'restaurante',
+      nome: item.nome,
+      categoria: item.categoria,
+      preco: item.preco.toString(),
+      descricao: item.descricao || '',
+      acompanhamentos: item.acompanhamentos ? [...item.acompanhamentos] : [],
+      tamanho: item.tamanho || '',
+      usarVariacoes: !!(item.variacoes && item.variacoes.length > 0),
+      volumes: item.variacoes?.length
+        ? item.variacoes.map(v => ({
+            nome: v.nome,
+            quantidade: v.quantidade?.toString() || '',
+            unidade: v.unidade || 'un',
+            preco: v.preco.toString(),
+            disponivel: v.disponivel !== false
+          }))
+        : [
+            { nome: 'Opção 1', quantidade: '', unidade: 'un', preco: '', disponivel: true },
+            { nome: 'Opção 2', quantidade: '', unidade: 'un', preco: '', disponivel: true },
+            { nome: 'Opção 3', quantidade: '', unidade: 'un', preco: '', disponivel: true }
+          ]
+    });
+    setFormError('');
+    setIsNewItemModalOpen(true);
+  };
+
   const handleCreateNewItem = (e: React.FormEvent) => {
     e.preventDefault();
     setFormError('');
@@ -102,31 +134,31 @@ export const MenuManagementView: React.FC = () => {
       return;
     }
 
-    const sides = newItem.acompanhamentos
-      ? newItem.acompanhamentos.split(',').map(s => s.trim()).filter(Boolean)
-      : undefined;
+    const sides = newItem.acompanhamentos.map(s => s.trim()).filter(Boolean);
 
     const item: MenuItem = {
-      id: 'custom-' + Math.random().toString(36).substring(2, 9),
-      catalogo: selectedCatalog,
+      id: editingProduct ? editingProduct.id : 'custom-' + Math.random().toString(36).substring(2, 9),
+      catalogo: newItem.catalogo,
       nome: newItem.nome.trim(),
       categoria: newItem.categoria,
       preco: hasVariations ? parseFloat(validVariations[0].preco) : priceVal,
       descricao: newItem.descricao.trim() || undefined,
       tamanho: newItem.tamanho.trim() || undefined,
-      acompanhamentos: newItem.categoria === 'Pratos principais' ? sides : undefined,
+      acompanhamentos: newItem.categoria === 'Pratos principais' && sides.length > 0 ? sides : undefined,
       variacoes: hasVariations ? newItem.volumes.filter(v => v.nome.trim()).map((v, index) => ({ id: `variation-${index}`, nome: v.nome.trim(), preco: parseFloat(v.preco) || 0, custoEstimado: 0, disponivel: v.disponivel, quantidade: parseFloat(v.quantidade) || undefined, unidade: v.unidade })) : undefined,
-      disponivel: true
+      disponivel: editingProduct ? editingProduct.disponivel : true
     };
 
     saveMenuItem(item);
     setIsNewItemModalOpen(false);
+    setEditingProduct(null);
     setNewItem({
+      catalogo: selectedCatalog,
       nome: '',
       categoria: 'Pratos principais',
       preco: '',
       descricao: '',
-      acompanhamentos: '',
+      acompanhamentos: ['Arroz branco', 'Macarrão', 'Farofa', 'Salada crua'],
       tamanho: '',
       usarVariacoes: false,
       volumes: [{ nome: 'Opção 1', quantidade: '', unidade: 'un', preco: '', disponivel: true }, { nome: 'Opção 2', quantidade: '', unidade: 'un', preco: '', disponivel: true }, { nome: 'Opção 3', quantidade: '', unidade: 'un', preco: '', disponivel: true }]
@@ -366,18 +398,30 @@ export const MenuManagementView: React.FC = () => {
                     </td>
 
                     <td className="py-3 px-4 text-center">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (confirm(`Remover "${item.nome}" do cardápio?`)) {
-                            deleteMenuItem(item.id);
-                          }
-                        }}
-                        className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
-                        title="Excluir Item"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                      <div className="flex items-center justify-center gap-1">
+                        <button
+                          type="button"
+                          id={`edit-item-${item.id}`}
+                          onClick={() => handleStartFullEdit(item)}
+                          className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                          title="Editar Cadastro Completo"
+                        >
+                          <Edit3 className="w-4 h-4" />
+                        </button>
+                        <button
+                          type="button"
+                          id={`delete-item-${item.id}`}
+                          onClick={() => {
+                            if (confirm(`Remover "${item.nome}" do cardápio?`)) {
+                              deleteMenuItem(item.id);
+                            }
+                          }}
+                          className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                          title="Excluir Item"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 );
@@ -401,10 +445,10 @@ export const MenuManagementView: React.FC = () => {
           <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full border border-slate-200 overflow-hidden">
             <div className="px-6 py-4 bg-slate-900 text-white flex items-center justify-between">
               <h3 className="font-bold text-base font-serif">
-                Cadastrar Novo Item no Cardápio
+                {editingProduct ? 'Editar Produto do Cardápio' : 'Cadastrar Novo Item no Cardápio'}
               </h3>
               <button
-                onClick={() => setIsNewItemModalOpen(false)}
+                onClick={() => { setIsNewItemModalOpen(false); setEditingProduct(null); }}
                 className="text-slate-400 hover:text-white"
               >
                 <X className="w-5 h-5" />
@@ -412,6 +456,39 @@ export const MenuManagementView: React.FC = () => {
             </div>
 
             <form onSubmit={handleCreateNewItem} className="p-6 space-y-4">
+              {/* Escolha Explícita de Catálogo */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                  Cardápio de Destino *
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    id="catalog-select-restaurante"
+                    onClick={() => setNewItem({ ...newItem, catalogo: 'restaurante' })}
+                    className={`py-2 px-3 rounded-xl border font-bold text-xs flex items-center justify-center gap-1.5 transition-all ${
+                      newItem.catalogo === 'restaurante'
+                        ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                        : 'bg-slate-50 text-slate-700 border-slate-300 hover:bg-slate-100'
+                    }`}
+                  >
+                    <span>🍽️ Cardápio Restaurante</span>
+                  </button>
+                  <button
+                    type="button"
+                    id="catalog-select-lanche"
+                    onClick={() => setNewItem({ ...newItem, catalogo: 'lanche' })}
+                    className={`py-2 px-3 rounded-xl border font-bold text-xs flex items-center justify-center gap-1.5 transition-all ${
+                      newItem.catalogo === 'lanche'
+                        ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                        : 'bg-slate-50 text-slate-700 border-slate-300 hover:bg-slate-100'
+                    }`}
+                  >
+                    <span>🍔 Cardápio Lanche</span>
+                  </button>
+                </div>
+              </div>
+
               <div>
                 <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
                   Nome do Item / Prato *
@@ -495,21 +572,65 @@ export const MenuManagementView: React.FC = () => {
                 </div>
               )}
 
-              {newItem.categoria === 'Pratos principais' && <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                  Guarnições / Acompanhamentos
-                </label>
-                <input
-                  type="text"
-                  value={newItem.acompanhamentos}
-                  onChange={(e) => setNewItem({ ...newItem, acompanhamentos: e.target.value })}
-                  placeholder="Arroz, Feijão tropeiro, Macarrão, Farofa, Salada..."
-                  className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs"
-                />
-                <p className="text-[10px] text-slate-400 mt-1">
-                  Deixe vazio caso seja bebida, sobremesa ou porção individual.
-                </p>
-              </div>}
+              {/* Seção de Guarnições / Acompanhamentos em Cards Individuais */}
+              {newItem.categoria === 'Pratos principais' && (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+                      Guarnições / Acompanhamentos ({newItem.acompanhamentos.length})
+                    </label>
+                    <button
+                      type="button"
+                      id="add-guarnicao-btn"
+                      onClick={() => setNewItem({ ...newItem, acompanhamentos: [...newItem.acompanhamentos, ''] })}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-sky-100 hover:bg-sky-200 text-blue-800 text-xs font-bold border border-sky-300 transition-colors"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>+ Adicionar Guarnição</span>
+                    </button>
+                  </div>
+
+                  <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                    {newItem.acompanhamentos.map((acomp, idx) => (
+                      <div
+                        key={idx}
+                        className="bg-slate-50 border border-slate-200 rounded-xl p-2.5 flex items-center gap-2 hover:border-slate-300 transition-all shadow-2xs"
+                      >
+                        <div className="flex-1">
+                          <input
+                            type="text"
+                            placeholder="Nome da guarnição (ex: Arroz Branco, Farofa...)"
+                            value={acomp}
+                            onChange={(e) => {
+                              const updated = [...newItem.acompanhamentos];
+                              updated[idx] = e.target.value;
+                              setNewItem({ ...newItem, acompanhamentos: updated });
+                            }}
+                            className="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-sky-500"
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          id={`remove-guarnicao-${idx}`}
+                          onClick={() => {
+                            const updated = newItem.acompanhamentos.filter((_, i) => i !== idx);
+                            setNewItem({ ...newItem, acompanhamentos: updated });
+                          }}
+                          className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors shrink-0"
+                          title="Remover Guarnição"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    ))}
+                    {newItem.acompanhamentos.length === 0 && (
+                      <div className="p-3 text-center text-xs text-slate-400 italic border border-dashed border-slate-300 rounded-xl">
+                        Nenhuma guarnição cadastrada. Clique em "+ Adicionar Guarnição".
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
 
               <div>
                 <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
@@ -534,16 +655,17 @@ export const MenuManagementView: React.FC = () => {
               <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200">
                 <button
                   type="button"
-                  onClick={() => setIsNewItemModalOpen(false)}
+                  onClick={() => { setIsNewItemModalOpen(false); setEditingProduct(null); }}
                   className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl"
                 >
                   Cancelar
                 </button>
                 <button
                   type="submit"
+                  id="save-menu-item-submit-btn"
                   className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl shadow-xs"
                 >
-                  Salvar no Cardápio
+                  {editingProduct ? 'Salvar Alterações' : 'Salvar no Cardápio'}
                 </button>
               </div>
             </form>

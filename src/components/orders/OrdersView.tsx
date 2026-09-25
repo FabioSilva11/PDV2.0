@@ -15,7 +15,8 @@ import {
   AlertCircle, 
   Calendar,
   Layers,
-  ChevronRight
+  ChevronRight,
+  UtensilsCrossed
 } from 'lucide-react';
 
 export const OrdersView: React.FC = () => {
@@ -185,15 +186,34 @@ export const OrdersView: React.FC = () => {
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filteredOrders.map((order) => (
+          {filteredOrders.map((order) => {
+            const isPendingPayment = order.status === 'pronto' && order.saldoRestante > 0 && order.statusPagamento !== 'pago';
+            return (
             <div
               key={order.id}
               className={`bg-white rounded-2xl border transition-all duration-200 shadow-2xs hover:shadow-md flex flex-col justify-between overflow-hidden ${
-                order.prioridade === 'urgente' ? 'border-rose-300 ring-1 ring-rose-400' : 'border-stone-200'
+                order.prioridade === 'urgente'
+                  ? 'border-rose-300 ring-1 ring-rose-400'
+                  : isPendingPayment
+                  ? 'border-rose-300 bg-rose-50/30 ring-1 ring-rose-200'
+                  : order.status === 'novo'
+                  ? 'border-sky-200'
+                  : 'border-stone-200'
               }`}
             >
+              {/* Alerta de baixa pendente */}
+              {isPendingPayment && (
+                <div className="px-3.5 py-1.5 bg-rose-100/90 border-b border-rose-200 flex items-center justify-between text-[11px] font-bold text-rose-800">
+                  <span className="flex items-center gap-1.5">
+                    <AlertCircle className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+                    Pagamento pendente — realizar baixa manual
+                  </span>
+                  <span className="font-mono text-rose-900 font-extrabold">{formatCurrency(order.saldoRestante)}</span>
+                </div>
+              )}
+
               {/* Card Header */}
-              <div className="p-4 border-b border-stone-100 bg-stone-50/50">
+              <div className={`p-4 border-b border-stone-100 ${isPendingPayment ? 'bg-rose-50/40' : 'bg-stone-50/50'}`}>
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex items-center gap-2">
                     <span className="font-mono font-extrabold text-stone-900 text-sm">
@@ -213,13 +233,20 @@ export const OrdersView: React.FC = () => {
                   </div>
                 </div>
 
-                <div className="mt-2 flex items-center justify-between text-xs">
+                <div className="mt-2.5 flex items-center justify-between text-xs gap-2">
                   <div className="font-bold text-stone-800 truncate">
                     {order.nomeCliente || 'Cliente Balcão'}
                   </div>
-                  <div className="font-semibold text-stone-500 text-[11px] bg-stone-200/60 px-2 py-0.5 rounded-full">
-                    {order.mesaNumero ? `Mesa ${order.mesaNumero}` : order.canal}
-                  </div>
+                  {order.mesaNumero ? (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-blue-600 text-white rounded-lg font-bold text-xs shadow-2xs border border-blue-700 shrink-0">
+                      <UtensilsCrossed className="w-3 h-3" />
+                      MESA {order.mesaNumero}
+                    </span>
+                  ) : (
+                    <div className="font-semibold text-stone-500 text-[11px] bg-stone-200/60 px-2 py-0.5 rounded-full shrink-0">
+                      {order.canal}
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -317,7 +344,8 @@ export const OrdersView: React.FC = () => {
                 </div>
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

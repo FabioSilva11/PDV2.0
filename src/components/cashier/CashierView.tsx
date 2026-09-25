@@ -33,7 +33,7 @@ export const CashierView: React.FC = () => {
     addCashMovement(tipo, valor, motivo);
   };
 
-  const [openAmount, setOpenAmount] = useState<string>('150.00');
+  const [openAmount, setOpenAmount] = useState<string>('0.00');
   const [modalType, setModalType] = useState<'suprimento' | 'sangria' | 'fechar' | null>(null);
   const [txAmount, setTxAmount] = useState<string>('');
   const [txReason, setTxReason] = useState<string>('');

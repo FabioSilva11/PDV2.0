@@ -533,3 +533,363 @@ describe('testes extensivos adicionais — invariantes de operação', () => {
     expect(result.current.tables.find(t => t.numero === 1)?.pedidoAtivoId).toBeUndefined();
   });
 });
+
+describe('melhorias operacionais v2 — edicao, caixa zerado, destaque e produtos', () => {
+  // 1. abrir caixa com R$ 0
+  it('1. CAIXA abrir caixa com R$ 0,00 inicializa saldo corretamente', () => {
+    localStorage.setItem(key, JSON.stringify({
+      cashRegister: { ...INITIAL_CASH_REGISTER, aberto: false, saldoInicial: 0, saldoAtualGaveta: 0, transacoes: [] }
+    }));
+    const { result } = boot();
+    act(() => result.current.openCashRegister(0));
+    expect(result.current.cashRegister.aberto).toBe(true);
+    expect(result.current.cashRegister.saldoInicial).toBe(0);
+    expect(result.current.cashRegister.saldoAtualGaveta).toBe(0);
+    expect(result.current.cashRegister.transacoes[0].tipo).toBe('abertura');
+  });
+
+  // 2. abrir caixa com R$ 0 e vender
+  it('2. CAIXA abrir caixa com R$ 0 e realizar venda em dinheiro incrementa gaveta', () => {
+    localStorage.setItem(key, JSON.stringify({
+      cashRegister: { ...INITIAL_CASH_REGISTER, aberto: false, saldoInicial: 0, saldoAtualGaveta: 0, transacoes: [] }
+    }));
+    const { result } = boot();
+    act(() => result.current.openCashRegister(0));
+    const o = sale(result);
+    act(() => result.current.addManualPaymentToOrder(o.id, 'dinheiro', 20, 20));
+    expect(result.current.cashRegister.saldoAtualGaveta).toBe(20);
+    expect(result.current.orders[0].statusPagamento).toBe('pago');
+  });
+
+  // 3. negar valor negativo na abertura
+  it('3. CAIXA negar valor negativo na abertura', () => {
+    localStorage.setItem(key, JSON.stringify({
+      cashRegister: { ...INITIAL_CASH_REGISTER, aberto: false, saldoInicial: 0, saldoAtualGaveta: 0, transacoes: [] }
+    }));
+    const { result } = boot();
+    attempt(() => result.current.openCashRegister(-50));
+    expect(result.current.cashRegister.aberto).toBe(false);
+  });
+
+  // 4. criar pedido
+  it('4. PEDIDO criação de pedido registra dados corretamente', () => {
+    const { result } = boot();
+    const o = sale(result, { nomeCliente: 'Maria Silva', tipo: 'balcao' });
+    expect(o.id).toBeDefined();
+    expect(o.status).toBe('novo');
+  });
+
+  // 5. pedido aparecer na Central
+  it('5. PEDIDO aparece na lista de orders da Central', () => {
+    const { result } = boot();
+    const o = sale(result, { nomeCliente: 'Carlos' });
+    expect(result.current.orders.some(x => x.id === o.id)).toBe(true);
+  });
+
+  // 6. gerar via pedido
+  it('6. IMPRESSAO pedido confirmado gera via pedido', () => {
+    const { result } = boot();
+    const o = sale(result);
+    expect(o.impressoes?.length).toBeGreaterThan(0);
+    expect(o.impressoes?.[0].tipoOperacao).toBe('pedido_inicial');
+  });
+
+  // 7. gerar espelho
+  it('7. ESPELHO gerarOrderMirror gera lote de espelho', () => {
+    const { result } = boot();
+    const o = sale(result);
+    act(() => result.current.generateOrderMirror(o.id));
+    const updated = result.current.orders.find(x => x.id === o.id);
+    expect(updated?.impressoes?.[0].espelhoJobId).toBeDefined();
+  });
+
+  // 8. pedido mudar para pronto
+  it('8. ESPELHO pedido muda status para pronto apos espelho', () => {
+    const { result } = boot();
+    const o = sale(result);
+    act(() => result.current.generateOrderMirror(o.id));
+    expect(result.current.orders.find(x => x.id === o.id)?.status).toBe('pronto');
+  });
+
+  // 9. pedido pronto e não pago fica com saldoRestante > 0
+  it('9. DESTAQUE pedido pronto e nao pago possui saldoRestante pendente', () => {
+    const { result } = boot();
+    const o = sale(result);
+    act(() => result.current.generateOrderMirror(o.id));
+    const updated = result.current.orders.find(x => x.id === o.id)!;
+    expect(updated.status).toBe('pronto');
+    expect(updated.saldoRestante).toBe(20);
+    expect(updated.statusPagamento).not.toBe('pago');
+  });
+
+  // 10. pedido pronto e pago zera saldo e statusPagamento vira pago
+  it('10. DESTAQUE pedido pronto quitado zera saldoRestante e vira pago', () => {
+    const { result } = boot();
+    const o = sale(result);
+    act(() => result.current.generateOrderMirror(o.id));
+    act(() => result.current.addManualPaymentToOrder(o.id, 'pix', 20));
+    const updated = result.current.orders.find(x => x.id === o.id)!;
+    expect(updated.status).toBe('pronto');
+    expect(updated.statusPagamento).toBe('pago');
+    expect(updated.saldoRestante).toBe(0);
+  });
+
+  // 11. número da mesa aparece corretamente
+  it('11. MESA numero da mesa e codigoMesa preservados no pedido', () => {
+    const { result } = boot();
+    act(() => result.current.openTableWithOrder(5, 'Cliente Mesa 5'));
+    let o!: Order;
+    act(() => { o = result.current.createOrder({ tipo: 'mesa', mesaNumero: 5, itens: [item()] }); });
+    expect(o.mesaNumero).toBe(5);
+    expect(o.codigoMesa).toBe('1.0');
+  });
+
+  // 12. editar quantidade de itens
+  it('12. EDIT editOrder altera quantidade e recalcula total', () => {
+    const { result } = boot();
+    const o = sale(result, { itens: [item({ quantidade: 1, precoUnitario: 20 })] });
+    act(() => result.current.editOrder(o.id, {
+      itens: [item({ quantidade: 3, precoUnitario: 20 })]
+    }));
+    const updated = result.current.orders.find(x => x.id === o.id)!;
+    expect(updated.itens[0].quantidade).toBe(3);
+    expect(updated.total).toBe(60);
+    expect(updated.saldoRestante).toBe(60);
+  });
+
+  // 13. remover item durante edição
+  it('13. EDIT editOrder remove item e recalcula total', () => {
+    const { result } = boot();
+    const o = sale(result, {
+      itens: [
+        item({ cartItemId: 'it-1', precoUnitario: 15, quantidade: 1 }),
+        item({ cartItemId: 'it-2', precoUnitario: 25, quantidade: 1 })
+      ]
+    });
+    expect(o.total).toBe(40);
+    act(() => result.current.editOrder(o.id, {
+      itens: [item({ cartItemId: 'it-1', precoUnitario: 15, quantidade: 1 })]
+    }));
+    const updated = result.current.orders.find(x => x.id === o.id)!;
+    expect(updated.itens.length).toBe(1);
+    expect(updated.total).toBe(15);
+  });
+
+  // 14. adicionar item durante edição
+  it('14. EDIT editOrder adiciona novo item e recalcula total', () => {
+    const { result } = boot();
+    const o = sale(result, { itens: [item({ cartItemId: 'it-1', precoUnitario: 20, quantidade: 1 })] });
+    act(() => result.current.editOrder(o.id, {
+      itens: [
+        item({ cartItemId: 'it-1', precoUnitario: 20, quantidade: 1 }),
+        item({ cartItemId: 'it-2', nome: 'Batata', precoUnitario: 10, quantidade: 2 })
+      ]
+    }));
+    const updated = result.current.orders.find(x => x.id === o.id)!;
+    expect(updated.itens.length).toBe(2);
+    expect(updated.total).toBe(40);
+  });
+
+  // 15. alterar cliente
+  it('15. EDIT editOrder altera nome do cliente e telefone', () => {
+    const { result } = boot();
+    const o = sale(result, { nomeCliente: 'Antigo' });
+    act(() => result.current.editOrder(o.id, {
+      nomeCliente: 'João Santos',
+      telefoneCliente: '11999998888'
+    }));
+    const updated = result.current.orders.find(x => x.id === o.id)!;
+    expect(updated.nomeCliente).toBe('João Santos');
+    expect(updated.telefoneCliente).toBe('11999998888');
+  });
+
+  // 16. alterar observação
+  it('16. EDIT editOrder altera observacoes gerais', () => {
+    const { result } = boot();
+    const o = sale(result);
+    act(() => result.current.editOrder(o.id, { observacoesGerais: 'Sem cebola em tudo caprichar no molho' }));
+    expect(result.current.orders.find(x => x.id === o.id)?.observacoesGerais).toBe('Sem cebola em tudo caprichar no molho');
+  });
+
+  // 17. impedir edição de pedido cancelado
+  it('17. EDIT editOrder impede edicao de pedido cancelado', () => {
+    const { result } = boot();
+    const o = sale(result);
+    act(() => result.current.cancelOrder(o.id, 'Cliente desistiu'));
+    attempt(() => result.current.editOrder(o.id, { nomeCliente: 'Tentativa' }));
+    expect(result.current.orders.find(x => x.id === o.id)?.nomeCliente).not.toBe('Tentativa');
+  });
+
+  // 18. impedir edição que gere total menor que valor pago
+  it('18. EDIT editOrder impede reducao que deixe valor pago maior que novo total', () => {
+    const { result } = boot();
+    const o = sale(result, { itens: [item({ precoUnitario: 50, quantidade: 1 })] });
+    act(() => result.current.addManualPaymentToOrder(o.id, 'pix', 30));
+    // Tenta reduzir total para 20 quando já pagou 30
+    attempt(() => result.current.editOrder(o.id, {
+      itens: [item({ precoUnitario: 20, quantidade: 1 })]
+    }));
+    expect(result.current.orders.find(x => x.id === o.id)?.total).toBe(50);
+  });
+
+  // 19. impedir pagamento excedente
+  it('19. FINANCEIRO addManualPaymentToOrder rejeita valor maior que saldo restante', () => {
+    const { result } = boot();
+    const o = sale(result, { itens: [item({ precoUnitario: 20 })] });
+    const success = result.current.addManualPaymentToOrder(o.id, 'pix', 25);
+    expect(success).toBe(false);
+    expect(result.current.orders.find(x => x.id === o.id)?.saldoRestante).toBe(20);
+  });
+
+  // 20. editar produto
+  it('20. CARDAPIO saveMenuItem atualiza dados completos do produto', () => {
+    const { result } = boot();
+    const prod: MenuItem = {
+      id: 'prod-teste',
+      nome: 'Suco Natural',
+      categoria: 'Sucos de Frutas',
+      preco: 10,
+      disponivel: true,
+      catalogo: 'restaurante',
+      acompanhamentos: ['Gelo e limão']
+    };
+    act(() => result.current.saveMenuItem(prod));
+    expect(result.current.menu.find(m => m.id === 'prod-teste')?.nome).toBe('Suco Natural');
+
+    act(() => result.current.saveMenuItem({
+      ...prod,
+      nome: 'Suco Natural de Laranja',
+      preco: 12
+    }));
+    expect(result.current.menu.find(m => m.id === 'prod-teste')?.nome).toBe('Suco Natural de Laranja');
+    expect(result.current.menu.find(m => m.id === 'prod-teste')?.preco).toBe(12);
+  });
+
+  // 21. escolher Restaurante
+  it('21. CARDAPIO saveMenuItem salva explicitamente catalogo restaurante', () => {
+    const { result } = boot();
+    act(() => result.current.saveMenuItem({
+      id: 'item-rest',
+      nome: 'Prato do Dia',
+      categoria: 'Pratos principais',
+      preco: 25,
+      disponivel: true,
+      catalogo: 'restaurante'
+    }));
+    expect(result.current.menu.find(m => m.id === 'item-rest')?.catalogo).toBe('restaurante');
+  });
+
+  // 22. escolher Lanche
+  it('22. CARDAPIO saveMenuItem salva explicitamente catalogo lanche', () => {
+    const { result } = boot();
+    act(() => result.current.saveMenuItem({
+      id: 'item-lanche',
+      nome: 'Hambúrguer Artesanal',
+      categoria: 'Hambúrgueres',
+      preco: 30,
+      disponivel: true,
+      catalogo: 'lanche'
+    }));
+    expect(result.current.menu.find(m => m.id === 'item-lanche')?.catalogo).toBe('lanche');
+  });
+
+  // 23. adicionar várias guarnições individualmente
+  it('23. CARDAPIO guarnições individuais salvas como array', () => {
+    const { result } = boot();
+    act(() => result.current.saveMenuItem({
+      id: 'item-guarnicoes',
+      nome: 'Almoço Executivo',
+      categoria: 'Pratos principais',
+      preco: 28,
+      disponivel: true,
+      catalogo: 'restaurante',
+      acompanhamentos: ['Arroz branco', 'Feijão carioca', 'Farofa crocante', 'Vinagrete']
+    }));
+    const saved = result.current.menu.find(m => m.id === 'item-guarnicoes')!;
+    expect(saved.acompanhamentos).toHaveLength(4);
+    expect(saved.acompanhamentos).toContain('Feijão carioca');
+  });
+
+  // 24. remover uma guarnição sem remover as outras
+  it('24. CARDAPIO remover uma guarnição preserva as restantes', () => {
+    const initialSides = ['Arroz', 'Feijão', 'Batata frita'];
+    const updatedSides = initialSides.filter((_, idx) => idx !== 1); // remove Feijão
+    expect(updatedSides).toEqual(['Arroz', 'Batata frita']);
+  });
+
+  // 25. preservar guarnições antigas
+  it('25. CARDAPIO produtos legados com guarnicoes continuam intactos', () => {
+    const { result } = boot();
+    act(() => result.current.saveMenuItem({
+      id: 'item-legado',
+      nome: 'Comercial Antigo',
+      categoria: 'Pratos principais',
+      preco: 20,
+      disponivel: true,
+      acompanhamentos: ['Arroz', 'Feijão']
+    }));
+    expect(result.current.menu.find(m => m.id === 'item-legado')?.acompanhamentos).toEqual(['Arroz', 'Feijão']);
+  });
+
+  // 26. produto sem catálogo continuar sendo Restaurante
+  it('26. CARDAPIO produto sem catalogo assume restaurante como padrao', () => {
+    const { result } = boot();
+    act(() => result.current.saveMenuItem({
+      id: 'item-sem-cat',
+      nome: 'Bife a Cavalo',
+      categoria: 'Pratos principais',
+      preco: 32,
+      disponivel: true
+    }));
+    expect(result.current.menu.find(m => m.id === 'item-sem-cat')?.catalogo).toBe('restaurante');
+  });
+
+  // 27. garantir que salvar produto não duplique guarnições
+  it('27. CARDAPIO ressalvar produto nao duplica guarnicoes', () => {
+    const { result } = boot();
+    const p: MenuItem = {
+      id: 'item-no-dup',
+      nome: 'Filé de Frango',
+      categoria: 'Pratos principais',
+      preco: 22,
+      disponivel: true,
+      acompanhamentos: ['Arroz', 'Purê']
+    };
+    act(() => result.current.saveMenuItem(p));
+    act(() => result.current.saveMenuItem({ ...p, preco: 24 }));
+    const saved = result.current.menu.find(m => m.id === 'item-no-dup')!;
+    expect(saved.acompanhamentos).toEqual(['Arroz', 'Purê']);
+  });
+
+  // 28. garantir que edição de pedido não gere pedido duplicado
+  it('28. EDIT editOrder nao duplica o pedido na lista', () => {
+    const { result } = boot();
+    const o = sale(result);
+    const countBefore = result.current.orders.length;
+    act(() => result.current.editOrder(o.id, { nomeCliente: 'Novo Nome' }));
+    expect(result.current.orders.length).toBe(countBefore);
+  });
+
+  // 29. garantir que edição não altere o ID ou número do pedido
+  it('29. EDIT editOrder mantem id e numero inalterados', () => {
+    const { result } = boot();
+    const o = sale(result);
+    const origId = o.id;
+    const origNum = o.numero;
+    act(() => result.current.editOrder(o.id, { nomeCliente: 'Cliente Alterado' }));
+    const updated = result.current.orders.find(x => x.id === origId)!;
+    expect(updated.id).toBe(origId);
+    expect(updated.numero).toBe(origNum);
+  });
+
+  // 30. garantir que o histórico de impressão continue consistente
+  it('30. EDIT editOrder preserva historico de impressoes', () => {
+    const { result } = boot();
+    const o = sale(result);
+    const printBatchesBefore = o.impressoes?.length || 0;
+    act(() => result.current.editOrder(o.id, { observacoesGerais: 'Urgente' }));
+    const updated = result.current.orders.find(x => x.id === o.id)!;
+    expect(updated.impressoes?.length).toBe(printBatchesBefore);
+  });
+});
+

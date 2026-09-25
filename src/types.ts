@@ -364,3 +364,28 @@ export type AppModule =
   | 'reservas'
   | 'usuarios'
   | 'auditoria';
+
+// ==========================================
+// PATCH DE EDIÇÃO DE PEDIDO
+// Campos que podem ser alterados via editOrder().
+// id, numero, status, impressoes e pagamentos
+// são imutáveis por esta interface.
+// ==========================================
+export interface OrderEditPatch {
+  /** Nome do cliente (balcão/delivery) */
+  nomeCliente?: string;
+  /** Telefone de contato */
+  telefoneCliente?: string;
+  /** Endereço de entrega (somente tipo 'delivery') */
+  enderecoEntrega?: Order['enderecoEntrega'];
+  /** Observações gerais do pedido */
+  observacoesGerais?: string;
+  /** Taxa de entrega (somente tipo 'delivery') */
+  taxaEntrega?: number;
+  /**
+   * Lista completa de itens substituindo a atual.
+   * O chamador é responsável por passar CartItems válidos
+   * (com cartItemId, precoUnitario, quantidade, estacaoProducao).
+   */
+  itens?: CartItem[];
+}
