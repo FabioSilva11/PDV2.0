@@ -6,7 +6,6 @@ import {
   Server, 
   Cpu, 
   Printer, 
-  ChefHat, 
   DatabaseBackup, 
   RefreshCw, 
   CheckCircle2, 
@@ -56,13 +55,6 @@ export const OperationHealthModal: React.FC = () => {
       icon: Printer
     },
     {
-      id: 'kds',
-      nome: 'Monitores de Cozinha (KDS)',
-      status: health.kds,
-      detalhe: '3 telas ativas (Chapa, Cozinha e Bar) sincronizadas',
-      icon: ChefHat
-    },
-    {
       id: 'backup',
       nome: 'Rotina de Backup dos Dados',
       status: 'online' as const,
@@ -89,8 +81,8 @@ export const OperationHealthModal: React.FC = () => {
     }
     if (st === 'atencao') {
       return (
-        <span className="flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200">
-          <AlertTriangle className="w-3 h-3 text-amber-600" />
+        <span className="flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-800 border border-yellow-200">
+          <AlertTriangle className="w-3 h-3 text-yellow-600" />
           Atenção
         </span>
       );
@@ -109,7 +101,7 @@ export const OperationHealthModal: React.FC = () => {
         {/* Header */}
         <div className="bg-stone-900 text-white px-5 py-4 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
-            <div className="p-2 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/30">
+            <div className="p-2 rounded-xl bg-blue-500/20 text-blue-300 border border-blue-500/30">
               <Activity className="w-5 h-5" />
             </div>
             <div>
@@ -149,8 +141,8 @@ export const OperationHealthModal: React.FC = () => {
             );
           })}
 
-          <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 text-amber-900 text-xs flex items-start gap-2.5">
-            <ShieldCheck className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+          <div className="p-3 bg-sky-50 rounded-xl border border-sky-200 text-sky-900 text-xs flex items-start gap-2.5">
+            <ShieldCheck className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
             <p>
               Operação em modo seguro. Caso a internet oscile, o sistema retém os pedidos no banco local e sincroniza assim que a conectividade for restabelecida.
             </p>

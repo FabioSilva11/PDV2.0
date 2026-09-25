@@ -1,4 +1,5 @@
-export function formatCurrency(value: number): string {
+export function formatCurrency(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return 'R$ —';
   return new Intl.NumberFormat('pt-BR', {
     style: 'currency',
     currency: 'BRL',
@@ -35,14 +36,14 @@ export function getPaymentMethodName(method?: string): string {
 
 export function getOrderStatusBadge(status: string): { label: string; bg: string; text: string } {
   switch (status) {
-    case 'pendente':
-      return { label: 'Pendente', bg: 'bg-amber-100 border-amber-300', text: 'text-amber-800' };
-    case 'preparando':
-      return { label: 'Em Preparo', bg: 'bg-blue-100 border-blue-300', text: 'text-blue-800' };
+    case 'novo':
+      return { label: 'Aguardando Espelho', bg: 'bg-sky-100 border-sky-300', text: 'text-sky-800' };
     case 'pronto':
-      return { label: 'Pronto / Aguardando', bg: 'bg-emerald-100 border-emerald-300', text: 'text-emerald-800' };
+      return { label: 'Pronto', bg: 'bg-emerald-100 border-emerald-300', text: 'text-emerald-800' };
     case 'entregue':
-      return { label: 'Concluído', bg: 'bg-stone-100 border-stone-300', text: 'text-stone-700' };
+      return { label: 'Entregue', bg: 'bg-blue-100 border-blue-300', text: 'text-blue-800' };
+    case 'finalizado':
+      return { label: 'Finalizado', bg: 'bg-stone-100 border-stone-300', text: 'text-stone-700' };
     case 'cancelado':
       return { label: 'Cancelado', bg: 'bg-red-100 border-red-300', text: 'text-red-700' };
     default:

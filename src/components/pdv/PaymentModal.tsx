@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { PaymentMethod, Order } from '../../types';
 import { formatCurrency } from '../../utils/formatters';
 import confetti from 'canvas-confetti';
+import { buildPixPayload } from '../../utils/pix';
 import { 
   X, 
   Banknote, 
@@ -35,6 +36,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
   const locked = useRef(false);
   const [error, setError] = useState('');
   const [finished, setFinished] = useState(false);
+  const pixKey = String(import.meta.env.VITE_PIX_KEY || '').trim();
 
   useEffect(() => {
     if (isOpen) {
@@ -57,11 +59,19 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
     setCashGiven(amount.toFixed(2));
   };
 
-  const handleCopyPix = () => {
-    const pixCode = `00020126580014br.gov.bcb.pix0136murupi-restaurante-pix-key520400005303986540${total.toFixed(2)}5802BR5920Murupi Restaurante6009Porto Velho62070503***6304`;
-    navigator.clipboard.writeText(pixCode);
-    setCopiedPix(true);
-    setTimeout(() => setCopiedPix(false), 2500);
+  const handleCopyPix = async () => {
+    if (!pixKey) {
+      setError('Chave PIX não configurada. Adicione VITE_PIX_KEY nas configurações do ambiente.');
+      return;
+    }
+    try {
+      const pixCode = buildPixPayload(pixKey, total);
+      await navigator.clipboard.writeText(pixCode);
+      setCopiedPix(true);
+      setTimeout(() => setCopiedPix(false), 2500);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Não foi possível gerar o PIX.');
+    }
   };
 
   const handleFinalize = (printImmediately: boolean = false) => {
@@ -271,36 +281,22 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
 
           {method === 'pix' && (
             <div className="bg-stone-50 rounded-2xl p-5 border border-stone-200 flex flex-col items-center text-center space-y-4 animate-in fade-in">
-              <div className="w-44 h-44 bg-white p-3 rounded-2xl shadow-sm border border-stone-300 flex flex-col items-center justify-center relative">
-                {/* Visual QR Code mock with accurate pattern */}
-                <div className="grid grid-cols-6 gap-1 w-full h-full p-1">
-                  {Array.from({ length: 36 }).map((_, i) => (
-                    <div 
-                      key={i} 
-                      className={`rounded-xs ${
-                        (i % 2 === 0 || i % 7 === 0 || i < 6 || i > 29 || i % 6 === 0) 
-                          ? 'bg-stone-900' 
-                          : 'bg-stone-100'
-                      }`}
-                    />
-                  ))}
-                </div>
-                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                  <div className="bg-teal-600 text-white p-1.5 rounded-lg shadow-md font-bold text-[10px]">
-                    PIX
-                  </div>
-                </div>
+              <div className={`w-full rounded-2xl p-5 border ${pixKey ? 'bg-white border-teal-300' : 'bg-sky-50 border-sky-300'}`}>
+                <div className="text-xs font-bold uppercase tracking-wider text-slate-500">PIX manual</div>
+                <div className="mt-2 text-sm font-bold text-slate-900">{pixKey ? 'Chave PIX configurada' : 'Chave PIX não configurada'}</div>
+                <div className="mt-1 text-xs text-slate-500">O QR Code/copia e cola só deve ser exibido quando uma chave real estiver configurada.</div>
               </div>
 
               <div className="w-full">
                 <p className="text-xs text-stone-600 mb-2">
-                  Apresente o QR Code ao cliente ou copie o código Pix Copia e Cola:
+                  Copie o código PIX Copia e Cola gerado com a chave configurada:
                 </p>
                 <button
                   type="button"
                   id="copy-pix-btn"
                   onClick={handleCopyPix}
-                  className="w-full py-2.5 px-4 bg-white border border-teal-300 hover:bg-teal-50 text-teal-800 font-semibold text-xs rounded-xl flex items-center justify-center gap-2 transition-colors"
+                  disabled={!pixKey}
+                  className="w-full py-2.5 px-4 disabled:opacity-50 bg-white border border-teal-300 hover:bg-teal-50 text-teal-800 font-semibold text-xs rounded-xl flex items-center justify-center gap-2 transition-colors"
                 >
                   {copiedPix ? (
                     <>
@@ -328,7 +324,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
                   {method === 'debito' ? 'Maquininha: Cartão de Débito' : 'Maquininha: Cartão de Crédito'}
                 </h4>
                 <p className="text-xs text-stone-500 mt-1">
-                  Insira ou aproxime o cartão na maquininha integrada. Após a confirmação da senha ou aproximação, finalize a venda abaixo.
+                  Passe o cartão na maquininha física do estabelecimento. Após confirmar o recebimento, registre manualmente a venda abaixo.
                 </p>
               </div>
               <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-emerald-100 text-emerald-800 rounded-full text-xs font-semibold">

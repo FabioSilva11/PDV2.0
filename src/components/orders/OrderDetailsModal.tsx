@@ -13,7 +13,6 @@ import {
   Percent, 
   Send, 
   RotateCcw,
-  ChefHat,
   ArrowRightLeft,
   Flame,
   User,
@@ -27,14 +26,15 @@ import {
 
 export const OrderDetailsModal: React.FC = () => {
   const { 
-    selectedOrderForModal, 
+    selectedOrderForModal,
+    orders,
     setSelectedOrderForModal,
-    updateOrderStatus,
     cancelOrder,
     cancelOrderItem,
     addItemsToOrder,
+    updateOrderStatus,
     applyOrderDiscount,
-    updateOrderItemProductionStatus,
+    generateOrderMirror,
     setOrderPriority,
     reopenOrder,
     openPaymentModal,
@@ -63,7 +63,7 @@ export const OrderDetailsModal: React.FC = () => {
 
   if (!selectedOrderForModal) return null;
 
-  const order = selectedOrderForModal;
+  const order = orders.find(item => item.id === selectedOrderForModal.id) || selectedOrderForModal;
 
   const handleCancelWholeOrder = () => {
     if (!cancelOrderReason.trim()) return;
@@ -107,7 +107,6 @@ export const OrderDetailsModal: React.FC = () => {
         quantidade: 1,
         observacao: '',
         estacaoProducao: item.estacaoProducao || 'cozinha',
-        statusProducao: 'pendente'
       }];
     });
   };
@@ -138,37 +137,31 @@ export const OrderDetailsModal: React.FC = () => {
 
   const getStatusBadge = (st: OrderStatus) => {
     const map: Record<OrderStatus, { label: string; color: string }> = {
-      novo: { label: 'Novo', color: 'bg-sky-100 text-sky-800 border-sky-300' },
-      confirmado: { label: 'Confirmado', color: 'bg-indigo-100 text-indigo-800 border-indigo-300' },
-      em_preparacao: { label: 'Na Cozinha', color: 'bg-amber-100 text-amber-800 border-amber-300' },
-      preparando: { label: 'Em Preparo', color: 'bg-amber-100 text-amber-800 border-amber-300' },
-      pendente: { label: 'Pendente', color: 'bg-amber-100 text-amber-800 border-amber-300' },
-      pronto: { label: 'Pronto p/ Servir', color: 'bg-emerald-100 text-emerald-800 border-emerald-300' },
-      saiu_entrega: { label: 'Em Entrega', color: 'bg-purple-100 text-purple-800 border-purple-300' },
+      novo: { label: 'Aguardando espelho', color: 'bg-sky-100 text-sky-800 border-sky-300' },
+      pronto: { label: 'Pronto', color: 'bg-emerald-100 text-emerald-800 border-emerald-300' },
       entregue: { label: 'Entregue', color: 'bg-blue-100 text-blue-800 border-blue-300' },
       finalizado: { label: 'Finalizado', color: 'bg-stone-100 text-stone-700 border-stone-300' },
       cancelado: { label: 'Cancelado', color: 'bg-rose-100 text-rose-800 border-rose-300' }
     };
-    const b = map[st] || { label: st, color: 'bg-stone-100 text-stone-700 border-stone-300' };
-    return (
-      <span className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full border ${b.color}`}>
-        {b.label}
-      </span>
-    );
+    const b = map[st];
+    return <span className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full border ${b.color}`}>{b.label}</span>;
   };
+
+  const latestBatch = [...(order.impressoes || [])].reverse()[0];
+  const canGenerateMirror = order.status === 'novo' && !!latestBatch && !latestBatch.espelhoJobId;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-900/60 backdrop-blur-xs p-4 animate-in fade-in">
       <div className="bg-white rounded-2xl max-w-3xl w-full shadow-2xl border border-stone-200 overflow-hidden flex flex-col max-h-[92vh]">
         {/* Header */}
-        <div className="bg-stone-900 text-white px-6 py-4 flex items-center justify-between border-b border-stone-800">
+        <div className="bg-slate-900 text-white px-6 py-4 flex items-center justify-between border-b border-slate-800">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/30 flex items-center justify-center font-bold text-sm">
-              #{order.numero}
+            <div className="w-10 h-10 rounded-xl bg-sky-500/20 text-sky-400 border border-sky-500/30 flex items-center justify-center font-bold text-sm">
+              #{order.codigoMesa || order.numero}
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="font-bold text-base">Detalhes do Pedido #{order.numero}</h3>
+                <h3 className="font-bold text-base">Detalhes do Pedido #{order.codigoMesa || order.numero}</h3>
                 {getStatusBadge(order.status)}
                 {order.prioridade === 'urgente' && (
                   <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-rose-500 text-white flex items-center gap-1 animate-pulse">
@@ -177,8 +170,8 @@ export const OrderDetailsModal: React.FC = () => {
                   </span>
                 )}
               </div>
-              <p className="text-xs text-stone-400 mt-0.5">
-                Canal: <strong className="text-stone-200">{order.canal}</strong> • Criado em {new Date(order.criadoEm).toLocaleTimeString('pt-BR')} 
+              <p className="text-xs text-slate-400 mt-0.5">
+                Canal: <strong className="text-slate-200">{order.canal}</strong> • Criado em {new Date(order.criadoEm).toLocaleTimeString('pt-BR')} 
                 {order.garcomNome ? ` • Atendente: ${order.garcomNome}` : ''}
               </p>
             </div>
@@ -187,7 +180,7 @@ export const OrderDetailsModal: React.FC = () => {
           <button
             id="close-order-details-modal-btn"
             onClick={() => setSelectedOrderForModal(null)}
-            className="p-1.5 rounded-lg text-stone-400 hover:text-white hover:bg-stone-800"
+            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800"
           >
             <X className="w-5 h-5" />
           </button>
@@ -196,35 +189,32 @@ export const OrderDetailsModal: React.FC = () => {
         {/* Content */}
         <div className="p-6 overflow-y-auto space-y-5">
           {/* Customer / Destination Info */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 p-3.5 bg-stone-50 rounded-xl border border-stone-200 text-xs">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 p-3.5 bg-slate-50 rounded-xl border border-slate-200 text-xs">
             <div className="space-y-1">
-              <div className="font-semibold text-stone-500 uppercase tracking-wide text-[10px]">Destino / Identificação</div>
-              <div className="font-bold text-stone-900 text-sm flex items-center gap-1.5">
-                <User className="w-4 h-4 text-amber-600" />
+              <div className="font-semibold text-slate-500 uppercase tracking-wide text-[10px]">Destino / Identificação</div>
+              <div className="font-bold text-slate-900 text-sm flex items-center gap-1.5">
+                <User className="w-4 h-4 text-blue-600" />
                 <span>{order.nomeCliente || 'Cliente Balcão'}</span>
                 {order.mesaNumero && (
-                  <span className="ml-2 px-2 py-0.5 bg-amber-100 text-amber-800 rounded font-bold text-xs">
+                  <span className="ml-2 px-2 py-0.5 bg-sky-100 text-blue-800 rounded font-bold text-xs">
                     Mesa {order.mesaNumero}
                   </span>
                 )}
               </div>
               {order.telefoneCliente && (
-                <div className="text-stone-600">Telefone: {order.telefoneCliente}</div>
+                <div className="text-slate-600">Telefone: {order.telefoneCliente}</div>
               )}
             </div>
 
             {order.tipo === 'delivery' && order.enderecoEntrega && (
               <div className="space-y-0.5">
-                <div className="font-semibold text-stone-500 uppercase tracking-wide text-[10px]">Endereço de Entrega</div>
-                <div className="text-stone-800 font-medium flex items-start gap-1">
+                <div className="font-semibold text-slate-500 uppercase tracking-wide text-[10px]">Endereço de Entrega</div>
+                <div className="text-slate-800 font-medium flex items-start gap-1">
                   <MapPin className="w-3.5 h-3.5 text-rose-500 shrink-0 mt-0.5" />
                   <span>{order.enderecoEntrega.logradouro}, {order.enderecoEntrega.numero} - {order.enderecoEntrega.bairro}</span>
                 </div>
                 {order.enderecoEntrega.complemento && (
-                  <div className="text-stone-500 pl-4">{order.enderecoEntrega.complemento}</div>
-                )}
-                {order.entregadorNome && (
-                  <div className="text-purple-700 font-semibold pl-4">Entregador: {order.entregadorNome}</div>
+                  <div className="text-slate-500 pl-4">{order.enderecoEntrega.complemento}</div>
                 )}
               </div>
             )}
@@ -232,23 +222,23 @@ export const OrderDetailsModal: React.FC = () => {
 
           {/* Items List */}
           <div className="space-y-2">
-            <div className="flex items-center justify-between text-xs font-bold text-stone-700 uppercase tracking-wider">
+            <div className="flex items-center justify-between text-xs font-bold text-slate-700 uppercase tracking-wider">
               <span>Itens do Pedido ({order.itens.length})</span>
-              <span>Status na Cozinha / Valor</span>
+              <span>Valor</span>
             </div>
 
-            <div className="divide-y divide-stone-100 border border-stone-200 rounded-xl overflow-hidden bg-white shadow-2xs">
+            <div className="divide-y divide-slate-100 border border-slate-200 rounded-xl overflow-hidden bg-white shadow-xs">
               {order.itens.map((it) => (
-                <div key={it.cartItemId} className="p-3 hover:bg-stone-50/60 transition-colors space-y-2">
+                <div key={it.cartItemId} className="p-3 hover:bg-slate-50/60 transition-colors space-y-2">
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <div className="flex items-center gap-2">
-                        <span className="w-6 h-6 rounded-md bg-stone-100 border border-stone-200 flex items-center justify-center font-bold text-xs text-stone-800">
+                        <span className="w-6 h-6 rounded-md bg-slate-100 border border-slate-200 flex items-center justify-center font-bold text-xs text-slate-800">
                           {it.quantidade}x
                         </span>
-                        <span className="font-bold text-stone-900 text-sm">{it.nome}</span>
+                        <span className="font-bold text-slate-900 text-sm">{it.nome}</span>
                         {it.variacaoNome && (
-                          <span className="text-xs px-1.5 py-0.5 bg-stone-100 rounded text-stone-600 font-medium">
+                          <span className="text-xs px-1.5 py-0.5 bg-slate-100 rounded text-slate-600 font-medium">
                             {it.variacaoNome}
                           </span>
                         )}
@@ -256,9 +246,9 @@ export const OrderDetailsModal: React.FC = () => {
 
                       {/* Addons */}
                       {it.adicionais && it.adicionais.length > 0 && (
-                        <div className="text-xs text-stone-600 pl-8 space-y-0.5 mt-1">
+                        <div className="text-xs text-slate-600 pl-8 space-y-0.5 mt-1">
                           {it.adicionais.map((ad, i) => (
-                            <div key={i} className="text-amber-800 font-medium">
+                            <div key={i} className="text-sky-800 font-medium">
                               + {ad.nome} (+{formatCurrency(ad.preco)})
                             </div>
                           ))}
@@ -274,37 +264,23 @@ export const OrderDetailsModal: React.FC = () => {
 
                       {/* Observações */}
                       {it.observacao && (
-                        <div className="text-xs text-stone-500 italic pl-8 mt-0.5">
+                        <div className="text-xs text-slate-500 italic pl-8 mt-0.5">
                           Obs: {it.observacao}
                         </div>
                       )}
                     </div>
 
                     <div className="text-right shrink-0">
-                      <div className="font-extrabold text-sm text-stone-900">
+                      <div className="font-extrabold text-sm text-slate-900">
                         {formatCurrency(it.precoUnitario * it.quantidade)}
                       </div>
                       <div className="mt-1 flex items-center gap-1.5 justify-end">
-                        {/* Production status switcher */}
-                        <button
-                          id={`prod-status-${it.cartItemId}`}
-                          onClick={() => {
-                            const next = it.statusProducao === 'pronto' ? 'pendente' : it.statusProducao === 'preparando' ? 'pronto' : 'preparando';
-                            updateOrderItemProductionStatus(order.id, it.cartItemId, next);
-                          }}
-                          className={`text-[10px] font-bold px-2 py-0.5 rounded-full border transition-colors ${
-                            it.statusProducao === 'pronto' 
-                              ? 'bg-emerald-100 text-emerald-800 border-emerald-300' 
-                              : it.statusProducao === 'preparando' 
-                              ? 'bg-amber-100 text-amber-800 border-amber-300' 
-                              : 'bg-stone-100 text-stone-600 border-stone-200'
-                          }`}
-                        >
-                          {it.statusProducao === 'pronto' ? '✓ Pronto' : it.statusProducao === 'preparando' ? '⏳ Preparando' : 'Pendente'}
-                        </button>
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${latestBatch?.espelhoJobId ? 'bg-emerald-100 text-emerald-800 border-emerald-300' : 'bg-sky-100 text-blue-800 border-sky-300'}`}>
+                          {latestBatch?.espelhoJobId ? 'Espelho gerado' : 'Aguardando espelho'}
+                        </span>
 
                         {/* Cancel Item button */}
-                        {order.status !== 'cancelado' && order.status !== 'finalizado' && (
+                        {(order.status === 'novo' || order.status === 'pronto') && (
                           <button
                             id={`cancel-item-${it.cartItemId}`}
                             onClick={() => {
@@ -354,51 +330,51 @@ export const OrderDetailsModal: React.FC = () => {
           </div>
 
           {/* Add Items Panel (edit order after sent to kitchen) */}
-          {order.status !== 'cancelado' && (
-            <div className="rounded-xl border border-amber-200 bg-amber-50/60 overflow-hidden">
+          {(order.status === 'novo' || order.status === 'pronto') && (
+            <div className="rounded-xl border border-sky-200 bg-sky-50/60 overflow-hidden">
               <button
                 id="order-details-add-items-toggle"
                 onClick={() => setShowAddItems(!showAddItems)}
                 className="w-full flex items-center justify-between px-4 py-3 text-left"
               >
-                <span className="flex items-center gap-2 text-sm font-bold text-amber-900">
-                  <Plus className="w-4 h-4 text-amber-600" />
+                <span className="flex items-center gap-2 text-sm font-bold text-slate-800">
+                  <Plus className="w-4 h-4 text-blue-600" />
                   {showAddItems ? 'Fechar adição de itens' : 'Adicionar mais itens ao pedido'}
                 </span>
-                <span className="text-xs text-amber-700">
+                <span className="text-xs text-sky-700">
                   {addCart.length > 0 ? `${addCart.length} item(ns) selecionado(s)` : 'Editar pedido já enviado'}
                 </span>
               </button>
 
               {showAddItems && (
-                <div className="border-t border-amber-200 p-3 space-y-3">
+                <div className="border-t border-sky-200 p-3 space-y-3">
                   <div className="relative">
-                    <Search className="w-4 h-4 text-stone-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                    <Search className="w-4 h-4 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
                     <input
                       type="text"
                       placeholder="Buscar item do cardápio..."
                       value={addItemSearch}
                       onChange={(e) => setAddItemSearch(e.target.value)}
-                      className="w-full pl-8 pr-3 py-2 rounded-lg border border-stone-300 bg-white text-xs focus:outline-none"
+                      className="w-full pl-8 pr-3 py-2 rounded-lg border border-slate-300 bg-white text-xs focus:outline-none focus:ring-2 focus:ring-sky-500"
                     />
                   </div>
 
-                  <div className="max-h-48 overflow-y-auto divide-y divide-stone-100 border border-stone-200 rounded-lg bg-white">
+                  <div className="max-h-48 overflow-y-auto divide-y divide-slate-100 border border-slate-200 rounded-lg bg-white">
                     {availableMenu.length === 0 && (
-                      <div className="p-4 text-center text-xs text-stone-400 italic">Nenhum item encontrado.</div>
+                      <div className="p-4 text-center text-xs text-slate-400 italic">Nenhum item encontrado.</div>
                     )}
                     {availableMenu.map((item) => (
                       <div key={item.id} className="flex items-center justify-between gap-2 px-3 py-2">
                         <div className="min-w-0">
-                          <div className="text-xs font-bold text-stone-900 truncate">{item.nome}</div>
-                          <div className="text-[11px] text-stone-500">{item.categoria}</div>
+                          <div className="text-xs font-bold text-slate-900 truncate">{item.nome}</div>
+                          <div className="text-[11px] text-slate-500">{item.categoria}</div>
                         </div>
                         <div className="flex items-center gap-2 shrink-0">
-                          <span className="text-xs font-bold text-amber-700">{formatCurrency(item.preco)}</span>
+                          <span className="text-xs font-bold text-blue-700">{formatCurrency(item.preco)}</span>
                           <button
                             id={`add-item-menu-${item.id}`}
                             onClick={() => addToAddCart(item)}
-                            className="p-1.5 rounded-lg border border-amber-300 bg-amber-100 hover:bg-amber-200 text-amber-800"
+                            className="p-1.5 rounded-lg border border-sky-300 bg-sky-100 hover:bg-sky-200 text-blue-800"
                             title={`Adicionar ${item.nome}`}
                           >
                             <Plus className="w-3.5 h-3.5" />
@@ -410,26 +386,26 @@ export const OrderDetailsModal: React.FC = () => {
 
                   {addCart.length > 0 && (
                     <div className="space-y-2">
-                      <div className="divide-y divide-stone-100 border border-stone-200 rounded-lg bg-white">
+                      <div className="divide-y divide-slate-100 border border-slate-200 rounded-lg bg-white">
                         {addCart.map((ci) => (
                           <div key={ci.cartItemId} className="flex items-center justify-between gap-2 px-3 py-2">
                             <div className="min-w-0">
-                              <div className="text-xs font-bold text-stone-900 truncate">{ci.nome}</div>
-                              <div className="text-[11px] text-stone-500">
+                              <div className="text-xs font-bold text-slate-900 truncate">{ci.nome}</div>
+                              <div className="text-[11px] text-slate-500">
                                 {formatCurrency(ci.precoUnitario)} cada
                               </div>
                             </div>
                             <div className="flex items-center gap-1.5 shrink-0">
                               <button
                                 onClick={() => changeAddQty(ci.cartItemId, -1)}
-                                className="p-1 rounded-md border border-stone-200 text-stone-600 hover:bg-stone-100"
+                                className="p-1 rounded-md border border-slate-200 text-slate-600 hover:bg-slate-100"
                               >
                                 <Minus className="w-3 h-3" />
                               </button>
                               <span className="w-6 text-center text-xs font-bold">{ci.quantidade}</span>
                               <button
                                 onClick={() => changeAddQty(ci.cartItemId, 1)}
-                                className="p-1 rounded-md border border-stone-200 text-stone-600 hover:bg-stone-100"
+                                className="p-1 rounded-md border border-slate-200 text-slate-600 hover:bg-slate-100"
                               >
                                 <Plus className="w-3 h-3" />
                               </button>
@@ -445,16 +421,16 @@ export const OrderDetailsModal: React.FC = () => {
                       </div>
 
                       <div className="flex items-center justify-between gap-3 px-1">
-                        <div className="text-xs font-bold text-amber-900">
+                        <div className="text-xs font-bold text-slate-900">
                           Total a adicionar: {formatCurrency(addCartSubtotal)}
                         </div>
                         <button
                           id="confirm-add-items-btn"
                           onClick={confirmAddItems}
-                          className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold shadow-xs"
+                          className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-xs"
                         >
                           <ShoppingBag className="w-3.5 h-3.5" />
-                          Adicionar ao Pedido #{order.numero}
+                          Adicionar ao Pedido #{order.codigoMesa || order.numero}
                         </button>
                       </div>
                     </div>
@@ -465,8 +441,8 @@ export const OrderDetailsModal: React.FC = () => {
           )}
 
           {/* Totals & Discounts Section */}
-          <div className="p-4 rounded-xl bg-stone-50 border border-stone-200 space-y-2 text-xs">
-            <div className="flex justify-between text-stone-600">
+          <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-2 text-xs">
+            <div className="flex justify-between text-slate-600">
               <span>Subtotal dos itens:</span>
               <span className="font-semibold">{formatCurrency(order.subtotal)}</span>
             </div>
@@ -479,42 +455,42 @@ export const OrderDetailsModal: React.FC = () => {
             )}
 
             {order.taxaServico > 0 && (
-              <div className="flex justify-between text-stone-600">
+              <div className="flex justify-between text-slate-600">
                 <span>Taxa de serviço:</span>
                 <span>{formatCurrency(order.taxaServico)}</span>
               </div>
             )}
 
             {order.taxaEntrega > 0 && (
-              <div className="flex justify-between text-stone-600">
+              <div className="flex justify-between text-slate-600">
                 <span>Taxa de entrega:</span>
                 <span>{formatCurrency(order.taxaEntrega)}</span>
               </div>
             )}
 
-            <div className="flex justify-between items-center pt-2 border-t border-stone-200 text-sm font-extrabold text-stone-900">
+            <div className="flex justify-between items-center pt-2 border-t border-slate-200 text-sm font-extrabold text-slate-900">
               <span>VALOR TOTAL DO PEDIDO:</span>
-              <span className="text-base text-amber-700">{formatCurrency(order.total)}</span>
+              <span className="text-base text-blue-700">{formatCurrency(order.total)}</span>
             </div>
 
             {/* Payment status summary */}
-            <div className="pt-2 border-t border-stone-200 flex items-center justify-between">
+            <div className="pt-2 border-t border-slate-200 flex items-center justify-between">
               <div>
-                <span className="text-stone-500">Status do Pagamento: </span>
-                <strong className={`uppercase ${order.statusPagamento === 'pago' ? 'text-emerald-700' : 'text-amber-700'}`}>
+                <span className="text-slate-500">Status do Pagamento: </span>
+                <strong className={`uppercase ${order.statusPagamento === 'pago' ? 'text-emerald-700' : 'text-blue-700'}`}>
                   {order.statusPagamento}
                 </strong>
-                <span className="text-stone-500 ml-2">
+                <span className="text-slate-500 ml-2">
                   (Pago: {formatCurrency(order.valorTotalPago)} • Restante: {formatCurrency(order.saldoRestante)})
                 </span>
               </div>
 
               {/* Discount trigger */}
-              {order.status !== 'cancelado' && order.status !== 'finalizado' && (
+              {(order.status === 'novo' || order.status === 'pronto') && (
                 <button
                   id="open-apply-discount-btn"
                   onClick={() => setShowDiscountInput(!showDiscountInput)}
-                  className="text-xs font-semibold text-amber-700 hover:text-amber-800 flex items-center gap-1"
+                  className="text-xs font-semibold text-blue-700 hover:text-blue-800 flex items-center gap-1"
                 >
                   <Percent className="w-3.5 h-3.5" />
                   {order.desconto > 0 ? 'Alterar Desconto' : 'Aplicar Desconto'}
@@ -524,8 +500,8 @@ export const OrderDetailsModal: React.FC = () => {
 
             {/* Apply discount prompt */}
             {showDiscountInput && (
-              <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 space-y-2 mt-2">
-                <div className="text-xs font-bold text-amber-900">Aplicar Desconto Manual (Registrado em Auditoria)</div>
+              <div className="p-3 rounded-lg bg-sky-50 border border-sky-200 space-y-2 mt-2">
+                <div className="text-xs font-bold text-slate-900">Aplicar Desconto Manual (Registrado em Auditoria)</div>
                 <div className="grid grid-cols-2 gap-2">
                   <input
                     type="number"
@@ -533,27 +509,27 @@ export const OrderDetailsModal: React.FC = () => {
                     placeholder="Valor do desconto (R$)..."
                     value={discountValue}
                     onChange={(e) => setDiscountValue(e.target.value)}
-                    className="text-xs px-2.5 py-1.5 rounded border border-amber-300 bg-white"
+                    className="text-xs px-2.5 py-1.5 rounded border border-sky-300 bg-white"
                   />
                   <input
                     type="text"
                     placeholder="Motivo (ex: Cortesia Gerente, Cliente VIP)..."
                     value={discountReason}
                     onChange={(e) => setDiscountReason(e.target.value)}
-                    className="text-xs px-2.5 py-1.5 rounded border border-amber-300 bg-white"
+                    className="text-xs px-2.5 py-1.5 rounded border border-sky-300 bg-white"
                   />
                 </div>
                 <div className="flex justify-end gap-2">
                   <button
                     onClick={() => setShowDiscountInput(false)}
-                    className="text-xs text-stone-600 hover:text-stone-900 px-2 py-1"
+                    className="text-xs text-slate-600 hover:text-slate-900 px-2 py-1"
                   >
                     Cancelar
                   </button>
                   <button
                     id="confirm-discount-btn"
                     onClick={handleApplyDiscount}
-                    className="px-3 py-1 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded text-xs"
+                    className="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded text-xs"
                   >
                     Aplicar
                   </button>
@@ -598,7 +574,7 @@ export const OrderDetailsModal: React.FC = () => {
           {/* Cancel whole order prompt */}
           {showCancelOrderInput && (
             <div className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 space-y-2">
-              <div className="text-xs font-bold text-rose-900">Cancelar Todo o Pedido #{order.numero}</div>
+              <div className="text-xs font-bold text-rose-900">Cancelar Todo o Pedido #{order.codigoMesa || order.numero}</div>
               <input
                 type="text"
                 placeholder="Motivo obrigatório de cancelamento..."
@@ -621,6 +597,18 @@ export const OrderDetailsModal: React.FC = () => {
         {/* Footer toolbar with primary operational actions */}
         <div className="p-4 bg-stone-100 border-t border-stone-200 flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2">
+            {canGenerateMirror && (
+              <button
+                id="order-details-generate-mirror-btn"
+                onClick={() => generateOrderMirror(order.id)}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-emerald-600 text-white hover:bg-emerald-700 text-xs font-bold shadow-2xs"
+                title="Gera a via espelho e marca o pedido como pronto"
+              >
+                <CheckCircle className="w-4 h-4" />
+                <span>Gerar Espelho / Pronto</span>
+              </button>
+            )}
+
             {/* Print thermal receipt */}
             <button
               id="order-details-print-btn"
@@ -658,7 +646,7 @@ export const OrderDetailsModal: React.FC = () => {
             )}
 
             {/* Cancel order trigger */}
-            {order.status !== 'cancelado' && order.status !== 'finalizado' && (
+            {(order.status === 'novo' || order.status === 'pronto') && (
               <button
                 id="order-details-cancel-btn"
                 onClick={() => setShowCancelOrderInput(true)}
@@ -670,6 +658,27 @@ export const OrderDetailsModal: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-2">
+            {order.status === 'pronto' && (
+              <button
+                id="order-details-delivered-btn"
+                onClick={() => { updateOrderStatus(order.id, 'entregue'); setSelectedOrderForModal(null); }}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-2xs"
+              >
+                <CheckCircle className="w-4 h-4" />
+                <span>Marcar Entregue</span>
+              </button>
+            )}
+            {order.status === 'entregue' && order.saldoRestante === 0 && (
+              <button
+                id="order-details-finish-btn"
+                onClick={() => { updateOrderStatus(order.id, 'finalizado'); setSelectedOrderForModal(null); }}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-stone-800 hover:bg-stone-900 text-white font-bold text-xs shadow-2xs"
+              >
+                <CheckCircle className="w-4 h-4" />
+                <span>Finalizar Pedido</span>
+              </button>
+            )}
+
             {/* Manual Payment Button */}
             <button
               id="order-details-payment-btn"

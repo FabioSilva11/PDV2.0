@@ -28,7 +28,7 @@ export const AlertsDrawer: React.FC = () => {
       case 'impressora_offline':
         return <Printer className="w-4 h-4 text-rose-600" />;
       case 'caixa_diferenca':
-        return <DollarSign className="w-4 h-4 text-amber-600" />;
+        return <DollarSign className="w-4 h-4 text-sky-600" />;
       default:
         return <AlertCircle className="w-4 h-4 text-stone-600" />;
     }
@@ -49,7 +49,7 @@ export const AlertsDrawer: React.FC = () => {
         {/* Header */}
         <div className="p-4 border-b border-stone-200 flex items-center justify-between bg-stone-50">
           <div className="flex items-center gap-2">
-            <div className="p-1.5 rounded-lg bg-amber-500/10 text-amber-600">
+            <div className="p-1.5 rounded-lg bg-sky-500/15 text-sky-600">
               <AlertTriangle className="w-4 h-4" />
             </div>
             <div>
@@ -81,7 +81,7 @@ export const AlertsDrawer: React.FC = () => {
                 className={`p-3.5 rounded-xl border transition-all ${
                   alert.gravidade === 'alta' 
                     ? 'bg-rose-50/50 border-rose-200' 
-                    : 'bg-amber-50/50 border-amber-200'
+                    : 'bg-sky-50/50 border-sky-200'
                 }`}
               >
                 <div className="flex items-start justify-between gap-2">
@@ -110,7 +110,7 @@ export const AlertsDrawer: React.FC = () => {
                     <button
                       id={`action-alert-${alert.id}`}
                       onClick={() => handleAction(alert.linkAcao)}
-                      className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-700 hover:text-amber-800"
+                      className="inline-flex items-center gap-1 text-[11px] font-bold text-blue-700 hover:text-blue-800"
                     >
                       <span>Ver módulo {alert.linkAcao}</span>
                       <ArrowRight className="w-3 h-3" />

@@ -24,7 +24,8 @@ export const OrdersView: React.FC = () => {
     setSelectedOrderForModal, 
     openPaymentModal, 
     setSelectedReceiptOrder, 
-    setActiveModule 
+    setActiveModule,
+    generateOrderMirror
   } = useRestaurant();
 
   const [searchTerm, setSearchTerm] = useState('');
@@ -62,23 +63,14 @@ export const OrdersView: React.FC = () => {
 
   const getStatusBadge = (st: OrderStatus) => {
     const map: Record<OrderStatus, { label: string; color: string }> = {
-      novo: { label: 'Novo', color: 'bg-sky-100 text-sky-800 border-sky-200' },
-      confirmado: { label: 'Confirmado', color: 'bg-indigo-100 text-indigo-800 border-indigo-200' },
-      em_preparacao: { label: 'Em Preparo', color: 'bg-amber-100 text-amber-800 border-amber-200' },
-      preparando: { label: 'Em Preparo', color: 'bg-amber-100 text-amber-800 border-amber-200' },
-      pendente: { label: 'Pendente', color: 'bg-amber-100 text-amber-800 border-amber-200' },
+      novo: { label: 'Aguardando espelho', color: 'bg-sky-100 text-sky-800 border-sky-200' },
       pronto: { label: 'Pronto', color: 'bg-emerald-100 text-emerald-800 border-emerald-200' },
-      saiu_entrega: { label: 'Saiu p/ Entrega', color: 'bg-purple-100 text-purple-800 border-purple-200' },
       entregue: { label: 'Entregue', color: 'bg-blue-100 text-blue-800 border-blue-200' },
       finalizado: { label: 'Finalizado', color: 'bg-stone-100 text-stone-700 border-stone-200' },
       cancelado: { label: 'Cancelado', color: 'bg-rose-100 text-rose-800 border-rose-200' }
     };
-    const b = map[st] || { label: st, color: 'bg-stone-100 text-stone-700 border-stone-200' };
-    return (
-      <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full border ${b.color}`}>
-        {b.label}
-      </span>
-    );
+    const b = map[st];
+    return <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full border ${b.color}`}>{b.label}</span>;
   };
 
   return (
@@ -86,11 +78,11 @@ export const OrdersView: React.FC = () => {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h2 className="text-xl sm:text-2xl font-bold text-stone-900 flex items-center gap-2">
-            <Receipt className="w-6 h-6 text-amber-600" />
+          <h2 className="text-xl sm:text-2xl font-bold text-slate-900 flex items-center gap-2">
+            <Receipt className="w-6 h-6 text-blue-600" />
             Central de Pedidos
           </h2>
-          <p className="text-xs sm:text-sm text-stone-500">
+          <p className="text-xs sm:text-sm text-slate-500">
             Acompanhamento em tempo real de pedidos de salão, balcão e delivery
           </p>
         </div>
@@ -98,7 +90,7 @@ export const OrdersView: React.FC = () => {
         <button
           id="orders-view-new-order-btn"
           onClick={() => setActiveModule('pdv')}
-          className="flex items-center gap-2 px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs sm:text-sm font-bold shadow-xs transition-colors self-start sm:self-auto"
+          className="flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs sm:text-sm font-bold shadow-xs transition-colors self-start sm:self-auto"
         >
           <Plus className="w-4 h-4" />
           Novo Pedido (PDV)
@@ -106,18 +98,18 @@ export const OrdersView: React.FC = () => {
       </div>
 
       {/* Filter and Search Bar */}
-      <div className="p-4 bg-white rounded-2xl border border-stone-200 shadow-2xs space-y-3">
+      <div className="p-4 bg-white rounded-2xl border border-slate-200 shadow-xs space-y-3">
         <div className="flex flex-col md:flex-row gap-3 items-stretch md:items-center justify-between">
           {/* Search */}
           <div className="relative flex-1">
-            <Search className="w-4 h-4 text-stone-400 absolute left-3 top-1/2 -translate-y-1/2" />
+            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
             <input
               id="orders-search-input"
               type="text"
               placeholder="Buscar por número (#1001), cliente, mesa ou item..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pl-9 pr-4 py-2 rounded-xl border border-stone-300 text-xs sm:text-sm text-stone-800 focus:ring-2 focus:ring-amber-500 focus:outline-none"
+              className="w-full pl-9 pr-4 py-2 rounded-xl border border-slate-300 text-xs sm:text-sm text-slate-800 focus:ring-2 focus:ring-sky-500 focus:outline-none"
             />
           </div>
 
@@ -125,9 +117,9 @@ export const OrdersView: React.FC = () => {
           <div className="flex items-center gap-1 overflow-x-auto pb-1 md:pb-0 scrollbar-none text-xs">
             {[
               { id: 'todos', label: 'Todos' },
-              { id: 'novo', label: 'Novos' },
-              { id: 'em_preparacao', label: 'Na Cozinha' },
+              { id: 'novo', label: 'Aguardando espelho' },
               { id: 'pronto', label: 'Prontos' },
+              { id: 'entregue', label: 'Entregues' },
               { id: 'finalizado', label: 'Finalizados' },
               { id: 'cancelado', label: 'Cancelados' },
             ].map((tab) => (
@@ -137,8 +129,8 @@ export const OrdersView: React.FC = () => {
                 onClick={() => setStatusFilter(tab.id)}
                 className={`px-3 py-1.5 rounded-lg font-semibold transition-all whitespace-nowrap ${
                   statusFilter === tab.id
-                    ? 'bg-amber-600 text-white shadow-2xs'
-                    : 'bg-stone-100 text-stone-600 hover:bg-stone-200'
+                    ? 'bg-blue-600 text-white shadow-xs'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200 hover:text-blue-700'
                 }`}
               >
                 {tab.label}
@@ -205,7 +197,7 @@ export const OrdersView: React.FC = () => {
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex items-center gap-2">
                     <span className="font-mono font-extrabold text-stone-900 text-sm">
-                      #{order.numero}
+                      #{order.codigoMesa || order.numero}
                     </span>
                     {getStatusBadge(order.status)}
                     {order.prioridade === 'urgente' && (
@@ -248,31 +240,31 @@ export const OrdersView: React.FC = () => {
                     </div>
                   ))}
                   {order.itens.length > 3 && (
-                    <div className="text-[11px] text-amber-700 font-semibold pt-0.5">
+                    <div className="text-[11px] text-sky-700 font-semibold pt-0.5">
                       + {order.itens.length - 3} outros itens...
                     </div>
                   )}
                 </div>
 
                 {order.observacoesGerais && (
-                  <div className="p-2 rounded-lg bg-amber-50 border border-amber-100 text-[11px] text-amber-900 italic mt-2">
+                  <div className="p-2 rounded-lg bg-sky-50 border border-sky-100 text-[11px] text-sky-900 italic mt-2">
                     Obs: {order.observacoesGerais}
                   </div>
                 )}
               </div>
 
               {/* Card Footer */}
-              <div className="p-4 bg-stone-50 border-t border-stone-100 space-y-3">
+              <div className="p-4 bg-slate-50 border-t border-slate-100 space-y-3">
                 <div className="flex items-center justify-between">
                   <div>
-                    <span className="text-[10px] text-stone-400 uppercase tracking-wider font-semibold block">Total</span>
-                    <span className="text-base font-extrabold text-stone-900">{formatCurrency(order.total)}</span>
+                    <span className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold block">Total</span>
+                    <span className="text-base font-extrabold text-slate-900">{formatCurrency(order.total)}</span>
                   </div>
 
                   <div className="text-right">
-                    <span className="text-[10px] text-stone-400 uppercase tracking-wider font-semibold block">Pagamento</span>
+                    <span className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold block">Pagamento</span>
                     <span className={`text-xs font-bold ${
-                      order.statusPagamento === 'pago' ? 'text-emerald-700' : 'text-amber-700'
+                      order.statusPagamento === 'pago' ? 'text-emerald-700' : 'text-blue-700'
                     }`}>
                       {order.statusPagamento === 'pago' ? '✓ Pago' : `Falta ${formatCurrency(order.saldoRestante)}`}
                     </span>
@@ -289,6 +281,17 @@ export const OrdersView: React.FC = () => {
                     <span>Ver Detalhes</span>
                     <ChevronRight className="w-3.5 h-3.5 text-stone-400" />
                   </button>
+
+                  {order.status === 'novo' && order.impressoes?.length && !order.impressoes[order.impressoes.length - 1].espelhoJobId ? (
+                    <button
+                      id={`generate-mirror-${order.id}`}
+                      onClick={() => generateOrderMirror(order.id)}
+                      className="py-1.5 px-3 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 text-xs font-bold shadow-2xs"
+                      title="Gerar espelho e marcar pedido como pronto"
+                    >
+                      Espelho
+                    </button>
+                  ) : null}
 
                   <button
                     id={`print-thermal-${order.id}`}

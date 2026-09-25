@@ -64,18 +64,18 @@ export const PrintersView: React.FC = () => {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h2 className="text-xl sm:text-2xl font-bold text-stone-900 flex items-center gap-2">
-            <Printer className="w-6 h-6 text-amber-600" />
-            Impressoras Térmicas & Roteamento de Produção
+            <Printer className="w-6 h-6 text-blue-600" />
+            Impressoras Térmicas
           </h2>
           <p className="text-xs sm:text-sm text-stone-500">
-            Configure impressoras 80mm/58mm (Rede Ethernet, USB, Serial) e rotas por setor (Cozinha, Bar, Caixa)
+            Configure as impressoras e roteie Pedido, Espelho e Comprovante por cardápio, atendimento, categoria e estação.
           </p>
         </div>
 
         <button
           id="new-printer-btn"
           onClick={handleOpenNew}
-          className="flex items-center gap-2 px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs sm:text-sm font-bold shadow-xs transition-colors self-start sm:self-auto cursor-pointer"
+          className="flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs sm:text-sm font-bold shadow-xs transition-colors self-start sm:self-auto cursor-pointer"
         >
           <Plus className="w-4 h-4" />
           Adicionar Impressora
@@ -88,7 +88,7 @@ export const PrintersView: React.FC = () => {
           onClick={() => setActiveTab('impressoras')}
           className={`pb-3 px-3 text-xs sm:text-sm font-bold border-b-2 transition-all ${
             activeTab === 'impressoras' 
-              ? 'border-amber-600 text-amber-700' 
+              ? 'border-blue-600 text-blue-700' 
               : 'border-transparent text-stone-500 hover:text-stone-800'
           }`}
         >
@@ -99,7 +99,7 @@ export const PrintersView: React.FC = () => {
           onClick={() => setActiveTab('fila')}
           className={`pb-3 px-3 text-xs sm:text-sm font-bold border-b-2 transition-all ${
             activeTab === 'fila' 
-              ? 'border-amber-600 text-amber-700' 
+              ? 'border-blue-600 text-blue-700' 
               : 'border-transparent text-stone-500 hover:text-stone-800'
           }`}
         >
@@ -115,7 +115,7 @@ export const PrintersView: React.FC = () => {
             return (
               <div 
                 key={p.id}
-                className="bg-white p-5 rounded-2xl border border-stone-200 shadow-2xs space-y-4 flex flex-col justify-between hover:border-amber-300 transition-colors"
+                className="bg-white p-5 rounded-2xl border border-stone-200 shadow-2xs space-y-4 flex flex-col justify-between hover:border-blue-300 transition-colors"
               >
                 <div className="space-y-3">
                   <div className="flex items-start justify-between">
@@ -127,7 +127,7 @@ export const PrintersView: React.FC = () => {
                       </div>
                       <div>
                         <h3 className="font-bold text-sm text-stone-900">{p.nome}</h3>
-                        <p className="text-xs text-stone-500 font-medium">{p.local} • {p.larguraPapel}</p>
+                        <p className="text-xs text-stone-500 font-medium">{p.local} • {p.larguraPapel} • {p.finalidade === 'pedido' ? 'Pedido' : p.finalidade === 'espelho' ? 'Espelho' : p.finalidade === 'comprovante' ? 'Comprovante' : 'Geral'}</p>
                       </div>
                     </div>
 
@@ -161,6 +161,15 @@ export const PrintersView: React.FC = () => {
                     </div>
                   </div>
 
+                  {p.regras?.length ? (
+                    <div className="flex flex-wrap gap-1.5">
+                      {p.regras.filter(r => r.ativo).slice(0, 5).map(r => (
+                        <span key={r.id} className="px-2 py-1 rounded-lg bg-sky-50 border border-sky-100 text-[10px] font-semibold text-blue-800">{r.nome}</span>
+                      ))}
+                      {p.regras.filter(r => r.ativo).length > 5 && <span className="px-2 py-1 rounded-lg bg-stone-50 border border-stone-100 text-[10px] text-stone-500">+{p.regras.filter(r => r.ativo).length - 5}</span>}
+                    </div>
+                  ) : null}
+
                   {testPrintSuccessId === p.id && (
                     <div className="p-2 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-semibold flex items-center gap-1.5 animate-in fade-in">
                       <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
@@ -192,7 +201,7 @@ export const PrintersView: React.FC = () => {
                   <button
                     id={`test-print-${p.id}`}
                     onClick={() => handleTestPrint(p.id)}
-                    className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800 font-bold transition-colors cursor-pointer"
+                    className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-sky-50 hover:bg-sky-100 text-blue-800 font-bold transition-colors cursor-pointer"
                   >
                     <RotateCw className="w-3.5 h-3.5" />
                     <span>Testar Impressão</span>
@@ -238,7 +247,7 @@ export const PrintersView: React.FC = () => {
                           job.status === 'sucesso' 
                             ? 'bg-emerald-100 text-emerald-800' 
                             : job.status === 'pendente' 
-                            ? 'bg-amber-100 text-amber-800' 
+                            ? 'bg-sky-100 text-sky-800' 
                             : 'bg-rose-100 text-rose-800'
                         }`}>
                           {job.status}

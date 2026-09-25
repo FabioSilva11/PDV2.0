@@ -25,7 +25,7 @@ class RestaurantRepository {
     return null;
   }
 
-  Future<String> sendOrder({required RestaurantTable table, required StaffUser staff, required List<CartLine> lines, required String customer, required String generalNote}) async {
+  Future<String> confirmOrder({required RestaurantTable table, required StaffUser staff, required List<CartLine> lines, required String customer, required String generalNote}) async {
     if (lines.isEmpty) throw StateError('Adicione ao menos um produto.');
     if (!table.available) throw StateError('A Mesa ${table.number} já está ocupada em outro terminal.');
     final subtotal = _money(lines.fold(0.0, (sum, line) => sum + line.total));
@@ -37,7 +37,7 @@ class RestaurantRepository {
       'cartItemId': '${orderId}-${line.product.id}-${Random().nextInt(1 << 20)}',
       'menuItemId': line.product.id, 'nome': line.product.name, 'precoUnitario': _money(line.product.price),
       'quantidade': line.quantity, 'observacao': line.note, 'estacaoProducao': line.product.station,
-      'statusProducao': 'pendente', 'adicionais': <dynamic>[], 'remocoes': <dynamic>[]
+'adicionais': <dynamic>[], 'remocoes': <dynamic>[]
     }).toList();
     final order = {
       'id': orderId, 'numero': number, 'tipo': 'mesa', 'mesaNumero': table.number,
@@ -47,12 +47,31 @@ class RestaurantRepository {
       'pagamentos': <dynamic>[], 'valorTotalPago': 0, 'saldoRestante': subtotal,
       'observacoesGerais': generalNote.isEmpty ? null : generalNote, 'origem': 'app_garcom'
     };
-    final jobs = <String, dynamic>{};
-    for (final station in lines.map((line) => line.product.station).toSet()) {
-      final stationItems = lines.where((line) => line.product.station == station).map((line) => '${line.quantity}x ${line.product.name}${line.note.isEmpty ? '' : ' [OBS: ${line.note}]'}').join('\n');
-      final job = _root.child('printQueue').push().key!;
-      jobs['printQueue/$job'] = {'id': job, 'pedidoNumero': number, 'titulo': 'PEDIDO #$number - ${station.toUpperCase()}', 'conteudoTexto': stationItems, 'status': 'pendente', 'dataHora': now, 'tentativas': 0, 'origem': 'app_garcom'};
-    }
+    final groupId = '${orderId}-print';
+    final jobId = _root.child('printQueue').push().key!;
+    final fullContent = [
+      'MURUPI RESTAURANTE',
+      'VIA DO PEDIDO',
+      'PEDIDO #$number',
+      'TIPO: MESA',
+      'MESA: ${table.number}',
+      if (customer.isNotEmpty) 'CLIENTE: $customer',
+      '--------------------------------',
+      ...lines.expand((line) => [
+        '${line.quantity}x ${line.product.name}',
+        if (line.note.isNotEmpty) '  OBS: ${line.note}',
+      ]),
+      '--------------------------------',
+      'TOTAL: R\$ ${subtotal.toStringAsFixed(2)}',
+    ].join('\n');
+    final jobs = <String, dynamic>{
+      'printQueue/$jobId': {
+        'id': jobId, 'pedidoId': orderId, 'grupoImpressaoId': groupId, 'tipo': 'pedido',
+        'pedidoNumero': number, 'titulo': 'PEDIDO #$number', 'conteudoTexto': fullContent,
+        'status': 'pendente', 'dataHora': now, 'tentativas': 0, 'origem': 'app_garcom'
+      }
+    };
+    order['impressoes'] = [{'grupoId': groupId, 'pedidoJobId': jobId, 'pedidoGeradoEm': now, 'tipoOperacao': 'pedido_inicial'}];
     await _root.runTransaction((current) {
       final db = Map<dynamic, dynamic>.from(current as Map? ?? const {});
       final tables = Map<dynamic, dynamic>.from(db['tables'] as Map? ?? const {});

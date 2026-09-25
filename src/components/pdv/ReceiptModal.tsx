@@ -1,6 +1,7 @@
 import React from 'react';
 import { Order } from '../../types';
-import { formatCurrency, formatFullDate, getPaymentMethodName } from '../../utils/formatters';
+import { formatCurrency, formatFullDate } from '../../utils/formatters';
+
 import { Printer, X } from 'lucide-react';
 
 interface ReceiptModalProps {
@@ -24,9 +25,9 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ order, isOpen, onClo
         aria-modal="true"
       >
         {/* Modal Controls Header */}
-        <div className="px-5 py-3.5 bg-stone-900 text-white flex items-center justify-between border-b border-stone-800 print:hidden">
+        <div className="px-5 py-3.5 bg-slate-900 text-white flex items-center justify-between border-b border-slate-800 print:hidden">
           <div className="flex items-center gap-2">
-            <Printer className="w-4 h-4 text-amber-400" />
+            <Printer className="w-4 h-4 text-sky-400" />
             <span className="text-sm font-bold">Comprovante de Venda #{order.numero}</span>
           </div>
           <button
@@ -74,7 +75,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ order, isOpen, onClo
                 Data: {formatFullDate(order.criadoEm)}
               </div>
               {order.mesaNumero && (
-                <div className="font-bold text-amber-900">
+                <div className="font-bold text-blue-900">
                   MESA: {order.mesaNumero}
                 </div>
               )}
@@ -89,7 +90,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ order, isOpen, onClo
                 </div>
               )}
               {order.enderecoEntrega && (
-                <div className="text-[10px] bg-stone-50 p-1.5 rounded border border-stone-200 mt-1">
+                <div className="text-[10px] bg-slate-50 p-1.5 rounded border border-slate-200 mt-1">
                   Endereço: {order.enderecoEntrega.logradouro}, {order.enderecoEntrega.numero} - {order.enderecoEntrega.bairro}
                   {order.enderecoEntrega.complemento ? ` • ${order.enderecoEntrega.complemento}` : ''}
                 </div>
@@ -97,14 +98,14 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ order, isOpen, onClo
             </div>
 
             {/* Items Header */}
-            <div className="py-1.5 border-b border-stone-300 font-bold text-[10px] flex justify-between uppercase">
+            <div className="py-1.5 border-b border-slate-300 font-bold text-[10px] flex justify-between uppercase">
               <span className="w-8">Qtd</span>
               <span className="flex-1">Item</span>
               <span className="w-16 text-right">Total</span>
             </div>
 
             {/* Items list */}
-            <div className="py-2 space-y-2 border-b border-dashed border-stone-400">
+            <div className="py-2 space-y-2 border-b border-dashed border-slate-400">
               {order.itens.map((item, idx) => (
                 <div key={idx} className="text-[11px]">
                   <div className="flex justify-between">
@@ -116,7 +117,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ order, isOpen, onClo
                   </div>
                   {/* Accompaniments */}
                   {item.acompanhamentosEscolhidos && item.acompanhamentosEscolhidos.length > 0 && (
-                    <div className="text-[9px] text-stone-600 pl-8 pr-1 mt-0.5">
+                    <div className="text-[9px] text-slate-600 pl-8 pr-1 mt-0.5">
                       G: {item.acompanhamentosEscolhidos?.join(', ')}
                     </div>
                   )}
@@ -127,7 +128,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ order, isOpen, onClo
                   )}
                   {/* Observation */}
                   {item.observacao && (
-                    <div className="text-[9px] text-amber-800 italic pl-8 pr-1 mt-0.5">
+                    <div className="text-[9px] text-sky-800 italic pl-8 pr-1 mt-0.5">
                       Obs: {item.observacao}
                     </div>
                   )}
@@ -159,27 +160,33 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ order, isOpen, onClo
               </div>
             </div>
 
-            {/* Payment Details */}
-            {order.formaPagamento && (
-              <div className="py-2 border-b border-dashed border-stone-400 text-[10px] space-y-0.5">
-                <div className="flex justify-between">
-                  <span>Forma de Pagto:</span>
-                  <span className="font-bold">{getPaymentMethodName(order.formaPagamento)}</span>
-                </div>
-                {order.formaPagamento === 'dinheiro' && order.valorRecebido && (
-                  <>
+            {/* Payment Details — lê o array real de pagamentos */}
+            {order.pagamentos && order.pagamentos.filter(p => !p.estornado).length > 0 && (
+              <div className="py-2 border-b border-dashed border-stone-400 text-[10px] space-y-1">
+                <div className="font-bold text-stone-700 uppercase pb-0.5">Pagamentos:</div>
+                {order.pagamentos.filter(p => !p.estornado).map((p, i) => (
+                  <div key={i} className="space-y-0.5">
                     <div className="flex justify-between">
-                      <span>Valor Recebido:</span>
-                      <span>{formatCurrency(order.valorRecebido)}</span>
+                      <span>• {p.formaNome}:</span>
+                      <span className="font-bold">{formatCurrency(p.valor)}</span>
                     </div>
-                    <div className="flex justify-between font-bold text-stone-800">
-                      <span>Troco:</span>
-                      <span>{formatCurrency(order.troco || 0)}</span>
-                    </div>
-                  </>
-                )}
+                    {p.formaId === 'dinheiro' && p.valorRecebido != null && (
+                      <>
+                        <div className="flex justify-between text-stone-600 pl-2">
+                          <span>Recebido:</span>
+                          <span>{formatCurrency(p.valorRecebido)}</span>
+                        </div>
+                        <div className="flex justify-between font-bold text-stone-800 pl-2">
+                          <span>Troco:</span>
+                          <span>{formatCurrency(p.troco ?? 0)}</span>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                ))}
               </div>
             )}
+
 
             {/* Footer Message */}
             <div className="pt-4 text-center space-y-1">
@@ -207,7 +214,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ order, isOpen, onClo
             type="button"
             id="receipt-print-action-btn"
             onClick={handlePrint}
-            className="px-5 py-2.5 bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs rounded-xl shadow-sm transition-all flex items-center gap-2"
+            className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center gap-2"
           >
             <Printer className="w-4 h-4" />
             <span>Imprimir Cupom Não-Fiscal</span>

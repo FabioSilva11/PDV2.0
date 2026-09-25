@@ -110,20 +110,20 @@ class OrderPage extends StatefulWidget {
 }
 
 class _OrderPageState extends State<OrderPage> {
-  final lines = <CartLine>[]; final customer = TextEditingController(); final note = TextEditingController(); bool sending = false;
+  final lines = <CartLine>[]; final customer = TextEditingController(); final note = TextEditingController(); bool confirming = false;
   double get total => lines.fold(0, (sum, line) => sum + line.total);
   void add(MenuProduct product) { final match = lines.where((line) => line.product.id == product.id && line.note.isEmpty); setState(() { if (match.isEmpty) { lines.add(CartLine(product: product)); } else { match.first.quantity++; } }); }
-  Future<void> send() async {
+  Future<void> confirmOrder() async {
     if (lines.isEmpty) return;
-    setState(() => sending = true);
+    setState(() => confirming = true);
     try {
-      await repository.sendOrder(table: widget.table, staff: widget.user, lines: lines, customer: customer.text.trim(), generalNote: note.text.trim());
+      await repository.confirmOrder(table: widget.table, staff: widget.user, lines: lines, customer: customer.text.trim(), generalNote: note.text.trim());
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Pedido enviado para a cozinha.')));
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Pedido confirmado e via do pedido registrada na fila de impressão.')));
       Navigator.pop(context);
     } catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString().replaceFirst('Bad state: ', ''))));
-    } finally { if (mounted) setState(() => sending = false); }
+    } finally { if (mounted) setState(() => confirming = false); }
   }
   Future<void> printConsumption() async {
     final document = pw.Document();
@@ -139,15 +139,15 @@ class _OrderPageState extends State<OrderPage> {
   @override Widget build(BuildContext context) => Scaffold(appBar: AppBar(title: Text('Mesa ${widget.table.number}'), actions: [IconButton(tooltip: 'Emitir consumo', onPressed: lines.isEmpty ? null : printConsumption, icon: const Icon(LucideIcons.printer))]), body: StreamBuilder<List<MenuProduct>>(stream: repository.menu(), builder: (context, snapshot) {
     if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
     final products = snapshot.data!;
-    return Column(children: [Padding(padding: const EdgeInsets.all(12), child: TextField(controller: customer, decoration: const InputDecoration(labelText: 'Cliente (opcional)', border: OutlineInputBorder()))), Expanded(child: ListView.builder(itemCount: products.length, itemBuilder: (_, index) { final product = products[index]; return ListTile(onTap: () => add(product), leading: const Icon(LucideIcons.circlePlus), title: Text(product.name), subtitle: Text(product.category), trailing: Text('R\$ ${product.price.toStringAsFixed(2)}')); })), _CartBar(lines: lines, total: total, onChange: () => setState(() {}), onSend: sending ? null : send, note: note)]);
+    return Column(children: [Padding(padding: const EdgeInsets.all(12), child: TextField(controller: customer, decoration: const InputDecoration(labelText: 'Cliente (opcional)', border: OutlineInputBorder()))), Expanded(child: ListView.builder(itemCount: products.length, itemBuilder: (_, index) { final product = products[index]; return ListTile(onTap: () => add(product), leading: const Icon(LucideIcons.circlePlus), title: Text(product.name), subtitle: Text(product.category), trailing: Text('R\$ ${product.price.toStringAsFixed(2)}')); })), _CartBar(lines: lines, total: total, onChange: () => setState(() {}), onConfirm: confirming ? null : confirmOrder, note: note)]);
   }));
 }
 
 class _CartBar extends StatelessWidget {
-  const _CartBar({required this.lines, required this.total, required this.onChange, required this.onSend, required this.note});
-  final List<CartLine> lines; final double total; final VoidCallback onChange; final VoidCallback? onSend; final TextEditingController note;
+  const _CartBar({required this.lines, required this.total, required this.onChange, required this.onConfirm, required this.note});
+  final List<CartLine> lines; final double total; final VoidCallback onChange; final VoidCallback? onConfirm; final TextEditingController note;
   @override Widget build(BuildContext context) => SafeArea(top: false, child: Material(elevation: 8, child: Padding(padding: const EdgeInsets.all(12), child: Column(mainAxisSize: MainAxisSize.min, children: [
     ...lines.map((line) => Row(children: [Expanded(child: Text('${line.quantity}x ${line.product.name}', overflow: TextOverflow.ellipsis)), IconButton(icon: const Icon(LucideIcons.minus), onPressed: () { if (line.quantity == 1) { lines.remove(line); } else { line.quantity--; } onChange(); }), IconButton(icon: const Icon(LucideIcons.plus), onPressed: () { line.quantity++; onChange(); })])),
-    TextField(controller: note, decoration: const InputDecoration(labelText: 'Observação geral do pedido', prefixIcon: Icon(LucideIcons.messageSquareText))), const SizedBox(height: 8), Row(children: [Expanded(child: Text('Total R\$ ${total.toStringAsFixed(2)}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18))), FilledButton.icon(onPressed: onSend, icon: const Icon(LucideIcons.send), label: const Text('Enviar cozinha'))]),
+    TextField(controller: note, decoration: const InputDecoration(labelText: 'Observação geral do pedido', prefixIcon: Icon(LucideIcons.messageSquareText))), const SizedBox(height: 8), Row(children: [Expanded(child: Text('Total R\$ ${total.toStringAsFixed(2)}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18))), FilledButton.icon(onPressed: onConfirm, icon: const Icon(LucideIcons.check), label: const Text('Confirmar Pedido'))]),
   ])));
 }

@@ -113,19 +113,19 @@ export const ManualPaymentModal: React.FC = () => {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-900/60 backdrop-blur-xs p-4 animate-in fade-in">
       <div className="bg-white rounded-2xl max-w-2xl w-full shadow-2xl border border-stone-200 overflow-hidden flex flex-col max-h-[90vh]">
         {/* Header */}
-        <div className="bg-stone-900 text-white px-6 py-4 flex items-center justify-between border-b border-stone-800">
+        <div className="bg-slate-900 text-white px-6 py-4 flex items-center justify-between border-b border-slate-800">
           <div className="flex items-center gap-3">
-            <div className="p-2 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/30">
+            <div className="p-2 rounded-xl bg-sky-500/20 text-sky-400 border border-sky-500/30">
               <DollarSign className="w-5 h-5" />
             </div>
             <div>
               <div className="flex items-center gap-2">
                 <h3 className="font-bold text-base">Registrar Pagamento Manual</h3>
-                <span className="text-xs px-2 py-0.5 rounded bg-stone-800 text-amber-300 font-mono">
+                <span className="text-xs px-2 py-0.5 rounded bg-slate-800 text-sky-300 font-mono">
                   Pedido #{orderForPaymentModal.numero}
                 </span>
               </div>
-              <p className="text-xs text-stone-400">
+              <p className="text-xs text-slate-400">
                 {orderForPaymentModal.tipo.toUpperCase()} • {orderForPaymentModal.nomeCliente || 'Cliente Salão'} 
                 {orderForPaymentModal.mesaNumero ? ` • Mesa ${orderForPaymentModal.mesaNumero}` : ''}
               </p>
@@ -134,15 +134,15 @@ export const ManualPaymentModal: React.FC = () => {
           <button
             id="close-manual-payment-modal-btn"
             onClick={closePaymentModal}
-            className="p-1.5 rounded-lg text-stone-400 hover:text-white hover:bg-stone-800 transition-colors"
+            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
         {/* Informative Notice (Strict manual rule) */}
-        <div className="bg-amber-50 border-b border-amber-200 px-6 py-2.5 flex items-start gap-2.5 text-xs text-amber-900">
-          <HelpCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+        <div className="bg-sky-50 border-b border-sky-200 px-6 py-2.5 flex items-start gap-2.5 text-xs text-sky-950">
+          <HelpCircle className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
           <p>
             <strong>Pagamento externo/manual:</strong> O atendente cobra o cliente fisicamente (maquininha física, dinheiro em espécie, Pix na chave da loja) e registra aqui apenas a confirmação para baixa da conta.
           </p>
@@ -170,17 +170,17 @@ export const ManualPaymentModal: React.FC = () => {
 
           {/* New Payment Registration Form */}
           {restante > 0 ? (
-            <form onSubmit={handleAddPayment} className="p-4 rounded-xl bg-stone-50 border border-stone-200 space-y-4">
+            <form onSubmit={handleAddPayment} className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-4">
               <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-stone-700 uppercase tracking-wider flex items-center gap-1.5">
-                  <Plus className="w-3.5 h-3.5 text-amber-600" />
+                <span className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+                  <Plus className="w-3.5 h-3.5 text-blue-600" />
                   Adicionar Pagamento Manual
                 </span>
                 <button
                   type="button"
                   id="pay-quick-fill-remaining-btn"
                   onClick={handleSetQuickRemaining}
-                  className="text-xs font-bold text-amber-700 hover:text-amber-800 underline decoration-dotted"
+                  className="text-xs font-bold text-blue-700 hover:text-blue-800 underline decoration-dotted"
                 >
                   Pagar valor restante ({formatCurrency(restante)})
                 </button>
@@ -188,7 +188,7 @@ export const ManualPaymentModal: React.FC = () => {
 
               {/* Payment Method Selector */}
               <div>
-                <label className="block text-xs font-semibold text-stone-600 mb-1.5">
+                <label className="block text-xs font-semibold text-slate-600 mb-1.5">
                   Forma de Pagamento Recebida Fora do Sistema:
                 </label>
                 <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
@@ -200,8 +200,8 @@ export const ManualPaymentModal: React.FC = () => {
                       onClick={() => setSelectedForma(opt.id)}
                       className={`px-3 py-2 rounded-lg text-xs font-semibold border transition-all text-center truncate ${
                         selectedForma === opt.id
-                          ? 'bg-amber-600 border-amber-600 text-white shadow-xs'
-                          : 'bg-white border-stone-200 text-stone-700 hover:border-amber-400'
+                          ? 'bg-blue-600 border-blue-600 text-white shadow-xs'
+                          : 'bg-white border-slate-200 text-slate-700 hover:border-sky-400'
                       }`}
                     >
                       {opt.nome.split(' (')[0]}
@@ -213,11 +213,11 @@ export const ManualPaymentModal: React.FC = () => {
               {/* Value & Change Fields */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-stone-600 mb-1">
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">
                     Valor a Baixar (R$):
                   </label>
                   <div className="relative">
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400 text-sm font-semibold">R$</span>
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm font-semibold">R$</span>
                     <input
                       id="input-manual-payment-value"
                       type="number"
@@ -227,7 +227,7 @@ export const ManualPaymentModal: React.FC = () => {
                       placeholder={restante.toFixed(2)}
                       value={valorInput}
                       onChange={(e) => setValorInput(e.target.value)}
-                      className="w-full pl-9 pr-3 py-2 rounded-lg border border-stone-300 text-sm font-bold text-stone-900 focus:ring-2 focus:ring-amber-500 focus:outline-none"
+                      className="w-full pl-9 pr-3 py-2 rounded-lg border border-slate-300 text-sm font-bold text-slate-900 focus:ring-2 focus:ring-sky-500 focus:outline-none"
                     />
                   </div>
                 </div>
@@ -235,7 +235,7 @@ export const ManualPaymentModal: React.FC = () => {
                 {/* Troco Calculator for Dinheiro */}
                 {selectedForma === 'dinheiro' && (
                   <div>
-                    <label className="block text-xs font-semibold text-stone-600 mb-1 flex items-center justify-between">
+                    <label className="block text-xs font-semibold text-slate-600 mb-1 flex items-center justify-between">
                       <span>Valor Entregue pelo Cliente:</span>
                       {trocoCalculado > 0 && (
                         <span className="text-emerald-700 font-bold">
@@ -244,7 +244,7 @@ export const ManualPaymentModal: React.FC = () => {
                       )}
                     </label>
                     <div className="relative">
-                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400 text-sm font-semibold">R$</span>
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm font-semibold">R$</span>
                       <input
                         id="input-manual-payment-received"
                         type="number"
@@ -252,7 +252,7 @@ export const ManualPaymentModal: React.FC = () => {
                         placeholder="Ex: 100.00"
                         value={valorRecebidoInput}
                         onChange={(e) => setValorRecebidoInput(e.target.value)}
-                        className="w-full pl-9 pr-3 py-2 rounded-lg border border-stone-300 text-sm font-bold text-stone-900 focus:ring-2 focus:ring-amber-500 focus:outline-none"
+                        className="w-full pl-9 pr-3 py-2 rounded-lg border border-slate-300 text-sm font-bold text-slate-900 focus:ring-2 focus:ring-sky-500 focus:outline-none"
                       />
                     </div>
                   </div>
@@ -261,7 +261,7 @@ export const ManualPaymentModal: React.FC = () => {
 
               {/* Observation / Note */}
               <div>
-                <label className="block text-xs font-semibold text-stone-600 mb-1">
+                <label className="block text-xs font-semibold text-slate-600 mb-1">
                   Observação do Pagamento (Opcional):
                 </label>
                 <input
@@ -270,7 +270,7 @@ export const ManualPaymentModal: React.FC = () => {
                   placeholder="Ex: Comprovante verificado no WhatsApp / Cartão Visa cliente final 4022"
                   value={observacaoInput}
                   onChange={(e) => setObservacaoInput(e.target.value)}
-                  className="w-full px-3 py-1.5 rounded-lg border border-stone-300 text-xs text-stone-800 placeholder-stone-400 focus:ring-2 focus:ring-amber-500 focus:outline-none"
+                  className="w-full px-3 py-1.5 rounded-lg border border-slate-300 text-xs text-slate-800 placeholder-slate-400 focus:ring-2 focus:ring-sky-500 focus:outline-none"
                 />
               </div>
 
@@ -284,7 +284,7 @@ export const ManualPaymentModal: React.FC = () => {
               <button
                 type="submit"
                 id="submit-add-manual-payment-btn"
-                className="w-full py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs sm:text-sm shadow-xs transition-colors flex items-center justify-center gap-2"
+                className="w-full py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs sm:text-sm shadow-xs transition-colors flex items-center justify-center gap-2"
               >
                 <CheckCircle className="w-4 h-4" />
                 Registrar Pagamento de {valorNum > 0 ? formatCurrency(valorNum) : 'Valor'}

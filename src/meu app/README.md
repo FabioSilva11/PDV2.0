@@ -1,6 +1,6 @@
 # Murupi Garçom
 
-Aplicativo Flutter para o fluxo do garçom: login local contra os colaboradores cadastrados no Realtime Database, seleção de mesa, pedido, envio à cozinha e impressão/compartilhamento do consumo.
+Aplicativo Flutter para o fluxo do garçom: login local contra os colaboradores cadastrados no Realtime Database, seleção de mesa, pedido, confirmação do pedido e impressão da via do pedido, além da impressão/compartilhamento do consumo.
 
 O app **não usa Firebase Authentication**. Ele consulta `restaurants/murupi/database/staff`, onde o site já mantém os colaboradores. A senha não é gravada no aplicativo nem enviada por `--dart-define`; ela é validada contra o registro do colaborador no Realtime Database, como no site.
 
@@ -23,6 +23,6 @@ Use os valores equivalentes do `.env` do PDV. Não copie o `.env` para este dire
 - Pedidos: `restaurants/murupi/database/orders`
 - Fila de impressão: `restaurants/murupi/database/printQueue`
 
-Os pedidos recebidos pela cozinha são criados com `status: novo` e itens `statusProducao: pendente`. O consumo é um PDF local aberto pelo diálogo nativo de impressão/compartilhamento Android.
+Os pedidos são criados com `status: novo`. A via do pedido é registrada na fila de impressão; o espelho é gerado posteriormente pela operação do PDV quando a cozinha conclui o preparo. O consumo é um PDF local aberto pelo diálogo nativo de impressão/compartilhamento Android.
 
 Em produção, as regras do Realtime Database devem limitar leitura e gravação ao perfil de garçom e bloquear modificações financeiras, de preços e de colaboradores. Sem Firebase Auth, essas regras precisam usar um mecanismo de sessão assinado por backend; o login direto é compatível com o modelo atual do site, mas não fornece essa proteção de servidor sozinho.

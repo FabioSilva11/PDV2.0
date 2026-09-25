@@ -51,12 +51,12 @@ export const DashboardView: React.FC = () => {
     : 0;
 
   const mesasOcupadas = tables.filter(t => t.status === 'ocupada' || t.status === 'conta').length;
-  const emProducao = orders.filter(o => o.status === 'novo' || o.status === 'em_preparacao').length;
+  const emProducao = orders.filter(o => o.status === 'novo').length;
   
   // Atrasados: pedidos criados há mais de 25 min que ainda não estão prontos
   const agora = Date.now();
   const pedidosAtrasados = orders.filter(o => {
-    if (o.status === 'novo' || o.status === 'em_preparacao') {
+    if (o.status === 'novo') {
       const diffMin = (agora - new Date(o.criadoEm).getTime()) / (1000 * 60);
       return diffMin > 25;
     }
@@ -119,9 +119,9 @@ export const DashboardView: React.FC = () => {
           <button
             id="dash-check-health-btn"
             onClick={() => setIsHealthModalOpen(true)}
-            className="flex items-center gap-2 px-3 py-2 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-200 text-xs font-semibold border border-stone-700 transition-colors"
+            className="flex items-center gap-2 px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 transition-colors"
           >
-            <Activity className="w-3.5 h-3.5 text-amber-400" />
+            <Activity className="w-3.5 h-3.5 text-sky-400" />
             <span>Saúde da Operação: {health.impressoras === 'online' ? '100% OK' : '1 Impressora Offline'}</span>
           </button>
 
@@ -129,9 +129,9 @@ export const DashboardView: React.FC = () => {
             <button
               id="dash-view-alerts-btn"
               onClick={() => setIsAlertsDrawerOpen(true)}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 text-xs font-semibold border border-amber-500/30 transition-colors"
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-sky-500/20 hover:bg-sky-500/30 text-sky-300 text-xs font-semibold border border-sky-500/30 transition-colors"
             >
-              <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
+              <AlertTriangle className="w-3.5 h-3.5 text-sky-400" />
               <span>{alerts.length} Alertas</span>
             </button>
           )}
@@ -141,30 +141,30 @@ export const DashboardView: React.FC = () => {
       {/* Main KPI Cards Grid */}
       <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         {/* Faturamento Hoje */}
-        <div className="bg-white p-4 sm:p-5 rounded-2xl border border-stone-200 shadow-2xs space-y-2">
+        <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-xs space-y-2">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-stone-500 uppercase tracking-wider">Faturamento Hoje</span>
+            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Faturamento Hoje</span>
             <div className="w-8 h-8 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center">
               <DollarSign className="w-4 h-4" />
             </div>
           </div>
-          <div className="text-xl sm:text-2xl font-extrabold text-stone-900">{formatCurrency(faturamentoHoje)}</div>
-          <div className="text-[11px] text-stone-500 flex items-center gap-1">
+          <div className="text-xl sm:text-2xl font-extrabold text-slate-900">{formatCurrency(faturamentoHoje)}</div>
+          <div className="text-[11px] text-slate-500 flex items-center gap-1">
             <TrendingUp className="w-3 h-3 text-emerald-600" />
             <span>{pedidosFinalizados} pedidos finalizados</span>
           </div>
         </div>
 
         {/* Ticket Médio */}
-        <div className="bg-white p-4 sm:p-5 rounded-2xl border border-stone-200 shadow-2xs space-y-2">
+        <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-xs space-y-2">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-stone-500 uppercase tracking-wider">Ticket Médio</span>
-            <div className="w-8 h-8 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center">
+            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Ticket Médio</span>
+            <div className="w-8 h-8 rounded-xl bg-sky-100 text-blue-700 flex items-center justify-center">
               <Receipt className="w-4 h-4" />
             </div>
           </div>
-          <div className="text-xl sm:text-2xl font-extrabold text-stone-900">{formatCurrency(ticketMedio)}</div>
-          <div className="text-[11px] text-stone-500">
+          <div className="text-xl sm:text-2xl font-extrabold text-slate-900">{formatCurrency(ticketMedio)}</div>
+          <div className="text-[11px] text-slate-500">
             Baseado em {todayOrders.length} pedidos hoje
           </div>
         </div>
@@ -189,13 +189,13 @@ export const DashboardView: React.FC = () => {
           </div>
         </div>
 
-        {/* Em Produção / KDS */}
+        {/* Em Produção */}
         <div 
-          onClick={() => setActiveModule('kds')}
-          className="bg-white p-4 sm:p-5 rounded-2xl border border-stone-200 shadow-2xs space-y-2 cursor-pointer hover:border-amber-300 transition-colors group"
+          onClick={() => setActiveModule('pedidos')}
+          className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-xs space-y-2 cursor-pointer hover:border-sky-300 transition-colors group"
         >
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-stone-500 uppercase tracking-wider">Na Cozinha / KDS</span>
+            <span className="text-xs font-bold text-stone-500 uppercase tracking-wider">Aguardando Espelho</span>
             <div className="w-8 h-8 rounded-xl bg-rose-100 text-rose-700 flex items-center justify-center group-hover:scale-105 transition-transform">
               <ChefHat className="w-4 h-4" />
             </div>
@@ -209,7 +209,7 @@ export const DashboardView: React.FC = () => {
             )}
           </div>
           <div className="text-[11px] text-rose-700 font-semibold flex items-center gap-1">
-            <span>Acompanhar KDS</span>
+            <span>Ver pedidos aguardando espelho</span>
             <ArrowRight className="w-3 h-3" />
           </div>
         </div>
@@ -239,9 +239,9 @@ export const DashboardView: React.FC = () => {
                   </span>
                   <div 
                     style={{ height: `${heightPct}%` }}
-                    className="w-full max-w-[36px] bg-amber-500 hover:bg-amber-600 rounded-t-lg transition-all shadow-2xs"
+                    className="w-full max-w-[36px] bg-blue-600 hover:bg-blue-700 rounded-t-lg transition-all shadow-xs"
                   />
-                  <span className="text-[11px] font-mono text-stone-500 mt-1">{bar.hora}</span>
+                  <span className="text-[11px] font-mono text-slate-500 mt-1">{bar.hora}</span>
                 </div>
               );
             })}
@@ -249,38 +249,38 @@ export const DashboardView: React.FC = () => {
 
           {/* Quick summary stats */}
           <div className="grid grid-cols-3 gap-2 pt-2 text-center text-xs">
-            <div className="p-2 rounded-xl bg-stone-50 border border-stone-100">
-              <span className="text-stone-400 block text-[10px]">Total de Pedidos</span>
-              <strong className="text-stone-800 text-sm font-bold">{totalPedidos}</strong>
+            <div className="p-2 rounded-xl bg-slate-50 border border-slate-100">
+              <span className="text-slate-400 block text-[10px]">Total de Pedidos</span>
+              <strong className="text-slate-800 text-sm font-bold">{totalPedidos}</strong>
             </div>
-            <div className="p-2 rounded-xl bg-stone-50 border border-stone-100">
-              <span className="text-stone-400 block text-[10px]">Descontos Concedidos</span>
-              <strong className="text-stone-800 text-sm font-bold">{formatCurrency(totalDescontosHoje)}</strong>
+            <div className="p-2 rounded-xl bg-slate-50 border border-slate-100">
+              <span className="text-slate-400 block text-[10px]">Descontos Concedidos</span>
+              <strong className="text-slate-800 text-sm font-bold">{formatCurrency(totalDescontosHoje)}</strong>
             </div>
-            <div className="p-2 rounded-xl bg-stone-50 border border-stone-100">
-              <span className="text-stone-400 block text-[10px]">Cancelamentos</span>
-              <strong className="text-stone-800 text-sm font-bold">{pedidosCancelados}</strong>
+            <div className="p-2 rounded-xl bg-slate-50 border border-slate-100">
+              <span className="text-slate-400 block text-[10px]">Cancelamentos</span>
+              <strong className="text-slate-800 text-sm font-bold">{pedidosCancelados}</strong>
             </div>
           </div>
         </div>
 
         {/* Vendas por Canal */}
-        <div className="bg-white p-5 rounded-2xl border border-stone-200 shadow-2xs space-y-4 flex flex-col justify-between">
+        <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-4 flex flex-col justify-between">
           <div>
-            <h3 className="text-sm font-bold text-stone-900">Vendas por Canal</h3>
-            <p className="text-xs text-stone-500">Distribuição entre mesas, balcão e delivery</p>
+            <h3 className="text-sm font-bold text-slate-900">Vendas por Canal</h3>
+            <p className="text-xs text-slate-500">Distribuição entre mesas, balcão e delivery</p>
           </div>
 
           <div className="space-y-3">
             <div>
               <div className="flex justify-between text-xs font-semibold mb-1">
-                <span className="flex items-center gap-1.5 text-stone-700">
+                <span className="flex items-center gap-1.5 text-slate-700">
                   <Utensils className="w-3.5 h-3.5 text-sky-600" />
                   Salão (Mesas)
                 </span>
-                <span className="font-bold text-stone-900">{formatCurrency(channelStats.salao)}</span>
+                <span className="font-bold text-slate-900">{formatCurrency(channelStats.salao)}</span>
               </div>
-              <div className="w-full h-2 bg-stone-100 rounded-full overflow-hidden">
+              <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
                 <div 
                   style={{ width: `${faturamentoHoje > 0 ? (channelStats.salao / faturamentoHoje) * 100 : 0}%` }}
                   className="h-full bg-sky-500 rounded-full"
@@ -290,16 +290,16 @@ export const DashboardView: React.FC = () => {
 
             <div>
               <div className="flex justify-between text-xs font-semibold mb-1">
-                <span className="flex items-center gap-1.5 text-stone-700">
-                  <ShoppingBag className="w-3.5 h-3.5 text-amber-600" />
+                <span className="flex items-center gap-1.5 text-slate-700">
+                  <ShoppingBag className="w-3.5 h-3.5 text-blue-600" />
                   Balcão & Retirada
                 </span>
-                <span className="font-bold text-stone-900">{formatCurrency(channelStats.balcao)}</span>
+                <span className="font-bold text-slate-900">{formatCurrency(channelStats.balcao)}</span>
               </div>
-              <div className="w-full h-2 bg-stone-100 rounded-full overflow-hidden">
+              <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
                 <div 
                   style={{ width: `${faturamentoHoje > 0 ? (channelStats.balcao / faturamentoHoje) * 100 : 0}%` }}
-                  className="h-full bg-amber-500 rounded-full"
+                  className="h-full bg-blue-600 rounded-full"
                 />
               </div>
             </div>

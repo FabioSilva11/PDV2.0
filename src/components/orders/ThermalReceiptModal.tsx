@@ -18,16 +18,16 @@ export const ThermalReceiptModal: React.FC = () => {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-900/70 backdrop-blur-xs p-4 animate-in fade-in">
       <div className="bg-white rounded-2xl max-w-md w-full shadow-2xl border border-stone-200 overflow-hidden flex flex-col max-h-[95vh]">
         {/* Header toolbar */}
-        <div className="p-4 bg-stone-900 text-white flex items-center justify-between">
+        <div className="p-4 bg-slate-900 text-white flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Printer className="w-4 h-4 text-amber-400" />
+            <Printer className="w-4 h-4 text-sky-400" />
             <span className="font-bold text-sm">Comprovante Térmico (80mm)</span>
           </div>
           <div className="flex items-center gap-2">
             <button
               id="thermal-print-trigger-btn"
               onClick={handlePrint}
-              className="px-3 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-xs"
+              className="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-xs"
             >
               <Printer className="w-3.5 h-3.5" />
               Imprimir
@@ -48,16 +48,15 @@ export const ThermalReceiptModal: React.FC = () => {
             {/* Store header */}
             <div className="text-center pb-3 border-b border-dashed border-stone-400 space-y-0.5">
               <div className="font-bold text-sm tracking-wider">MURUPI RESTAURANTE</div>
-              <div>PDV & LANCHES ARTESANAIS</div>
-              <div>CNPJ: 45.892.110/0001-44</div>
-              <div>Av. das Nações, 1420 - Centro</div>
-              <div>Tel / Whats: (11) 98765-4321</div>
+              <div>COMIDAS REGIONAIS &amp; LANCHES</div>
+              <div>CNPJ: 14.882.901/0001-44 - IE: ISENTO</div>
+              <div>Porto Velho - RO | Fone: (69) 99321-0000</div>
             </div>
 
             {/* Order info */}
             <div className="py-2.5 border-b border-dashed border-stone-400 space-y-1">
               <div className="flex justify-between font-bold text-xs">
-                <span>PEDIDO #{order.numero}</span>
+                <span>PEDIDO #{order.codigoMesa || order.numero}</span>
                 <span>{order.tipo.toUpperCase()}</span>
               </div>
               <div className="flex justify-between text-stone-600 text-[10px]">

@@ -94,16 +94,16 @@ export const AccompanimentModal: React.FC<AccompanimentModalProps> = ({
         aria-modal="true"
       >
         {/* Modal Header */}
-        <div className="px-6 py-4 bg-stone-900 text-white flex items-center justify-between border-b border-stone-800">
+        <div className="px-6 py-4 bg-slate-900 text-white flex items-center justify-between border-b border-slate-800">
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-amber-500/20 text-amber-400 rounded-lg">
+            <div className="p-2 bg-sky-500/20 text-sky-400 rounded-lg">
               <Utensils className="w-5 h-5" />
             </div>
             <div>
               <h2 className="text-lg font-bold font-serif leading-tight">
                 {item.nome}
               </h2>
-              <div className="text-xs text-amber-400 font-mono font-semibold">
+              <div className="text-xs text-sky-400 font-mono font-semibold">
                 {hasVariations ? (availableVariations.length > 0 ? `A partir de ${formatCurrency(Math.min(...availableVariations.map(v => v.preco)))}` : 'Sem opções disponíveis') : formatCurrency(item.preco)}
               </div>
             </div>
@@ -111,7 +111,7 @@ export const AccompanimentModal: React.FC<AccompanimentModalProps> = ({
           <button
             id="accompaniment-modal-close-btn"
             onClick={onClose}
-            className="p-1 rounded-lg text-stone-400 hover:text-white hover:bg-stone-800 transition-colors"
+            className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
           >
             <X className="w-5 h-5" />
           </button>
@@ -120,21 +120,21 @@ export const AccompanimentModal: React.FC<AccompanimentModalProps> = ({
         {/* Modal Body */}
         <div className="p-6 overflow-y-auto space-y-5 flex-1">
           {item.descricao && (
-            <p className="text-xs text-stone-600 bg-stone-50 p-3 rounded-xl border border-stone-200">
+            <p className="text-xs text-slate-600 bg-slate-50 p-3 rounded-xl border border-slate-200">
               {item.descricao}
             </p>
           )}
 
           {hasVariations && (
             <div>
-              <label className="block text-xs font-bold text-stone-700 uppercase tracking-wider mb-2.5">{isJuice ? 'Escolha o volume' : 'Escolha uma opção'}</label>
+              <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2.5">{isJuice ? 'Escolha o volume' : 'Escolha uma opção'}</label>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                 {item.variacoes.map(variation => (
                   <button key={variation.id} type="button" disabled={variation.disponivel === false}
                     onClick={() => setSelectedVariationId(variation.id)}
-                    className={`p-3 rounded-xl border text-xs font-semibold ${selectedVariationId === variation.id ? 'bg-amber-50 border-amber-500 text-amber-900' : 'border-stone-200 text-stone-600'} ${variation.disponivel === false ? 'opacity-40 cursor-not-allowed line-through' : ''}`}>
+                    className={`p-3 rounded-xl border text-xs font-semibold ${selectedVariationId === variation.id ? 'bg-sky-50 border-blue-500 text-blue-900 shadow-xs' : 'border-slate-200 text-slate-600 hover:border-slate-300'} ${variation.disponivel === false ? 'opacity-40 cursor-not-allowed line-through' : ''}`}>
                     <span className="block">{variation.nome}</span>
-                    {variation.quantidade !== undefined && !variation.nome.toLowerCase().includes(String(variation.quantidade)) && <span className="block text-[10px] text-stone-500">Quantidade: {variation.quantidade} {variation.unidade || ''}</span>}
+                    {variation.quantidade !== undefined && !variation.nome.toLowerCase().includes(String(variation.quantidade)) && <span className="block text-[10px] text-slate-500">Quantidade: {variation.quantidade} {variation.unidade || ''}</span>}
                     <span className="block mt-1">{variation.disponivel === false ? 'Indisponível' : formatCurrency(variation.preco)}</span>
                   </button>
                 ))}
@@ -146,22 +146,22 @@ export const AccompanimentModal: React.FC<AccompanimentModalProps> = ({
           {hasSides ? (
             <div>
               <div className="flex items-center justify-between mb-2.5">
-                <label className="text-xs font-bold text-stone-700 uppercase tracking-wider">
+                <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">
                   Guarnições & Acompanhamentos
                 </label>
                 <div className="flex gap-2">
                   <button
                     type="button"
                     onClick={handleSelectAll}
-                    className="text-[11px] text-amber-700 hover:text-amber-800 font-semibold"
+                    className="text-[11px] text-blue-700 hover:text-blue-800 font-semibold"
                   >
                     Marcar Todos
                   </button>
-                  <span className="text-stone-300">|</span>
+                  <span className="text-slate-300">|</span>
                   <button
                     type="button"
                     onClick={handleClearAll}
-                    className="text-[11px] text-stone-500 hover:text-stone-700"
+                    className="text-[11px] text-slate-500 hover:text-slate-700"
                   >
                     Desmarcar
                   </button>
@@ -178,13 +178,13 @@ export const AccompanimentModal: React.FC<AccompanimentModalProps> = ({
                       onClick={() => toggleSide(side)}
                       className={`flex items-center justify-between p-3 rounded-xl border text-xs font-medium text-left transition-all ${
                         isChecked
-                          ? 'bg-amber-50 border-amber-500 text-amber-950 font-semibold shadow-xs'
-                          : 'bg-white border-stone-200 text-stone-600 hover:border-stone-300'
+                          ? 'bg-sky-50 border-blue-500 text-blue-950 font-semibold shadow-xs'
+                          : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300'
                       }`}
                     >
                       <span>{side}</span>
                       <div className={`w-4 h-4 rounded flex items-center justify-center border transition-colors ${
-                        isChecked ? 'bg-amber-600 border-amber-600 text-white' : 'border-stone-300'
+                        isChecked ? 'bg-blue-600 border-blue-600 text-white' : 'border-slate-300'
                       }`}>
                         {isChecked && <Check className="w-3 h-3 stroke-[3]" />}
                       </div>
@@ -194,21 +194,21 @@ export const AccompanimentModal: React.FC<AccompanimentModalProps> = ({
               </div>
 
               {selectedSides.length === 0 && (
-                <div className="flex items-center gap-1.5 mt-2 text-[11px] text-amber-700">
+                <div className="flex items-center gap-1.5 mt-2 text-[11px] text-sky-800">
                   <AlertCircle className="w-3.5 h-3.5" />
                   <span>Nenhum acompanhamento selecionado (prato será servido puro).</span>
                 </div>
               )}
             </div>
           ) : hasVariations ? null : (
-            <div className="text-xs text-stone-500 italic">
+            <div className="text-xs text-slate-500 italic">
               Este item não possui opções adicionais pré-definidas.
             </div>
           )}
 
           {/* Cooking notes / Observations */}
           <div>
-            <label className="block text-xs font-bold text-stone-700 uppercase tracking-wider mb-1.5">
+            <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
               {observationLabel}
             </label>
             <input
@@ -217,7 +217,7 @@ export const AccompanimentModal: React.FC<AccompanimentModalProps> = ({
               value={observation}
               onChange={(e) => setObservation(e.target.value)}
               placeholder={observationPlaceholder}
-              className="w-full px-3.5 py-2.5 rounded-xl border border-stone-300 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-amber-500 bg-white"
+              className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-sky-500 bg-white"
             />
             {/* Quick observation chips */}
             {observationChips.length > 0 && <div className="flex flex-wrap gap-1.5 mt-2">
@@ -226,7 +226,7 @@ export const AccompanimentModal: React.FC<AccompanimentModalProps> = ({
                   key={chip}
                   type="button"
                   onClick={() => setObservation(prev => prev ? `${prev}, ${chip}` : chip)}
-                  className="px-2 py-1 bg-stone-100 hover:bg-amber-100 text-stone-600 hover:text-amber-900 border border-stone-200 text-[11px] rounded-lg transition-colors"
+                  className="px-2 py-1 bg-slate-100 hover:bg-sky-100 text-slate-600 hover:text-blue-900 border border-slate-200 text-[11px] rounded-lg transition-colors"
                 >
                   +{chip}
                 </button>
@@ -236,12 +236,12 @@ export const AccompanimentModal: React.FC<AccompanimentModalProps> = ({
         </div>
 
         {/* Modal Footer */}
-        <div className="px-6 py-4 bg-stone-50 border-t border-stone-200 flex items-center justify-between gap-3">
+        <div className="px-6 py-4 bg-slate-50 border-t border-slate-200 flex items-center justify-between gap-3">
           <button
             type="button"
             id="accompaniment-cancel-btn"
             onClick={onClose}
-            className="px-4 py-2.5 text-xs font-semibold text-stone-700 hover:bg-stone-200 rounded-xl transition-colors"
+            className="px-4 py-2.5 text-xs font-semibold text-slate-700 hover:bg-slate-200 rounded-xl transition-colors"
           >
             Cancelar
           </button>
@@ -250,7 +250,7 @@ export const AccompanimentModal: React.FC<AccompanimentModalProps> = ({
             id="accompaniment-confirm-btn"
             onClick={handleSubmit}
             disabled={!!hasVariations && !selectedVariationId}
-            className="flex-1 max-w-xs px-5 py-2.5 bg-amber-600 hover:bg-amber-700 disabled:bg-stone-300 disabled:cursor-not-allowed text-white font-bold text-sm rounded-xl shadow-md transition-all flex items-center justify-center gap-2"
+            className="flex-1 max-w-xs px-5 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white font-bold text-sm rounded-xl shadow-xs transition-all flex items-center justify-center gap-2"
           >
             <Check className="w-4 h-4" />
             <span>Adicionar ao Pedido</span>

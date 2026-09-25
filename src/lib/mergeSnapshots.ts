@@ -27,7 +27,7 @@ export function mergeSnapshots(base: any, local: any, remote: any, path = 'datab
   throw new SyncConflict(path);
 }
 
-const arrayFields = ['alerts', 'menu', 'orders', 'paymentOptions', 'tables', 'comandas', 'couriers', 'printers', 'printQueue', 'cashHistory'];
+const arrayFields = ['alerts', 'menu', 'orders', 'paymentOptions', 'tables', 'printers', 'printQueue', 'cashHistory'];
 export function normalizeSnapshot(value: any): any {
   if (!value) return {};
   const next = { ...value };

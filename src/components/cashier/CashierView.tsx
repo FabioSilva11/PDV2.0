@@ -85,7 +85,7 @@ export const CashierView: React.FC = () => {
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div>
           <h2 className="text-xl font-bold font-serif text-stone-900 flex items-center gap-2">
-            <CircleDollarSign className="w-6 h-6 text-amber-600" />
+            <CircleDollarSign className="w-6 h-6 text-blue-600" />
             <span>Fluxo & Controle de Caixa</span>
           </h2>
           <p className="text-xs text-stone-500">
@@ -123,7 +123,7 @@ export const CashierView: React.FC = () => {
                 onClick={() => setModalType('fechar')}
                 className="px-3.5 py-2 bg-stone-900 hover:bg-stone-800 text-white rounded-xl text-xs font-bold transition-colors flex items-center gap-1.5 shadow-sm"
               >
-                <Lock className="w-3.5 h-3.5 text-amber-400" />
+                <Lock className="w-3.5 h-3.5 text-sky-400" />
                 <span>Fechar Caixa</span>
               </button>
             </>
@@ -139,7 +139,7 @@ export const CashierView: React.FC = () => {
       {/* If Cashier is Closed: Open Register Card */}
       {!cashRegister.aberto && (
         <div className="bg-white rounded-2xl p-6 sm:p-8 border border-stone-200 shadow-sm max-w-xl mx-auto text-center space-y-4">
-          <div className="w-14 h-14 bg-amber-100 text-amber-700 rounded-2xl flex items-center justify-center mx-auto">
+          <div className="w-14 h-14 bg-sky-100 text-sky-700 rounded-2xl flex items-center justify-center mx-auto">
             <Unlock className="w-7 h-7" />
           </div>
           <div>
@@ -253,12 +253,12 @@ export const CashierView: React.FC = () => {
               <span className="text-xs font-bold uppercase tracking-wider text-stone-500">
                 Faturamento do Turno
               </span>
-              <div className="p-2 bg-amber-50 text-amber-600 rounded-xl">
+              <div className="p-2 bg-sky-50 text-blue-600 rounded-xl">
                 <Wallet className="w-5 h-5" />
               </div>
             </div>
             <div className="mt-3">
-              <div className="text-2xl font-black font-mono text-amber-800">
+              <div className="text-2xl font-black font-mono text-blue-800">
                 {formatCurrency(totalSalesAll)}
               </div>
               <p className="text-[11px] text-stone-500 mt-1">
@@ -429,7 +429,7 @@ export const CashierView: React.FC = () => {
             </div>
 
             <div className="p-6 space-y-4">
-              <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900">
+              <div className="p-3 bg-sky-50 border border-sky-200 rounded-xl text-xs text-sky-900">
                 Confira os valores antes de encerrar o turno. As movimentações serão consolidadas.
               </div>
 

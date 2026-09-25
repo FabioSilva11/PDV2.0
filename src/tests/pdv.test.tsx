@@ -4,7 +4,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { RestaurantProvider, useRestaurant } from '../context/RestaurantContext';
 import { PaymentModal } from '../components/pdv/PaymentModal';
 import { POSView } from '../components/pdv/POSView';
-import { KDSView } from '../components/kitchen/KDSView';
 import { INITIAL_CASH_REGISTER, INITIAL_TABLES } from '../data/seedData';
 import type { CartItem, MenuItem, Order, PaymentMethodId } from '../types';
 
@@ -92,6 +91,76 @@ describe('mesas cozinha recuperacao e estresse', () => {
   });
 });
 
+describe('mesas com histórico de pedidos por sessão', () => {
+  it('MESA primeiro lançamento recebe 1.0 e segundo recebe 1.1 sem sobrescrever o anterior', () => {
+    const { result } = boot();
+    act(() => result.current.openTableWithOrder(1, 'Cliente QA'));
+    let a!: Order; let b!: Order;
+    act(() => { a = result.current.createOrder({ tipo: 'mesa', mesaNumero: 1, itens: [item({ cartItemId: 'm1' })] }); });
+    act(() => { b = result.current.createOrder({ tipo: 'mesa', mesaNumero: 1, itens: [item({ cartItemId: 'm2' })] }); });
+    expect(a.codigoMesa).toBe('1.0');
+    expect(b.codigoMesa).toBe('1.1');
+    expect(result.current.orders.filter(o => o.mesaSessaoId === a.mesaSessaoId)).toHaveLength(2);
+    expect(result.current.tables.find(t => t.numero === 1)?.valorAtual).toBe(40);
+  });
+
+  it('MESA terceiro lançamento recebe 1.2 e mantém o histórico mesmo após o espelho dos anteriores', () => {
+    const { result } = boot();
+    act(() => result.current.openTableWithOrder(2));
+    let a!: Order; let b!: Order; let c!: Order;
+    act(() => { a = result.current.createOrder({ tipo: 'mesa', mesaNumero: 2, itens: [item({ cartItemId: 'a' })] }); });
+    act(() => { b = result.current.createOrder({ tipo: 'mesa', mesaNumero: 2, itens: [item({ cartItemId: 'b' })] }); });
+    act(() => result.current.generateOrderMirror(a.id));
+    act(() => { c = result.current.createOrder({ tipo: 'mesa', mesaNumero: 2, itens: [item({ cartItemId: 'c' })] }); });
+    expect([a.codigoMesa, b.codigoMesa, c.codigoMesa]).toEqual(['1.0', '1.1', '1.2']);
+    expect(result.current.orders.filter(o => o.mesaSessaoId === a.mesaSessaoId).map(o => o.codigoMesa)).toEqual(['1.2', '1.1', '1.0']);
+  });
+
+  it('MESA baixa manual quita todos os pedidos da sessão e libera a mesa', () => {
+    const { result } = boot();
+    act(() => result.current.openTableWithOrder(3));
+    let a!: Order; let b!: Order;
+    act(() => { a = result.current.createOrder({ tipo: 'mesa', mesaNumero: 3, itens: [item({ cartItemId: 'a' })] }); });
+    act(() => { b = result.current.createOrder({ tipo: 'mesa', mesaNumero: 3, itens: [item({ cartItemId: 'b' })] }); });
+    act(() => result.current.generateOrderMirror(a.id));
+    act(() => result.current.generateOrderMirror(b.id));
+    act(() => result.current.requestTableBill(3));
+    act(() => result.current.settleTableAccount(3, 'pix', 40));
+    const sessionOrders = result.current.orders.filter(o => o.mesaSessaoId === a.mesaSessaoId);
+    expect(sessionOrders.every(o => o.status === 'finalizado')).toBe(true);
+    expect(sessionOrders.every(o => o.statusPagamento === 'pago')).toBe(true);
+    expect(result.current.tables.find(t => t.numero === 3)?.status).toBe('livre');
+  });
+
+  it('MESA nova ocupação inicia nova sessão 2.0, sem reutilizar 1.0', () => {
+    const { result } = boot();
+    act(() => result.current.openTableWithOrder(4));
+    let first!: Order;
+    act(() => { first = result.current.createOrder({ tipo: 'mesa', mesaNumero: 4, itens: [item({ cartItemId: 'x1' })] }); });
+    act(() => result.current.generateOrderMirror(first.id));
+    act(() => result.current.settleTableAccount(4, 'pix', 20));
+    act(() => result.current.openTableWithOrder(4, 'Novo Cliente'));
+    let second!: Order;
+    act(() => { second = result.current.createOrder({ tipo: 'mesa', mesaNumero: 4, itens: [item({ cartItemId: 'x2' })] }); });
+    expect(first.codigoMesa).toBe('1.0');
+    expect(second.codigoMesa).toBe('2.0');
+    expect(second.mesaSessaoId).not.toBe(first.mesaSessaoId);
+  });
+
+  it('MESA adicionar itens pelo fluxo de mesa cria pedido novo em vez de editar o anterior', () => {
+    const { result } = boot();
+    act(() => result.current.openTableWithOrder(5));
+    let first!: Order;
+    act(() => { first = result.current.createOrder({ tipo: 'mesa', mesaNumero: 5, itens: [item({ cartItemId: 'old' })] }); });
+    act(() => result.current.addItemsToTable(5, [item({ cartItemId: 'new' })]));
+    const session = result.current.orders.filter(o => o.mesaSessaoId === first.mesaSessaoId).sort((a,b) => (a.mesaPedidoSequencia ?? 0) - (b.mesaPedidoSequencia ?? 0));
+    expect(session).toHaveLength(2);
+    expect(session.map(o => o.codigoMesa)).toEqual(['1.0', '1.1']);
+    expect(session[0].itens[0].cartItemId).toBe('old');
+    expect(session[1].itens[0].cartItemId).toBe('new');
+  });
+});
+
 describe('interface pagamento', () => {
   it('UI venda completa pelo PDV registra pagamento e caixa', () => {
     let api!: ReturnType<typeof useRestaurant>;
@@ -110,26 +179,357 @@ describe('interface pagamento', () => {
     fireEvent.change(view.container.querySelector('#pos-search-input')!, { target: { value: query } });
     expect(view.container.querySelector('#product-card-qa-product')).not.toBeNull();
   });
-  it('EDIT KDS lápis só aparece em pendentes e abre o editor', () => {
-    let api!: ReturnType<typeof useRestaurant>;
-    const Screen = () => { api = useRestaurant(); return <KDSView />; };
-    const view = render(<RestaurantProvider><Screen /></RestaurantProvider>);
-    let pendente!: Order;
-    let preparando!: Order;
-    let pronto!: Order;
-    act(() => {
-      pendente = api.createOrder({ itens: [item()] });
-      preparando = api.createOrder({ itens: [item()] });
-      pronto = api.createOrder({ itens: [item()] });
-      api.updateOrderStatus(preparando.id, 'preparando');
-      api.updateOrderStatus(pronto.id, 'pronto');
-    });
-    expect(view.container.querySelector(`#kds-edit-btn-${pendente.id}`)).not.toBeNull();
-    expect(view.container.querySelector(`#kds-edit-btn-${preparando.id}`)).toBeNull();
-    expect(view.container.querySelector(`#kds-edit-btn-${pronto.id}`)).toBeNull();
-    fireEvent.click(view.container.querySelector(`#kds-edit-btn-${pendente.id}`)!);
-    expect(api.selectedOrderForModal?.id).toBe(pendente.id);
-  });
   it('UI dinheiro insuficiente desabilita confirmação', () => { const view = render(<PaymentModal isOpen total={100} onClose={vi.fn()} onConfirm={vi.fn()} onReceiptTrigger={vi.fn()} />); fireEvent.change(view.container.querySelector('#cash-amount-input')!, { target: { value: '50' } }); expect(view.container.querySelector('#payment-confirm-only-btn')).toBeDisabled(); });
   it('CHAOS UI duplo clique 10 confirmações dispara uma operação', () => { const confirm = vi.fn(() => ({} as Order)); const view = render(<PaymentModal isOpen total={100} onClose={vi.fn()} onConfirm={confirm} onReceiptTrigger={vi.fn()} />); const button = view.container.querySelector('#payment-confirm-only-btn')!; act(() => { for (let i = 0; i < 10; i++) fireEvent.click(button); }); expect(confirm).toHaveBeenCalledTimes(1); });
+});
+describe('fluxo oficial pedido + espelho', () => {
+  it('IMP pedido confirmado gera exatamente uma via PEDIDO e fica aguardando espelho', () => {
+    const { result } = boot();
+    const o = sale(result);
+    const jobs = result.current.printQueue.filter(j => j.pedidoId === o.id);
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0].tipo).toBe('pedido');
+    expect(jobs[0].pedidoNumero).toBe(o.numero);
+    expect(jobs[0].grupoImpressaoId).toBe(o.impressoes?.[0].grupoId);
+    expect(o.status).toBe('novo');
+    expect(o.impressoes?.[0].espelhoJobId).toBeUndefined();
+  });
+
+  it('IMP gerar espelho cria a segunda via do MESMO pedido e marca como pronto', () => {
+    const { result } = boot();
+    const o = sale(result);
+    act(() => result.current.generateOrderMirror(o.id));
+    const updated = result.current.orders.find(x => x.id === o.id)!;
+    const jobs = result.current.printQueue.filter(j => j.pedidoId === o.id);
+    expect(jobs).toHaveLength(2);
+    expect(jobs.map(j => j.tipo).sort()).toEqual(['espelho', 'pedido']);
+    expect(new Set(jobs.map(j => j.pedidoNumero)).size).toBe(1);
+    expect(new Set(jobs.map(j => j.grupoImpressaoId)).size).toBe(1);
+    expect(updated.status).toBe('pronto');
+    expect(updated.impressoes?.[0].pedidoJobId).toBe(jobs.find(j => j.tipo === 'pedido')?.id);
+    expect(updated.impressoes?.[0].espelhoJobId).toBe(jobs.find(j => j.tipo === 'espelho')?.id);
+  });
+
+  it('IMP gerar espelho duas vezes é idempotente', () => {
+    const { result } = boot();
+    const o = sale(result);
+    act(() => result.current.generateOrderMirror(o.id));
+    act(() => result.current.generateOrderMirror(o.id));
+    expect(result.current.printQueue.filter(j => j.pedidoId === o.id)).toHaveLength(2);
+  });
+
+  it('IMP impressora do espelho offline bloqueia a conclusão e não finge que ficou pronto', () => {
+    const { result } = boot();
+    const o = sale(result);
+    act(() => result.current.togglePrinterStatus('prn-1'));
+    expect(() => result.current.generateOrderMirror(o.id)).toThrow();
+    expect(result.current.orders.find(x => x.id === o.id)?.status).toBe('novo');
+    expect(result.current.orders.find(x => x.id === o.id)?.impressoes?.[0].espelhoJobId).toBeUndefined();
+  });
+
+  it('IMP pedido adicional cria novo par pendente sem duplicar o pedido anterior', () => {
+    const { result } = boot();
+    const o = sale(result);
+    act(() => result.current.generateOrderMirror(o.id));
+    act(() => result.current.addItemsToOrder(o.id, [item({ cartItemId: 'second' })]));
+    const updated = result.current.orders.find(x => x.id === o.id)!;
+    expect(updated.status).toBe('novo');
+    expect(updated.impressoes).toHaveLength(2);
+    expect(updated.impressoes?.[1].espelhoJobId).toBeUndefined();
+    const jobs = result.current.printQueue.filter(j => j.pedidoId === o.id);
+    expect(jobs).toHaveLength(3);
+    expect(jobs.filter(j => j.tipo === 'pedido')).toHaveLength(2);
+    expect(new Set(jobs.map(j => j.pedidoNumero)).size).toBe(1);
+  });
+
+  it('IMP conteúdo das duas vias contém todos os itens do mesmo pedido', () => {
+    const { result } = boot();
+    const o = sale(result, { itens: [item({ nome: 'Hambúrguer QA', quantidade: 2, observacao: 'Sem cebola' })] });
+    act(() => result.current.generateOrderMirror(o.id));
+    const jobs = result.current.printQueue.filter(j => j.pedidoId === o.id);
+    for (const job of jobs) {
+      expect(job.conteudoTexto).toContain(`PEDIDO #${o.numero}`);
+      expect(job.conteudoTexto).toContain('2x Hambúrguer QA');
+      expect(job.conteudoTexto).toContain('OBS: Sem cebola');
+    }
+  });
+
+  it('UI confirmação não possui botão Enviar Cozinha e usa Confirmar Pedido', () => {
+    const view = render(<RestaurantProvider><POSView /></RestaurantProvider>);
+    fireEvent.click(view.container.querySelector('#product-card-qa-product')!);
+    expect(view.container.querySelector('#pos-send-kitchen-btn')).toBeNull();
+    expect(view.container.querySelector('#pos-confirm-order-btn')).not.toBeNull();
+    expect(view.container.querySelector('#order-type-balcao')).not.toBeNull();
+    expect(view.container.querySelector('#order-type-mesa')).not.toBeNull();
+    expect(view.container.querySelector('#order-type-delivery')).not.toBeNull();
+  });
+
+  it('UI confirmação de pedido não cobra automaticamente', () => {
+    let api!: ReturnType<typeof useRestaurant>;
+    const Screen = () => { api = useRestaurant(); return <POSView />; };
+    const view = render(<RestaurantProvider><Screen /></RestaurantProvider>);
+    fireEvent.click(view.container.querySelector('#product-card-qa-product')!);
+    fireEvent.click(view.container.querySelector('#pos-confirm-order-btn')!);
+    expect(api.orders).toHaveLength(1);
+    expect(api.orders[0].statusPagamento).toBe('pendente');
+    expect(api.orders[0].valorTotalPago).toBe(0);
+  });
+
+  it('MESA fechar conta sem pagamento não libera a mesa', () => {
+    const { result } = boot();
+    sale(result, { tipo: 'mesa', mesaNumero: 1 });
+    act(() => result.current.requestTableBill(1));
+    expect(() => result.current.settleTableAccount(1)).toThrow();
+    expect(result.current.tables.find(t => t.numero === 1)?.status).toBe('conta');
+  });
+
+  it('MESA fechar conta paga finaliza pedido e libera mesa', () => {
+    const { result } = boot();
+    const o = sale(result, { tipo: 'mesa', mesaNumero: 1 });
+    act(() => result.current.settleTableAccount(1, 'dinheiro', 20, 0));
+    expect(result.current.orders.find(x => x.id === o.id)?.status).toBe('finalizado');
+    expect(result.current.tables.find(t => t.numero === 1)?.status).toBe('livre');
+  });
+});
+
+
+describe('auditoria operacional aprofundada — impressão dupla e canais', () => {
+  it('IMP cada lote registra exatamente os itens que pertencem ao par pedido + espelho', () => {
+    const { result } = boot();
+    const first = item({ cartItemId: 'first', nome: 'Primeiro item' });
+    const second = item({ cartItemId: 'second', nome: 'Segundo item' });
+    let o!: Order;
+    act(() => { o = result.current.createOrder({ itens: [first] }); });
+    act(() => result.current.generateOrderMirror(o.id));
+    act(() => result.current.addItemsToOrder(o.id, [second]));
+    act(() => result.current.generateOrderMirror(o.id));
+
+    const jobs = result.current.printQueue.filter(j => j.pedidoId === o.id);
+    expect(jobs).toHaveLength(4);
+    const mirrors = jobs.filter(j => j.tipo === 'espelho');
+    expect(mirrors).toHaveLength(2);
+    expect(mirrors[0].conteudoTexto).toContain('Primeiro item');
+    expect(mirrors[0].conteudoTexto).not.toContain('Segundo item');
+    expect(mirrors[1].conteudoTexto).toContain('Segundo item');
+    expect(mirrors[1].conteudoTexto).not.toContain('Primeiro item');
+  });
+
+  it('IMP pedido e espelho compartilham pedido, número e grupo de impressão', () => {
+    const { result } = boot();
+    const o = sale(result);
+    act(() => result.current.generateOrderMirror(o.id));
+    const jobs = result.current.printQueue.filter(j => j.pedidoId === o.id);
+    expect(jobs).toHaveLength(2);
+    expect(jobs[0].pedidoId).toBe(jobs[1].pedidoId);
+    expect(jobs[0].pedidoNumero).toBe(jobs[1].pedidoNumero);
+    expect(jobs[0].grupoImpressaoId).toBe(jobs[1].grupoImpressaoId);
+    expect(new Set(jobs.map(j => j.tipo))).toEqual(new Set(['pedido', 'espelho']));
+  });
+
+  it('IMP não usa uma impressora aleatória quando não existe pedido/espelho nem impressora geral disponível', () => {
+    const { result } = boot();
+    act(() => {
+      result.current.togglePrinterStatus('prn-1');
+      result.current.togglePrinterStatus('prn-2');
+      result.current.togglePrinterStatus('prn-3');
+    });
+    const o = sale(result);
+    expect(result.current.printQueue.find(j => j.pedidoId === o.id)?.status).toBe('falha');
+    expect(() => result.current.generateOrderMirror(o.id)).toThrow();
+    expect(result.current.orders.find(x => x.id === o.id)?.status).toBe('novo');
+  });
+
+
+  it('IMP item já espelhado não pode ser removido silenciosamente', () => {
+    const { result } = boot();
+    const o = sale(result, { itens: [item({ cartItemId: 'printed-item' })] });
+    act(() => result.current.generateOrderMirror(o.id));
+    act(() => attempt(() => result.current.cancelOrderItem(o.id, 'printed-item', 'Correção QA')));
+    expect(result.current.orders[0].itens).toHaveLength(1);
+    expect(result.current.orders[0].itens[0].cartItemId).toBe('printed-item');
+  });
+
+  it('ADM reabrir pedido finalizado retorna a estado editável sem criar nova impressão', () => {
+    const { result } = boot();
+    const o = sale(result);
+    act(() => result.current.generateOrderMirror(o.id));
+    act(() => result.current.addManualPaymentToOrder(o.id, 'dinheiro', 20, 20));
+    act(() => result.current.updateOrderStatus(o.id, 'entregue'));
+    act(() => result.current.updateOrderStatus(o.id, 'finalizado'));
+    const jobsBefore = result.current.printQueue.filter(j => j.pedidoId === o.id).length;
+    act(() => result.current.reopenOrder(o.id, 'Correção administrativa QA'));
+    expect(result.current.orders[0].status).toBe('pronto');
+    expect(result.current.printQueue.filter(j => j.pedidoId === o.id)).toHaveLength(jobsBefore);
+  });
+
+  it('ENT entrega mantém endereço, taxa e tipo no conteúdo impresso', () => {
+    const { result } = boot();
+    const o = sale(result, {
+      tipo: 'delivery',
+      nomeCliente: 'Cliente Entrega',
+      telefoneCliente: '92999999999',
+      taxaEntrega: 7,
+      enderecoEntrega: { logradouro: 'Rua Teste', numero: '123', bairro: 'Centro' }
+    });
+    const job = result.current.printQueue.find(j => j.pedidoId === o.id && j.tipo === 'pedido')!;
+    expect(job.conteudoTexto).toContain('TIPO: DELIVERY');
+    expect(job.conteudoTexto).toContain('ENDEREÇO: Rua Teste, 123 - Centro');
+    expect(job.conteudoTexto).toContain('TAXA ENTREGA: R$ 7.00');
+  });
+
+  it('SEG normalização elimina status legado de produção digital', () => {
+    localStorage.setItem(key, JSON.stringify({
+      operationalDemoResetApplied: true,
+      menu: [product],
+      orders: [{ ...saleLegacyFixture(), status: 'preparando', itens: [({ ...item(), statusProducao: 'preparando' } as any)] }],
+      printQueue: [],
+      tables: [],
+      cashRegister: { ...INITIAL_CASH_REGISTER, aberto: true, saldoInicial: 200, saldoAtualGaveta: 200, transacoes: [] }
+    }));
+    const { result } = boot();
+    expect(result.current.orders[0].status).toBe('novo');
+    expect((result.current.orders[0].itens[0] as any).statusProducao).toBeUndefined();
+  });
+});
+
+function saleLegacyFixture(): Order {
+  return {
+    id: 'legacy-status', numero: 1001, tipo: 'balcao', canal: 'Balcão', criadoEm: new Date().toISOString(),
+    itens: [item()], subtotal: 20, desconto: 0, taxaServico: 0, taxaEntrega: 0, total: 20,
+    status: 'novo', statusPagamento: 'pendente', pagamentos: [], valorTotalPago: 0, saldoRestante: 20
+  };
+}
+
+describe('testes extensivos adicionais — invariantes de operação', () => {
+  it('CAI pedido não pode ser criado com caixa fechado', () => {
+    const { result } = boot();
+    act(() => result.current.closeCashRegister());
+    act(() => attempt(() => result.current.createOrder({ itens: [item()] })));
+    expect(result.current.orders).toHaveLength(0);
+  });
+
+  it('VEN mesma operação não duplica pedido nem impressão', () => {
+    const { result } = boot();
+    const data = { operacaoId: 'op-idempotente', itens: [item()] };
+    let a!: Order; let b!: Order;
+    act(() => { a = result.current.createOrder(data); b = result.current.createOrder(data); });
+    expect(b.id).toBe(a.id);
+    expect(result.current.orders).toHaveLength(1);
+    expect(result.current.printQueue.filter(j => j.pedidoId === a.id)).toHaveLength(1);
+  });
+
+  it('MES não permite criar segundo pedido para mesa já ocupada', () => {
+    const { result } = boot();
+    sale(result, { tipo: 'mesa', mesaNumero: 1 });
+    act(() => attempt(() => result.current.createOrder({ tipo: 'mesa', mesaNumero: 1, itens: [item()] })));
+    expect(result.current.orders).toHaveLength(1);
+  });
+
+  it('MES adicionar itens à conta existente cria novo lote de impressão', () => {
+    const { result } = boot();
+    const o = sale(result, { tipo: 'mesa', mesaNumero: 1 });
+    act(() => result.current.generateOrderMirror(o.id));
+    act(() => result.current.addItemsToOrder(o.id, [item({ cartItemId: 'novo-item' })]));
+    const updated = result.current.orders[0];
+    expect(updated.status).toBe('novo');
+    expect(updated.impressoes).toHaveLength(2);
+    expect(updated.impressoes?.[1].itemIds).toEqual(['novo-item']);
+  });
+
+  it('PAG pagamento parcial não libera mesa', () => {
+    const { result } = boot();
+    const o = sale(result, { tipo: 'mesa', mesaNumero: 1, itens: [item({ precoUnitario: 40 })] });
+    act(() => result.current.addManualPaymentToOrder(o.id, 'dinheiro', 20, 20));
+    expect(result.current.tables.find(t => t.numero === 1)?.status).toBe('ocupada');
+    expect(result.current.orders[0].saldoRestante).toBe(20);
+  });
+
+  it('PAG pagamento acima do saldo não altera caixa nem pedido', () => {
+    const { result } = boot();
+    const o = sale(result);
+    act(() => attempt(() => result.current.addManualPaymentToOrder(o.id, 'dinheiro', 21, 21)));
+    expect(result.current.orders[0].pagamentos).toHaveLength(0);
+    expect(result.current.cashRegister.saldoAtualGaveta).toBe(200);
+  });
+
+  it('CAN pedido pago não pode ser cancelado sem estorno', () => {
+    const { result } = boot();
+    const o = sale(result);
+    act(() => result.current.addManualPaymentToOrder(o.id, 'pix', 20));
+    act(() => attempt(() => result.current.cancelOrder(o.id, 'Tentativa QA')));
+    expect(result.current.orders[0].status).not.toBe('cancelado');
+  });
+
+  it('CAN cancelar item ainda não espelhado recalcula o total', () => {
+    const { result } = boot();
+    const o = sale(result, { itens: [item({ cartItemId: 'a' }), item({ cartItemId: 'b' })] });
+    act(() => result.current.cancelOrderItem(o.id, 'b', 'Erro de lançamento'));
+    expect(result.current.orders[0].itens.map(i => i.cartItemId)).toEqual(['a']);
+    expect(result.current.orders[0].total).toBe(20);
+  });
+
+  it('IMP reimpressão rejeita impressora offline', () => {
+    const { result } = boot();
+    const o = sale(result);
+    const job = result.current.printQueue.find(j => j.pedidoId === o.id)!;
+    act(() => result.current.togglePrinterStatus(job.impressoraId));
+    expect(() => result.current.reprintJob(job.id)).toThrow();
+  });
+
+  it('IMP impressora geral é fallback explícito para uma finalidade sem impressora dedicada', () => {
+    const { result } = boot();
+    act(() => result.current.togglePrinterStatus('prn-1'));
+    const o = sale(result);
+    const job = result.current.printQueue.find(j => j.pedidoId === o.id)!;
+    expect(job.impressoraId).toBe('prn-3');
+  });
+
+  it('STATUS não permite marcar entregue antes do espelho', () => {
+    const { result } = boot();
+    const o = sale(result);
+    act(() => attempt(() => result.current.updateOrderStatus(o.id, 'entregue')));
+    expect(result.current.orders[0].status).toBe('novo');
+  });
+
+  it('STATUS gerar espelho muda somente para pronto e não paga automaticamente', () => {
+    const { result } = boot();
+    const o = sale(result);
+    act(() => result.current.generateOrderMirror(o.id));
+    expect(result.current.orders[0].status).toBe('pronto');
+    expect(result.current.orders[0].statusPagamento).toBe('pendente');
+  });
+
+  it('PIX pagamento manual não altera a gaveta física', () => {
+    const { result } = boot();
+    const o = sale(result);
+    act(() => result.current.addManualPaymentToOrder(o.id, 'pix', 20));
+    expect(result.current.cashRegister.saldoAtualGaveta).toBe(200);
+    expect(result.current.cashRegister.transacoes[0].formaPagamento).toBe('pix');
+  });
+
+  it('CARTÃO pagamento manual não depende de integração com maquininha', () => {
+    const { result } = boot();
+    const o = sale(result);
+    act(() => result.current.addManualPaymentToOrder(o.id, 'credito', 20));
+    expect(result.current.orders[0].statusPagamento).toBe('pago');
+    expect(result.current.orders[0].pagamentos[0].formaId).toBe('credito');
+  });
+
+  it('MESA transferência atualiza o número da mesa do pedido', () => {
+    const { result } = boot();
+    const o = sale(result, { tipo: 'mesa', mesaNumero: 1 });
+    act(() => result.current.transferTable(1, 2));
+    expect(result.current.orders.find(x => x.id === o.id)?.mesaNumero).toBe(2);
+    expect(result.current.tables.find(t => t.numero === 1)?.status).toBe('livre');
+    expect(result.current.tables.find(t => t.numero === 2)?.pedidoAtivoId).toBe(o.id);
+  });
+
+  it('MESA pagamento completo libera a mesa somente depois da baixa', () => {
+    const { result } = boot();
+    sale(result, { tipo: 'mesa', mesaNumero: 1 });
+    act(() => result.current.requestTableBill(1));
+    act(() => result.current.settleTableAccount(1, 'pix', 20, 0));
+    expect(result.current.tables.find(t => t.numero === 1)?.status).toBe('livre');
+    expect(result.current.tables.find(t => t.numero === 1)?.pedidoAtivoId).toBeUndefined();
+  });
 });
