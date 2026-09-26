@@ -282,7 +282,9 @@ export interface Order {
   contaNumero?: number;
   /** Sequência do lançamento dentro da conta: 1, 2, 3... (nunca reinicia). */
   sequencia?: number;
-  /** Código exibido ao operador: `${contaNumero}.${sequencia}` (ex.: 0.1). */
+  /** Sequência GLOBAL do lançamento: 1, 2, 3... (independente da conta). */
+  sequenciaGlobal?: number;
+  /** Código exibido ao operador: baseado na sequência global (ex.: 0.1, 0.2, ..., 1.0, 1.1). */
   codigoExibicao?: string;
   /** Mesa histórica/original do lançamento. */
   mesaNumero?: number;

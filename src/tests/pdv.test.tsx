@@ -158,7 +158,8 @@ describe('mesas com histórico de lançamentos por conta', () => {
     expect(first.contaNumero).toBe(0);
     expect(second.contaNumero).toBe(1);
     expect(second.contaId).not.toBe(first.contaId);
-    expect(second.codigoExibicao).toBe('1.1');
+    // Global sequence: second order overall → 0.2
+    expect(second.codigoExibicao).toBe('0.2');
   });
 
   it('MESA baixa manual quita todos os lançamentos da conta e libera a mesa', () => {

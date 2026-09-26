@@ -215,7 +215,7 @@ export async function saveStateToMariaDB(snapshot: any): Promise<boolean> {
               ]
             );
           }
-          for (const order of Array.isArray(snapshot?.orders) ? snapshot.orders : []) {
+for (const order of Array.isArray(snapshot?.orders) ? snapshot.orders : []) {
             if (!order?.id) continue;
             const total = Number(order.total) || 0;
             const desc = Number(order.desconto) || 0;
@@ -227,41 +227,43 @@ export async function saveStateToMariaDB(snapshot: any): Promise<boolean> {
             await conn.query(
               `INSERT INTO orders
                (id, numero, tipo, status, status_pagamento, conta_id, conta_numero, sequencia,
-                codigo_exibicao, mesa_numero, mesa_original_numero, codigo_mesa,
+                sequencia_global, codigo_exibicao, mesa_numero, mesa_original_numero, codigo_mesa,
                 cliente_nome, cliente_telefone, total, desconto, taxa_entrega,
                 valor_total_pago, saldo_restante, criado_em, raw_data)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-               ON DUPLICATE KEY UPDATE
-                 status = VALUES(status),
-                 status_pagamento = VALUES(status_pagamento),
-                 conta_id = VALUES(conta_id),
-                 conta_numero = VALUES(conta_numero),
-                 sequencia = VALUES(sequencia),
-                 codigo_exibicao = VALUES(codigo_exibicao),
-                 mesa_numero = VALUES(mesa_numero),
-                 mesa_original_numero = VALUES(mesa_original_numero),
-                 total = VALUES(total),
-                 desconto = VALUES(desconto),
-                 taxa_entrega = VALUES(taxa_entrega),
-                 valor_total_pago = VALUES(valor_total_pago),
-                 saldo_restante = VALUES(saldo_restante),
-                 codigo_mesa = VALUES(codigo_mesa),
-                 cliente_nome = VALUES(cliente_nome),
-                 cliente_telefone = VALUES(cliente_telefone),
-                 raw_data = VALUES(raw_data)`,
-              [
-                order.id,
-                order.numero || 0,
-                order.tipo || 'balcao',
-                order.status || 'novo',
-                order.statusPagamento || 'pendente',
-                order.contaId || null,
-                order.contaNumero ?? null,
-                order.sequencia ?? null,
-                order.codigoExibicao || null,
-                order.mesaNumero ?? null,
-                order.mesaOriginalNumero ?? null,
-                order.codigoMesa || null,
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              ON DUPLICATE KEY UPDATE
+                status = VALUES(status),
+                status_pagamento = VALUES(status_pagamento),
+                conta_id = VALUES(conta_id),
+                conta_numero = VALUES(conta_numero),
+                sequencia = VALUES(sequencia),
+                sequencia_global = VALUES(sequencia_global),
+                codigo_exibicao = VALUES(codigo_exibicao),
+                mesa_numero = VALUES(mesa_numero),
+                mesa_original_numero = VALUES(mesa_original_numero),
+                total = VALUES(total),
+                desconto = VALUES(desconto),
+                taxa_entrega = VALUES(taxa_entrega),
+                valor_total_pago = VALUES(valor_total_pago),
+                saldo_restante = VALUES(saldo_restante),
+                codigo_mesa = VALUES(codigo_mesa),
+                cliente_nome = VALUES(cliente_nome),
+                cliente_telefone = VALUES(cliente_telefone),
+                raw_data = VALUES(raw_data)`,
+            [
+              order.id,
+              order.numero || 0,
+              order.tipo || 'balcao',
+              order.status || 'novo',
+              order.statusPagamento || 'pendente',
+              order.contaId || null,
+              order.contaNumero ?? null,
+              order.sequencia ?? null,
+              order.sequenciaGlobal ?? null,
+              order.codigoExibicao || null,
+              order.mesaNumero ?? null,
+              order.mesaOriginalNumero ?? null,
+              order.codigoMesa || null,
                 order.nomeCliente || null,
                 order.telefoneCliente || null,
                 total,

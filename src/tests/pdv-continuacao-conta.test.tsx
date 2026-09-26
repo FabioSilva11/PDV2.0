@@ -102,7 +102,7 @@ describe('REPRODUÇÃO DO BUG: PDV voltando à mesa liberada pelo espelho', () =
     expect(mesa.contaAtualNumero).toBe(0);
   });
 
-  it('NOVO ATENDIMENTO explícito cria a Conta 1 com o lançamento 1.1', () => {
+  it('NOVO ATENDIMENTO explícito cria a Conta 1 com o lançamento 0.2', () => {
     let api!: ReturnType<typeof useRestaurant>;
     const Screen = () => { api = useRestaurant(); return <POSView />; };
     const view = render(<RestaurantProvider><Screen /></RestaurantProvider>).container;
@@ -118,8 +118,8 @@ describe('REPRODUÇÃO DO BUG: PDV voltando à mesa liberada pelo espelho', () =
     const seletor = view.querySelector('#pos-select-account') as HTMLSelectElement;
     expect(seletor.value).toBe(api.accounts[0].id);
     fireEvent.change(seletor, { target: { value: 'nova' } });
-    // O preview mostra o número REAL da conta que será criada: 1.1
-    expect(view.querySelector('#pos-account-hint')!.textContent).toContain('lançamento 1.1 da nova Conta 1');
+    // O preview mostra o número REAL do lançamento que será criado: 0.2 (sequência global)
+    expect(view.querySelector('#pos-account-hint')!.textContent).toContain('lançamento 0.2 da nova Conta 1');
     addItem(view);
     confirm(view);
 
@@ -128,7 +128,7 @@ describe('REPRODUÇÃO DO BUG: PDV voltando à mesa liberada pelo espelho', () =
     // A nova conta é criada pelo CONTEXTO (nunca pela tela do PDV), que
     // respeita a escolha explícita e não reaproveita a conta liberada.
     const novo = api.orders[0];
-    expect(novo.codigoExibicao).toBe('1.1');
+    expect(novo.codigoExibicao).toBe('0.2');
     expect(novo.contaNumero).toBe(1);
     expect(api.accounts[0].saldoRestante).toBe(20);
   });
@@ -159,7 +159,8 @@ describe('REPRODUÇÃO DO BUG: PDV voltando à mesa liberada pelo espelho', () =
     const na8 = api.orders.find(o => o.mesaNumero === 8)!;
     expect(na8.contaId).not.toBe(conta0);
     expect(na8.contaNumero).toBe(1);
-    expect(na8.codigoExibicao).toBe('1.1');
+    // Global sequence: second order overall → 0.2
+    expect(na8.codigoExibicao).toBe('0.2');
   });
 
   it('AMBIGUIDADE no seletor: 2 contas abertas na mesa, PDV não adivinha', () => {
@@ -195,7 +196,8 @@ describe('REPRODUÇÃO DO BUG: PDV voltando à mesa liberada pelo espelho', () =
     confirm(view);
     const ultimo = api.orders[0];
     expect(ultimo.contaNumero).toBe(0);
-    expect(ultimo.codigoExibicao).toBe('0.2');
+    // Global sequence: 0.1 (first), 0.2 (conta1 via api.createOrder), 0.3 (this one)
+    expect(ultimo.codigoExibicao).toBe('0.3');
     expect(api.tables.find(t => t.numero === 6)!.contaAtualNumero).toBe(0);
     // A conta 1 continua ABERTA, só perdeu a ocupação física.
     expect(api.accounts.find(a => a.numero === 1)!.status).toBe('aberta');
@@ -219,6 +221,7 @@ describe('REPRODUÇÃO DO BUG: PDV voltando à mesa liberada pelo espelho', () =
     expect(Array.from(seletor.options).map(o => o.value)).toEqual(['nova']);
     addItem(view);
     confirm(view);
-    expect(api.orders[0].codigoExibicao).toBe('1.1');
+    // Global sequence: second order overall → 0.2
+    expect(api.orders[0].codigoExibicao).toBe('0.2');
   });
 });

@@ -3,7 +3,7 @@ import { money, normalizeSearch, uid } from '../../utils/business';
 import { useRestaurant } from '../../context/RestaurantContext';
 import { MenuItem, CategoryType, OrderType, CartItem, Order } from '../../types';
 import { formatCurrency } from '../../utils/formatters';
-import { FIRST_ACCOUNT_NUMBER } from '../../lib/accountMigration';
+import { FIRST_ACCOUNT_NUMBER, nextGlobalLaunchSequence, buildLaunchDisplayCode } from '../../lib/accountMigration';
 import { AccompanimentModal } from './AccompanimentModal';
 import { ReceiptModal } from './ReceiptModal';
 import { 
@@ -70,7 +70,8 @@ export const POSView: React.FC = () => {
   const isNewAccountChoice = targetAccountChoice === 'nova';
   const explicitAccount = isNewAccountChoice ? undefined : (targetAccountId ? getAccount(targetAccountId) : undefined);
   // O preview usa a conta REALMENTE escolhida: se for abrir conta nova, mostramos
-  // o número que ela REALLY terá (ex.: 3.1) em vez do código de outra conta.
+  // o código global REAL (ex.: 0.2, 0.3...) em vez do código de outra conta.
+  const nextGlobalSeq = nextGlobalLaunchSequence(orders);
   const nextAccountNumber = accounts.length
     ? accounts.reduce((max, a) => Math.max(max, a.numero), FIRST_ACCOUNT_NUMBER) + 1
     : FIRST_ACCOUNT_NUMBER;
@@ -81,7 +82,7 @@ export const POSView: React.FC = () => {
     : 1;
   const previewCode = previewAccount
     ? `${previewAccount.numero}.${nextSequencePreview}`
-    : `${nextAccountNumber}.${nextSequencePreview}`;
+    : buildLaunchDisplayCode(nextGlobalSeq);
   const occupiedByOther = !!(selectedTable?.contaAtualId && selectedTable.contaAtualId !== explicitAccount?.id);
   const occupiedAccount = occupiedByOther ? getAccount(selectedTable!.contaAtualId!) : undefined;
 

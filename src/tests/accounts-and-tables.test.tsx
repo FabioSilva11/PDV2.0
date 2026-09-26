@@ -440,8 +440,9 @@ describe('migração de dados legados', () => {
     expect(account.mesaOriginalNumero).toBe(1);
     expect(account.status).toBe('aberta');
     expect(account.total).toBe(40);
+    // Migration now assigns global sequence based on creation order
     const codes = result.current.orders.map(o => o.codigoExibicao).sort();
-    expect(codes).toEqual(['3.0', '3.1']);
+    expect(codes).toEqual(['0.1', '0.2']);
     expect(result.current.orders.every(o => o.contaId === account.id)).toBe(true);
   });
 
@@ -613,7 +614,7 @@ describe('POS: continuar a conta liberada pelo espelho', () => {
     expect(result.current.accounts[0].id).toBe(conta.id);
   });
 
-  it('NOVO ATENDIMENTO só quando o operador escolhe: 0.1 na conta 0 e 1.1 na conta 1', () => {
+  it('NOVO ATENDIMENTO só quando o operador escolhe: 0.1 na conta 0 e 0.2 na conta 1', () => {
     const { result } = boot();
     act(() => result.current.openTableWithOrder(6));
     const conta0 = result.current.accounts[0];
@@ -626,8 +627,9 @@ describe('POS: continuar a conta liberada pelo espelho', () => {
     expect(nova.numero).toBe(1);
     const b = sale(result, { tipo: 'mesa', mesaNumero: 6, contaId: nova.id, itens: [item({ cartItemId: 'b' })] });
     expect(b.contaNumero).toBe(1);
+    // Global sequence: first order was 0.1, this is second order → 0.2
     expect(b.sequencia).toBe(1);
-    expect(b.codigoExibicao).toBe('1.1');
+    expect(b.codigoExibicao).toBe('0.2');
     expect(accountOf(result, conta0.id).saldoRestante).toBe(20);
     expect(tableOf(result, 6).contaAtualId).toBe(nova.id);
   });
@@ -680,7 +682,8 @@ describe('POS: continuar a conta liberada pelo espelho', () => {
     const b = sale(result, { tipo: 'mesa', mesaNumero: 8, itens: [item({ cartItemId: 'b' })] });
     expect(b.contaId).not.toBe(conta6.id);
     expect(b.contaNumero).toBe(1);
-    expect(b.codigoExibicao).toBe('1.1');
+    // Global sequence: second order overall → 0.2
+    expect(b.codigoExibicao).toBe('0.2');
   });
 
   it('PAGAR a conta antiga depois que a mesa foi ocupada pela nova não mexe na nova', () => {
@@ -796,7 +799,8 @@ describe('POS: continuar a conta liberada pelo espelho', () => {
     const c = sale(result, { tipo: 'mesa', mesaNumero: 6, contaId: conta0.id, itens: [item({ cartItemId: 'c' })] });
     expect(c.contaNumero).toBe(0);
     expect(c.sequencia).toBe(2);
-    expect(c.codigoExibicao).toBe('0.2');
+    // Global sequence: 0.1 (first), 0.2 (conta1), 0.3 (this one)
+    expect(c.codigoExibicao).toBe('0.3');
     expect(tableOf(result, 6).contaAtualNumero).toBe(0);
   });
 

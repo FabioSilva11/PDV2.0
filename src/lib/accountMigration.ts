@@ -31,9 +31,32 @@ const timeOf = (value?: string): number => {
   return Number.isFinite(parsed) ? parsed : 0;
 };
 
-/** `0.1` — número da conta + sequência do lançamento. */
+/** `0.1` — número da conta + sequência do lançamento (legado, mantido para migração). */
 export const buildDisplayCode = (contaNumero: number, sequencia: number): string =>
   `${contaNumero}.${sequencia}`;
+
+/**
+ * Gera o código de exibição a partir da SEQUÊNCIA GLOBAL.
+ * Fórmula: parteInteira = floor(N / 10), parteDecimal = N % 10.
+ * Exemplos: N=1 → 0.1, N=9 → 0.9, N=10 → 1.0, N=11 → 1.1, N=20 → 2.0
+ */
+export const buildLaunchDisplayCode = (sequenciaGlobal: number): string => {
+  const parteInteira = Math.floor(sequenciaGlobal / 10);
+  const parteDecimal = sequenciaGlobal % 10;
+  return `${parteInteira}.${parteDecimal}`;
+};
+
+/**
+ * Próxima sequência GLOBAL de lançamento: max(sequenciaGlobal) + 1.
+ * Independente da conta — sequência única para todo o sistema.
+ */
+export const nextGlobalLaunchSequence = (orders: Order[]): number => {
+  const sequences = orders
+    .map(o => Number(o.sequenciaGlobal))
+    .filter(isFiniteNumber);
+  if (!sequences.length) return FIRST_ORDER_SEQUENCE;
+  return Math.max(...sequences) + 1;
+};
 
 /**
  * Próximo número de conta. A sequência é global e nunca reutilizada, mesmo
@@ -322,7 +345,7 @@ export const migrateOrdersToAccounts = (
 };
 
 /**
- * Preenche `contaId`, `contaNumero`, `sequencia` e `codigoExibicao` de cada
+ * Preenche `contaId`, `contaNumero`, `sequencia`, `sequenciaGlobal` e `codigoExibicao` de cada
  * pedido, mantendo espelhados os campos legados.
  */
 export const attachAccountsToOrders = (rawOrders: Order[], accounts: Account[]): Order[] => {
@@ -331,6 +354,16 @@ export const attachAccountsToOrders = (rawOrders: Order[], accounts: Account[]):
 
   const byId = new Map<string, Order>();
   for (const order of groups.flatMap(g => g.orders)) byId.set(order.id, order);
+
+  // Para backfill de sequenciaGlobal: ordenar todos os pedidos por data de criação
+  // e atribuir números globais sequenciais.
+  const allOrdersSorted = groups
+    .flatMap(g => g.orders)
+    .sort((a, b) => timeOf(a.criadoEm) - timeOf(b.criadoEm) || a.numero - b.numero);
+  const globalSeqMap = new Map<string, number>();
+  allOrdersSorted.forEach((order, index) => {
+    globalSeqMap.set(order.id, index + FIRST_ORDER_SEQUENCE);
+  });
 
   return groups.flatMap(group => {
     const first = group.orders[0];
@@ -341,12 +374,14 @@ export const attachAccountsToOrders = (rawOrders: Order[], accounts: Account[]):
       && new Set(legacySequences).size === legacySequences.length;
     return group.orders.map((order, index) => {
       const sequencia = hasLegacySequences ? legacySequences[index] : index + FIRST_ORDER_SEQUENCE;
+      const sequenciaGlobal = globalSeqMap.get(order.id) ?? (index + FIRST_ORDER_SEQUENCE);
       return {
         ...order,
         contaId: account.id,
         contaNumero: account.numero,
         sequencia,
-        codigoExibicao: buildDisplayCode(account.numero, sequencia),
+        sequenciaGlobal,
+        codigoExibicao: buildLaunchDisplayCode(sequenciaGlobal),
         // espelho legado (modo de compatibilidade)
         mesaSessaoId: order.tipo === 'mesa' ? account.id : order.mesaSessaoId,
         mesaSessaoNumero: order.tipo === 'mesa' ? account.numero : order.mesaSessaoNumero,

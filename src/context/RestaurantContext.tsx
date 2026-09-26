@@ -22,7 +22,9 @@ import {
   reconcileTableOccupancy,
   nextAccountNumber,
   nextOrderSequence,
+  nextGlobalLaunchSequence,
   buildDisplayCode,
+  buildLaunchDisplayCode,
   accountOrders,
   ordersAwaitingMirror,
   isLastOperationalOrder,
@@ -1273,16 +1275,19 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     }
   };
 
-  /** Próxima sequência comercial do lançamento: max(sequencia) + 1. */
+  /** Próxima sequência global do lançamento: max(sequenciaGlobal) + 1. */
+  const getNextGlobalSequence = () => nextGlobalLaunchSequence(orderList());
+
+  /** Próxima sequência por conta (mantida para compatibilidade/histórico). */
   const getNextSequence = (contaId: string) => nextOrderSequence(orderList(), contaId);
 
 
   /**
    * Cria um LANÇAMENTO (pedido) dentro de uma conta.
    *
-   * A numeração comercial é `contaNumero.sequencia` (ex.: 0.1, 0.2, 0.3) e a
-   * sequência é SEMPRE `max(sequencia) + 1` da conta — ela nunca reinicia por
-   * causa de mesa liberada e nunca usa `Date.now()`.
+   * A numeração global é `0.1, 0.2, ..., 1.0, 1.1, ...` baseada em uma
+   * sequência global única — independente da conta escolhida.
+   * A sequência por conta (`sequencia`) é mantida para compatibilidade/histórico.
    */
   const createOrder = (data: CreateOrderInput): Order => {
     if (data.operacaoId) {
@@ -1320,8 +1325,10 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     values: ReturnType<typeof totals>
   ): Order => {
     const items = snapshotItems(data.itens);
+    const sequenciaGlobal = getNextGlobalSequence();
+    const codigoExibicao = buildLaunchDisplayCode(sequenciaGlobal);
+    // Para compatibilidade: sequência por conta (mantida para histórico/relatórios)
     const sequencia = getNextSequence(account.id);
-    const codigoExibicao = buildDisplayCode(account.numero, sequencia);
     // `novaConta` é flag de ENTRADA (intenção do operador), não faz parte do
     // lançamento persistido.
     const { novaConta: _intencaoNovaConta, ...entrada } = data;
@@ -1335,6 +1342,7 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       contaId: account.id,
       contaNumero: account.numero,
       sequencia,
+      sequenciaGlobal,
       codigoExibicao,
       mesaNumero: account.mesaAtualNumero ?? table?.numero,
       mesaOriginalNumero: account.mesaOriginalNumero ?? table?.numero,

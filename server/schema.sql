@@ -91,6 +91,7 @@ CREATE TABLE IF NOT EXISTS `orders` (
   `conta_id` VARCHAR(64) NULL,
   `conta_numero` INT NULL,
   `sequencia` INT NULL,
+  `sequencia_global` INT NULL,
   `codigo_exibicao` VARCHAR(32) NULL,
   `mesa_numero` INT NULL,
   `mesa_original_numero` INT NULL,
@@ -110,7 +111,8 @@ CREATE TABLE IF NOT EXISTS `orders` (
   INDEX `idx_conta` (`conta_id`),
   INDEX `idx_conta_numero` (`conta_numero`),
   INDEX `idx_mesa_numero` (`mesa_numero`),
-  INDEX `idx_criado_em` (`criado_em`)
+  INDEX `idx_criado_em` (`criado_em`),
+  INDEX `idx_sequencia_global` (`sequencia_global`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 4.1 Upgrade idempotente: instalações já existentes possuem a versão
@@ -122,11 +124,13 @@ CREATE TABLE IF NOT EXISTS `orders` (
 ALTER TABLE `orders` ADD COLUMN IF NOT EXISTS `conta_id` VARCHAR(64) NULL AFTER `status_pagamento`;
 ALTER TABLE `orders` ADD COLUMN IF NOT EXISTS `conta_numero` INT NULL AFTER `conta_id`;
 ALTER TABLE `orders` ADD COLUMN IF NOT EXISTS `sequencia` INT NULL AFTER `conta_numero`;
-ALTER TABLE `orders` ADD COLUMN IF NOT EXISTS `codigo_exibicao` VARCHAR(32) NULL AFTER `sequencia`;
+ALTER TABLE `orders` ADD COLUMN IF NOT EXISTS `sequencia_global` INT NULL AFTER `sequencia`;
+ALTER TABLE `orders` ADD COLUMN IF NOT EXISTS `codigo_exibicao` VARCHAR(32) NULL AFTER `sequencia_global`;
 ALTER TABLE `orders` ADD COLUMN IF NOT EXISTS `mesa_original_numero` INT NULL AFTER `mesa_numero`;
 ALTER TABLE `orders` ADD INDEX IF NOT EXISTS `idx_conta` (`conta_id`);
 ALTER TABLE `orders` ADD INDEX IF NOT EXISTS `idx_conta_numero` (`conta_numero`);
 ALTER TABLE `orders` ADD INDEX IF NOT EXISTS `idx_mesa_numero` (`mesa_numero`);
+ALTER TABLE `orders` ADD INDEX IF NOT EXISTS `idx_sequencia_global` (`sequencia_global`);
 
 -- 5. Tabela estruturada de Itens do Cardápio
 CREATE TABLE IF NOT EXISTS `menu_items` (
