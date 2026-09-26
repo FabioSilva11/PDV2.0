@@ -100,7 +100,7 @@ describe('pagamento e caixa', () => {
 });
 
 describe('mesas cozinha recuperacao e estresse', () => {
-  it('MES reabrir mesa ocupada preserva valor', () => { const { result } = boot(); sale(result, { tipo: 'mesa', mesaNumero: 1 }); act(() => result.current.openTableWithOrder(1, 'Outro funcionário')); expect(result.current.tables.find(t => t.numero === 1)?.valorAtual).toBe(20); });
+  it('MES reabrir mesa ocupada preserva valor e não cria conta nova', () => { const { result } = boot(); sale(result, { tipo: 'mesa', mesaNumero: 1 }); act(() => attempt(() => result.current.openTableWithOrder(1, 'Outro funcionário'))); expect(result.current.tables.find(t => t.numero === 1)?.valorAtual).toBe(20); expect(result.current.accounts).toHaveLength(1); expect(result.current.accounts[0].status).toBe('aberta'); });
   it('MES transferência para mesa livre preserva pedido', () => { const { result } = boot(); const o = sale(result, { tipo: 'mesa', mesaNumero: 1 }); act(() => result.current.transferTable(1, 2)); expect(result.current.tables.find(t => t.numero === 2)?.pedidoAtivoId).toBe(o.id); expect(result.current.orders[0].mesaNumero).toBe(2); });
   it('COZ pedido cria fila de impressão', () => { const { result } = boot(); const o = sale(result); expect(result.current.printQueue.some(j => j.pedidoNumero === o.numero)).toBe(true); });
   it('REC remontagem offline preserva venda caixa', () => { const first = boot(); const o = sale(first.result); act(() => first.result.current.addManualPaymentToOrder(o.id, 'dinheiro', 20, 20)); first.unmount(); const { result } = boot(); expect(result.current.orders[0].id).toBe(o.id); expect(result.current.orders[0].statusPagamento).toBe('pago'); expect(result.current.cashRegister.saldoAtualGaveta).toBe(220); });
@@ -118,20 +118,22 @@ describe('mesas cozinha recuperacao e estresse', () => {
   });
 });
 
-describe('mesas com histórico de pedidos por sessão', () => {
-  it('MESA primeiro lançamento recebe 1.0 e segundo recebe 1.1 sem sobrescrever o anterior', () => {
+describe('mesas com histórico de lançamentos por conta', () => {
+  it('MESA primeiro lançamento recebe 0.1 e segundo recebe 0.2 na mesma conta', () => {
     const { result } = boot();
     act(() => result.current.openTableWithOrder(1, 'Cliente QA'));
     let a!: Order; let b!: Order;
     act(() => { a = result.current.createOrder({ tipo: 'mesa', mesaNumero: 1, itens: [item({ cartItemId: 'm1' })] }); });
     act(() => { b = result.current.createOrder({ tipo: 'mesa', mesaNumero: 1, itens: [item({ cartItemId: 'm2' })] }); });
-    expect(a.codigoMesa).toBe('1.0');
-    expect(b.codigoMesa).toBe('1.1');
-    expect(result.current.orders.filter(o => o.mesaSessaoId === a.mesaSessaoId)).toHaveLength(2);
+    expect(a.codigoExibicao).toBe('0.1');
+    expect(b.codigoExibicao).toBe('0.2');
+    expect(b.contaId).toBe(a.contaId);
+    expect(b.contaNumero).toBe(0);
+    expect(result.current.orders.filter(o => o.contaId === a.contaId)).toHaveLength(2);
     expect(result.current.tables.find(t => t.numero === 1)?.valorAtual).toBe(40);
   });
 
-  it('MESA terceiro lançamento recebe 1.2 e mantém o histórico mesmo após o espelho dos anteriores', () => {
+  it('MESA terceiro lançamento recebe 0.3 e mantém o histórico mesmo após o espelho dos anteriores', () => {
     const { result } = boot();
     act(() => result.current.openTableWithOrder(2));
     let a!: Order; let b!: Order; let c!: Order;
@@ -139,11 +141,24 @@ describe('mesas com histórico de pedidos por sessão', () => {
     act(() => { b = result.current.createOrder({ tipo: 'mesa', mesaNumero: 2, itens: [item({ cartItemId: 'b' })] }); });
     act(() => result.current.generateOrderMirror(a.id));
     act(() => { c = result.current.createOrder({ tipo: 'mesa', mesaNumero: 2, itens: [item({ cartItemId: 'c' })] }); });
-    expect([a.codigoMesa, b.codigoMesa, c.codigoMesa]).toEqual(['1.0', '1.1', '1.2']);
-    expect(result.current.orders.filter(o => o.mesaSessaoId === a.mesaSessaoId).map(o => o.codigoMesa)).toEqual(['1.2', '1.1', '1.0']);
+    expect([a.codigoExibicao, b.codigoExibicao, c.codigoExibicao]).toEqual(['0.1', '0.2', '0.3']);
+    expect(result.current.orders.filter(o => o.contaId === a.contaId).map(o => o.codigoExibicao)).toEqual(['0.3', '0.2', '0.1']);
   });
 
-  it('MESA baixa manual quita todos os pedidos da sessão e libera a mesa', () => {
+  it('MESA nova ocupação cria nova conta em vez de reutilizar a anterior', () => {
+    const { result } = boot();
+    act(() => result.current.openTableWithOrder(4));
+    const first = sale(result, { tipo: 'mesa', mesaNumero: 4, itens: [item({ cartItemId: 'first' })] });
+    act(() => result.current.freeTableManually(4));
+    act(() => result.current.openTableWithOrder(4));
+    const second = sale(result, { tipo: 'mesa', mesaNumero: 4, itens: [item({ cartItemId: 'second' })] });
+    expect(first.contaNumero).toBe(0);
+    expect(second.contaNumero).toBe(1);
+    expect(second.contaId).not.toBe(first.contaId);
+    expect(second.codigoExibicao).toBe('1.1');
+  });
+
+  it('MESA baixa manual quita todos os lançamentos da conta e libera a mesa', () => {
     const { result } = boot();
     act(() => result.current.openTableWithOrder(3));
     let a!: Order; let b!: Order;
@@ -153,9 +168,9 @@ describe('mesas com histórico de pedidos por sessão', () => {
     act(() => result.current.generateOrderMirror(b.id));
     act(() => result.current.requestTableBill(3));
     act(() => result.current.settleTableAccount(3, 'pix', 40));
-    const sessionOrders = result.current.orders.filter(o => o.mesaSessaoId === a.mesaSessaoId);
-    expect(sessionOrders.every(o => o.status === 'finalizado')).toBe(true);
-    expect(sessionOrders.every(o => o.statusPagamento === 'pago')).toBe(true);
+    const accountOrders = result.current.orders.filter(o => o.contaId === a.contaId);
+    expect(accountOrders.every(o => o.status === 'finalizado')).toBe(true);
+    expect(accountOrders.every(o => o.statusPagamento === 'pago')).toBe(true);
     expect(result.current.tables.find(t => t.numero === 3)?.status).toBe('livre');
   });
 
@@ -196,32 +211,34 @@ describe('mesas com histórico de pedidos por sessão', () => {
     expect(view.container.querySelector('#table-card-16')).toBeTruthy();
   });
 
-  it('MESA nova ocupação inicia nova sessão 2.0, sem reutilizar 1.0', () => {
+  it('MESA espelho do único lançamento libera a mesa mas mantém a conta em aberto', () => {
     const { result } = boot();
     act(() => result.current.openTableWithOrder(4));
     let first!: Order;
     act(() => { first = result.current.createOrder({ tipo: 'mesa', mesaNumero: 4, itens: [item({ cartItemId: 'x1' })] }); });
     // Com o espelho gerado, a mesa é liberada mesmo com débito pendente.
     act(() => result.current.generateOrderMirror(first.id));
-    act(() => result.current.openTableWithOrder(4, 'Novo Cliente'));
-    let second!: Order;
-    act(() => { second = result.current.createOrder({ tipo: 'mesa', mesaNumero: 4, itens: [item({ cartItemId: 'x2' })] }); });
-    expect(first.codigoMesa).toBe('1.0');
-    expect(second.codigoMesa).toBe('2.0');
-    expect(second.mesaSessaoId).not.toBe(first.mesaSessaoId);
+    const table = result.current.tables.find(t => t.numero === 4)!;
+    const account = result.current.accounts.find(a => a.id === first.contaId)!;
+    expect(result.current.orders.find(o => o.id === first.id)!.status).toBe('pronto');
+    expect(table.status).toBe('livre');
+    expect(table.contaAtualId).toBeUndefined();
+    expect(account.status).toBe('aberta');
+    expect(account.saldoRestante).toBe(20);
+    expect(table.ultimaContaNumero).toBe(0);
   });
 
-  it('MESA adicionar itens pelo fluxo de mesa cria pedido novo em vez de editar o anterior', () => {
+  it('MESA adicionar itens pelo fluxo de mesa cria lançamento novo em vez de editar o anterior', () => {
     const { result } = boot();
     act(() => result.current.openTableWithOrder(5));
     let first!: Order;
     act(() => { first = result.current.createOrder({ tipo: 'mesa', mesaNumero: 5, itens: [item({ cartItemId: 'old' })] }); });
     act(() => result.current.addItemsToTable(5, [item({ cartItemId: 'new' })]));
-    const session = result.current.orders.filter(o => o.mesaSessaoId === first.mesaSessaoId).sort((a,b) => (a.mesaPedidoSequencia ?? 0) - (b.mesaPedidoSequencia ?? 0));
-    expect(session).toHaveLength(2);
-    expect(session.map(o => o.codigoMesa)).toEqual(['1.0', '1.1']);
-    expect(session[0].itens[0].cartItemId).toBe('old');
-    expect(session[1].itens[0].cartItemId).toBe('new');
+    const conta = result.current.orders.filter(o => o.contaId === first.contaId).sort((a, b) => (a.sequencia ?? 0) - (b.sequencia ?? 0));
+    expect(conta).toHaveLength(2);
+    expect(conta.map(o => o.codigoExibicao)).toEqual(['0.1', '0.2']);
+    expect(conta[0].itens[0].cartItemId).toBe('old');
+    expect(conta[1].itens[0].cartItemId).toBe('new');
   });
 });
 
@@ -487,11 +504,17 @@ describe('testes extensivos adicionais — invariantes de operação', () => {
     expect(result.current.printQueue.filter(j => j.pedidoId === a.id)).toHaveLength(1);
   });
 
-  it('MES não permite criar segundo pedido para mesa já ocupada', () => {
+  it('MES não permite criar uma NOVA conta para mesa com conta aberta', () => {
     const { result } = boot();
-    sale(result, { tipo: 'mesa', mesaNumero: 1 });
-    act(() => attempt(() => result.current.createOrder({ tipo: 'mesa', mesaNumero: 1, itens: [item()] })));
-    expect(result.current.orders).toHaveLength(1);
+    const first = sale(result, { tipo: 'mesa', mesaNumero: 1 });
+    // Reabrir a mesa é um novo atendimento: só é permitido quando a mesa está livre.
+    act(() => attempt(() => result.current.openTableWithOrder(1, 'Outro cliente')));
+    expect(result.current.accounts).toHaveLength(1);
+    // Um novo lançamento, porém, continua a MESMA conta (novo código 0.2).
+    const second = sale(result, { tipo: 'mesa', mesaNumero: 1 });
+    expect(second.contaId).toBe(first.contaId);
+    expect(second.codigoExibicao).toBe('0.2');
+    expect(result.current.accounts).toHaveLength(1);
   });
 
   it('MES espelho do último lançamento da mesa libera a mesa', () => {
@@ -738,13 +761,16 @@ describe('melhorias operacionais v2 — edicao, caixa zerado, destaque e produto
   });
 
   // 11. número da mesa aparece corretamente
-  it('11. MESA numero da mesa e codigoMesa preservados no pedido', () => {
+  it('11. MESA numero da mesa e codigoExibicao preservados no pedido', () => {
     const { result } = boot();
     act(() => result.current.openTableWithOrder(5, 'Cliente Mesa 5'));
     let o!: Order;
     act(() => { o = result.current.createOrder({ tipo: 'mesa', mesaNumero: 5, itens: [item()] }); });
     expect(o.mesaNumero).toBe(5);
-    expect(o.codigoMesa).toBe('1.0');
+    expect(o.mesaOriginalNumero).toBe(5);
+    expect(o.contaNumero).toBe(0);
+    expect(o.sequencia).toBe(1);
+    expect(o.codigoExibicao).toBe('0.1');
   });
 
   // 12. editar quantidade de itens

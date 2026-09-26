@@ -23,6 +23,9 @@ export const POSView: React.FC = () => {
   const {
     menu,
     tables,
+    accounts,
+    getAccount,
+    createAccount,
     createOrder,
     orders,
     currentUser, customers,
@@ -46,6 +49,20 @@ export const POSView: React.FC = () => {
   const [selectedReceiptOrder, setSelectedReceiptOrder] = useState<Order | null>(null);
   const [isItemModalOpen, setIsItemModalOpen] = useState<boolean>(false);
   const [selectedItemForModal, setSelectedItemForModal] = useState<MenuItem | null>(null);
+  // Escolha explícita do atendimento: continuar uma conta aberta ou abrir uma
+  // nova. Nunca é inferido pelo saldo nem pelo status da mesa.
+  const [targetAccountChoice, setTargetAccountChoice] = useState<string>('');
+
+  const selectedTable = selectedTableNumber !== null ? tables.find(t => t.numero === selectedTableNumber) : undefined;
+  const tableCurrentAccount = selectedTable?.contaAtualId ? getAccount(selectedTable.contaAtualId) : undefined;
+  const openTableAccounts = selectedTableNumber === null ? [] : accounts.filter(
+    a => a.status === 'aberta' && (a.mesaAtualNumero === selectedTableNumber || a.mesaOriginalNumero === selectedTableNumber)
+  );
+  // Quando há conta aberta na mesa, o padrão é continuar o mesmo atendimento.
+  const effectiveAccountChoice = targetAccountChoice || (tableCurrentAccount?.status === 'aberta' ? tableCurrentAccount.id : 'nova');
+  const nextSequencePreview = effectiveAccountChoice !== 'nova'
+    ? orders.filter(o => o.contaId === effectiveAccountChoice).reduce((max, o) => Math.max(max, o.sequencia ?? 0), 0) + 1
+    : 1;
 
   const categories = useMemo(() => {
     return Array.from(new Set(menu.map(m => m.categoria)));
@@ -162,8 +179,9 @@ export const POSView: React.FC = () => {
     addToCart(item, sides, obs, removals);
   };
 
-  // Em mesa, cada confirmação cria um novo pedido dentro da mesma sessão:
-  // 1.0, 1.1, 1.2... O histórico anterior permanece intacto.
+  // Em mesa, cada confirmação cria um novo LANÇAMENTO na conta escolhida:
+  // 0.1, 0.2, 0.3... O histórico anterior permanece intacto. Só um novo
+  // atendimento financeiro cria uma nova conta.
   const handleConfirmOrder = () => {
     if (cart.length === 0 || submissionLocked.current) return;
     submissionLocked.current = true;
@@ -179,10 +197,26 @@ export const POSView: React.FC = () => {
       return;
     }
     const deliveryAddressParts = deliveryAddress.trim().split(',');
+    // Se o operador pediu explicitamente um novo atendimento, a conta é criada
+    // antes do lançamento para que ele saia com o número 1 da nova conta.
+    let contaId: string | undefined;
+    if (orderType === 'mesa' && selectedTableNumber !== null) {
+      if (effectiveAccountChoice === 'nova') {
+        contaId = createAccount({
+          tipo: 'mesa',
+          mesaNumero: selectedTableNumber,
+          nomeCliente: customerName || `Mesa ${selectedTableNumber}`,
+          pessoas: 2
+        }).id;
+      } else if (effectiveAccountChoice) {
+        contaId = effectiveAccountChoice;
+      }
+    }
     const order = createOrder({
       operacaoId: operationId.current,
       tipo: orderType,
       mesaNumero: orderType === 'mesa' && selectedTableNumber ? selectedTableNumber : undefined,
+      contaId,
       clienteId: selectedCustomerId || undefined,
       nomeCliente: customerName || undefined,
       telefoneCliente: customerPhone || undefined,
@@ -458,6 +492,7 @@ export const POSView: React.FC = () => {
                       onChange={(e) => {
                         const num = Number(e.target.value);
                         setSelectedTableNumber(num || null);
+                        setTargetAccountChoice('');
                         const table = tables.find(t => t.numero === num);
                         if (table?.clienteNome) {
                           setCustomerInfo({ name: table.clienteNome });
@@ -473,6 +508,31 @@ export const POSView: React.FC = () => {
                       ))}
                     </select>
                   </div>
+                  {selectedTableNumber !== null && (
+                    <div className="sm:col-span-2">
+                      <label className="block text-[10px] font-bold uppercase text-slate-500 mb-1">
+                        Conta de destino
+                      </label>
+                      <select
+                        id="pos-select-account"
+                        value={effectiveAccountChoice}
+                        onChange={(e) => setTargetAccountChoice(e.target.value)}
+                        className="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white font-semibold text-xs focus:ring-1 focus:ring-sky-500"
+                      >
+                        {openTableAccounts.map(a => (
+                          <option key={a.id} value={a.id}>
+                            Continuar na Conta {a.numero} • {a.status} • {a.saldoRestante.toFixed(2)}
+                          </option>
+                        ))}
+                        <option value="nova">Criar novo atendimento (nova conta)</option>
+                      </select>
+                      <p className="mt-1 text-[10px] text-slate-500">
+                        {effectiveAccountChoice === 'nova'
+                          ? 'Será criada uma nova conta e este lançamento será o nº 1 dela.'
+                          : `Novo lançamento ${effectiveAccountChoice === tableCurrentAccount?.id ? tableCurrentAccount?.numero : (getAccount(effectiveAccountChoice)?.numero ?? '?')}.${nextSequencePreview} na conta escolhida.`}
+                      </p>
+                    </div>
+                  )}
                   <div>
                     <label className="block text-[10px] font-bold uppercase text-slate-500 mb-1">
                       Identificação / Nome

@@ -56,7 +56,7 @@ export const ThermalReceiptModal: React.FC = () => {
             {/* Order info */}
             <div className="py-2.5 border-b border-dashed border-stone-400 space-y-1">
               <div className="flex justify-between font-bold text-xs">
-                <span>PEDIDO #{order.codigoMesa || order.numero}</span>
+                <span>PEDIDO #{order.codigoExibicao || order.codigoMesa || order.numero}</span>
                 <span>{order.tipo.toUpperCase()}</span>
               </div>
               <div className="flex justify-between text-stone-600 text-[10px]">

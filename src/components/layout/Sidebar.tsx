@@ -10,7 +10,7 @@ import {
   Printer, 
   ChevronLeft, 
   ChevronRight,
-  ShoppingBag, Users, CalendarDays, ShieldCheck, ClipboardList, Settings
+  ShoppingBag, Users, CalendarDays, ShieldCheck, ClipboardList, Settings, FileText
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -24,6 +24,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed, setCollapsed }) => 
     setActiveModule, 
     orders, 
     tables, 
+    accounts,
     currentUser,
     settings,
   } = useRestaurant();
@@ -31,6 +32,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed, setCollapsed }) => 
   // Computed badges
   const pendingOrdersCount = orders.filter(o => o.status === 'novo' || o.status === 'confirmado').length;
   const occupiedTablesCount = tables.filter(t => t.status === 'ocupada' || t.status === 'conta').length;
+  const openAccountsCount = accounts.filter(a => a.status === 'aberta').length;
 
   interface NavSection {
     title: string;
@@ -49,6 +51,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed, setCollapsed }) => 
       items: [
         { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
         { id: 'pedidos', label: 'Pedidos', icon: Receipt, badge: pendingOrdersCount, badgeColor: 'bg-sky-100 text-sky-800' },
+        { id: 'contas', label: 'Contas & Checks', icon: FileText, badge: openAccountsCount, badgeColor: 'bg-purple-100 text-purple-800' },
         { id: 'pdv', label: 'Frente de Caixa (PDV)', icon: ShoppingBag },
         { id: 'mesas', label: 'Mesas & Salão', icon: Utensils, badge: occupiedTablesCount, badgeColor: 'bg-blue-100 text-blue-800' },
         { id: 'caixa', label: 'Caixa do Turno', icon: DollarSign },

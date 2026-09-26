@@ -217,8 +217,13 @@ export const OrdersView: React.FC = () => {
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex items-center gap-2">
                     <span className="font-mono font-extrabold text-stone-900 text-sm">
-                      #{order.codigoMesa || order.numero}
+                      #{order.codigoExibicao || order.codigoMesa || order.numero}
                     </span>
+                    {order.contaNumero !== undefined && (
+                      <span className="text-[10px] font-bold px-1.5 py-0.2 bg-purple-100 text-purple-800 rounded">
+                        CONTA {order.contaNumero}
+                      </span>
+                    )}
                     {getStatusBadge(order.status)}
                     {order.prioridade === 'urgente' && (
                       <span className="text-[10px] font-bold px-1.5 py-0.2 bg-rose-500 text-white rounded flex items-center gap-0.5 animate-pulse">

@@ -103,6 +103,103 @@ export type OrderType = 'mesa' | 'balcao' | 'delivery';
 
 export type OrderStatus = 'novo' | 'pronto' | 'entregue' | 'finalizado' | 'cancelado';
 
+// ---------------------------------------------------------------------------
+// CONTA / CHECK (atendimento financeiro)
+//
+// A Conta é a unidade financeiro do atendimento. Ela é diferente da Mesa
+// (ocupação física) e do Lançamento/Order (pedido). Regras do projeto:
+//
+//   MESA  -> ocupação física ATUAL (pode estar livre com conta aberta)
+//   CONTA -> atendimento financeiro (aberta / paga / encerrada)
+//   ORDER -> lançamento (0.1, 0.2, 0.3...) que PERTENCE a uma conta
+//   PAGAMENTO -> baixa financeira independente do espelho
+//
+// O espelho conclui o PREPARO do lançamento e pode liberar a ocupação da mesa.
+// Ele nunca paga, nunca encerra a conta e nunca apaga histórico.
+// ---------------------------------------------------------------------------
+export type AccountStatus = 'aberta' | 'paga' | 'encerrada';
+
+export type AccountOrigin = 'mesa' | 'balcao' | 'delivery' | 'split' | 'merge' | 'migracao';
+
+export interface AccountClosure {
+  usuario: string;
+  dataHora: string;
+  motivo?: string;
+}
+
+export interface Account {
+  id: string;
+  /** Número comercial da conta (ex.: 0, 1, 2...). */
+  numero: number;
+  tipo: OrderType;
+  nomeCliente?: string;
+  telefoneCliente?: string;
+  /** Mesa onde a conta foi aberta — preservada mesmo após transferência. */
+  mesaOriginalId?: string;
+  mesaOriginalNumero?: number;
+  /** Mesa atualmente associada. Ausente = conta sem mesa (histórico/libre). */
+  mesaAtualId?: string;
+  mesaAtualNumero?: number;
+  status: AccountStatus;
+  abertaEm: string;
+  pagaEm?: string;
+  encerradaEm?: string;
+  encerramento?: AccountClosure;
+  /** Soma dos lançamentos (exclui cancelados). */
+  total: number;
+  valorPago: number;
+  saldoRestante: number;
+  origem: AccountOrigin;
+  /** Conta de origem em split/merge. Nunca apagada. */
+  contaPaiId?: string;
+  contaFilhaId?: string;
+  observacoes?: string;
+  criadaPor?: string;
+  /** @deprecated legado: use contaId. */
+  mesaSessaoId?: string;
+  /** @deprecated legado: use numero. */
+  mesaSessaoNumero?: number;
+}
+
+/** Dados de abertura de um novo atendimento financeiro (conta). */
+export interface CreateAccountInput extends Partial<Omit<Account, 'tipo'>> {
+  tipo?: OrderType;
+  /** Atalho: abre/junta a conta a uma mesa existente. */
+  mesaNumero?: number;
+  /** Atalho: pessoas sentadas na mesa de abertura. */
+  pessoas?: number;
+}
+
+/** Critérios de busca de contas/checks (nº conta, lançamento, mesa, cliente, valor, status). */
+export interface AccountSearchFilters {
+  texto?: string;
+  contaNumero?: number;
+  /** Número do lançamento dentro da conta (1, 2, 3...). */
+  sequencia?: number;
+  mesaNumero?: number;
+  status?: AccountStatus | 'todas';
+  /** Faixa do saldo restante. */
+  valorMin?: number;
+  valorMax?: number;
+  somenteComSaldo?: boolean;
+}
+
+/** Divisão de conta: itens escolhidos vão para uma nova conta filha. */
+export interface AccountSplitInput {
+  contaId: string;
+  /** Itens (cartItemId) que migram para a nova conta. */
+  itemIds: string[];
+  nomeCliente?: string;
+}
+
+export interface AccountSplitResult {
+  contaOrigemId: string;
+  contaNovaId: string;
+  contaNovaNumero: number;
+  lancamentosOrigem: string[];
+  lancamentosNovos: string[];
+}
+
 export type PaymentStatus = 'pendente' | 'pago_parcial' | 'pago' | 'estornado';
 
 export type PaymentMethodId = 
@@ -168,11 +265,25 @@ export interface Order {
     complemento?: string;
     pontoReferencia?: string;
   };
+  // ---------------------------------------------------------------------
+  // Conta (check) a que este lançamento pertence. Fonte de verdade.
+  // ---------------------------------------------------------------------
+  contaId?: string;
+  contaNumero?: number;
+  /** Sequência do lançamento dentro da conta: 1, 2, 3... (nunca reinicia). */
+  sequencia?: number;
+  /** Código exibido ao operador: `${contaNumero}.${sequencia}` (ex.: 0.1). */
+  codigoExibicao?: string;
+  /** Mesa histórica/original do lançamento. */
   mesaNumero?: number;
-  /** Sessão da mesa: uma mesa pode receber vários pedidos sequenciais (ex.: 1.0, 1.1, 1.2). */
+  mesaOriginalNumero?: number;
+  /** @deprecated legado: use contaId. Uma conta pode receber vários lançamentos. */
   mesaSessaoId?: string;
+  /** @deprecated legado: use contaNumero. */
   mesaSessaoNumero?: number;
+  /** @deprecated legado: use sequencia. */
   mesaPedidoSequencia?: number;
+  /** @deprecated legado: use codigoExibicao. */
   codigoMesa?: string;
   garcomNome?: string;
   canal: string; // 'Salão', 'Balcão', 'WhatsApp', 'iFood', 'Telefone'
@@ -205,7 +316,7 @@ export interface Customer { id: string; nome: string; telefone?: string; cpf?: s
 export type ReservationStatus = 'reservada' | 'confirmada' | 'chegou' | 'cancelada' | 'finalizada';
 export interface Reservation { id: string; clienteId?: string; clienteNome: string; telefone?: string; mesaNumero?: number; dataHora: string; pessoas: number; status: ReservationStatus; observacao?: string; criadoPor: string; }
 export type UserRole = 'administrador' | 'gerente' | 'caixa' | 'garcom';
-export type PermissionKey = 'pdv' | 'pedidos' | 'mesas' | 'caixa' | 'cardapio' | 'clientes' | 'reservas' | 'desconto' | 'cancelamento' | 'reabertura' | 'auditoria' | 'usuarios' | 'impressoras' | 'configuracoes';
+export type PermissionKey = 'pdv' | 'pedidos' | 'contas' | 'mesas' | 'caixa' | 'cardapio' | 'clientes' | 'reservas' | 'desconto' | 'cancelamento' | 'reabertura' | 'auditoria' | 'usuarios' | 'impressoras' | 'configuracoes';
 export interface UserAccount {
   id: string;
   nome: string;
@@ -227,13 +338,24 @@ export interface Table {
   id: string;
   numero: number;
   capacidade: number;
+  /** Estado físico da mesa. NÃO deriva de saldo de pedidos históricos. */
   status: TableStatus;
   garcomResponsavel?: string;
   clienteNome?: string;
   abertaEm?: string;
   pedidoAtivoId?: string;
-  /** Identifica a sessão aberta atualmente; os pedidos antigos continuam no histórico. */
+  /**
+   * Conta atualmente ocupando a mesa. Enquanto existir, a mesa está ocupada.
+   * Liberar a mesa limpa este campo — a conta continua existindo.
+   */
+  contaAtualId?: string;
+  contaAtualNumero?: number;
+  /** Última conta usada nesta mesa. Apenas histórico: NÃO é ocupação atual. */
+  ultimaContaId?: string;
+  ultimaContaNumero?: number;
+  /** @deprecated legado: use contaAtualId. */
   sessaoAtivaId?: string;
+  /** @deprecated legado: use contaAtualNumero. */
   sessaoNumero?: number;
   valorAtual: number;
   pessoasSentadas?: number;
@@ -444,6 +566,7 @@ export interface ManualPaymentOption {
 export type AppModule = 
   | 'dashboard'
   | 'pedidos'
+  | 'contas'
   | 'pdv'
   | 'mesas'
   | 'caixa'

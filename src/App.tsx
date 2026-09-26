@@ -7,6 +7,7 @@ import { SetupWizard } from './components/admin/SetupWizard';
 import { SettingsView } from './components/admin/SettingsView';
 import { DashboardView } from './components/dashboard/DashboardView';
 import { OrdersView } from './components/orders/OrdersView';
+import { AccountsView } from './components/accounts/AccountsView';
 import { POSView } from './components/pdv/POSView';
 import { TablesView } from './components/tables/TablesView';
 import { CashierView } from './components/cashier/CashierView';
@@ -77,6 +78,7 @@ const MainAppContent: React.FC = () => {
           <main className="flex-1 overflow-y-auto bg-slate-50/70 pb-16">
             {activeModule === 'dashboard' && <DashboardView />}
             {activeModule === 'pedidos' && <OrdersView />}
+            {activeModule === 'contas' && <AccountsView />}
             {activeModule === 'pdv' && <POSView />}
             {activeModule === 'mesas' && <TablesView />}
             {activeModule === 'caixa' && <CashierView />}

@@ -5,10 +5,10 @@ import { ShieldCheck, Plus, KeyRound } from 'lucide-react';
 
 const roles: UserRole[] = ['administrador', 'gerente', 'caixa', 'garcom'];
 
-const ALL_PERMISSIONS: PermissionKey[] = ['pdv', 'pedidos', 'mesas', 'caixa', 'cardapio', 'clientes', 'reservas', 'desconto', 'cancelamento', 'reabertura', 'auditoria', 'usuarios', 'impressoras', 'configuracoes'];
+const ALL_PERMISSIONS: PermissionKey[] = ['pdv', 'pedidos', 'contas', 'mesas', 'caixa', 'cardapio', 'clientes', 'reservas', 'desconto', 'cancelamento', 'reabertura', 'auditoria', 'usuarios', 'impressoras', 'configuracoes'];
 
 const PERMISSION_LABELS: Record<PermissionKey, string> = {
-  pdv: 'PDV', pedidos: 'Pedidos', mesas: 'Mesas', caixa: 'Caixa', cardapio: 'Cardápio',
+  pdv: 'PDV', pedidos: 'Pedidos', contas: 'Contas & Checks', mesas: 'Mesas', caixa: 'Caixa', cardapio: 'Cardápio',
   clientes: 'Clientes', reservas: 'Reservas', desconto: 'Desconto', cancelamento: 'Cancelamento',
   reabertura: 'Reabertura', auditoria: 'Auditoria', usuarios: 'Usuários', impressoras: 'Impressoras', configuracoes: 'Configurações',
 };

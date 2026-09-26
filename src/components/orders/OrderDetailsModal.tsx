@@ -47,6 +47,10 @@ export const OrderDetailsModal: React.FC = () => {
     setSelectedReceiptOrder,
     currentUser,
     tables,
+    getAccount,
+    getAccountOrders,
+    closeAccount,
+    setActiveModule,
     menu,
     editOrder
   } = useRestaurant();
@@ -104,6 +108,12 @@ export const OrderDetailsModal: React.FC = () => {
   if (!selectedOrderForModal) return null;
 
   const order = orders.find(item => item.id === selectedOrderForModal.id) || selectedOrderForModal;
+  const orderAccount = order.contaId ? getAccount(order.contaId) : undefined;
+
+  const handleCloseAccount = (contaId: string) => {
+    if (!confirm('Encerrar esta conta? Ela não aceitará novos lançamentos. Nenhum pedido é apagado.')) return;
+    closeAccount(contaId, 'Encerrado pelo pedido');
+  };
 
   const handleCancelWholeOrder = () => {
     if (!cancelOrderReason.trim()) return;
@@ -314,11 +324,11 @@ export const OrderDetailsModal: React.FC = () => {
         <div className="bg-slate-900 text-white px-6 py-4 flex items-center justify-between border-b border-slate-800">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-sky-500/20 text-sky-400 border border-sky-500/30 flex items-center justify-center font-bold text-sm">
-              #{order.codigoMesa || order.numero}
+              #{order.codigoExibicao || order.codigoMesa || order.numero}
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="font-bold text-base">Detalhes do Pedido #{order.codigoMesa || order.numero}</h3>
+                <h3 className="font-bold text-base">Detalhes do Pedido #{order.codigoExibicao || order.codigoMesa || order.numero}</h3>
                 {getStatusBadge(order.status)}
                 {order.prioridade === 'urgente' && (
                   <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-rose-500 text-white flex items-center gap-1 animate-pulse">
@@ -352,7 +362,7 @@ export const OrderDetailsModal: React.FC = () => {
                 <div>
                   <h4 className="font-bold text-sm text-blue-950 flex items-center gap-2">
                     <Edit3 className="w-4 h-4 text-blue-600" />
-                    Edição do Pedido #{order.codigoMesa || order.numero}
+                    Edição do Pedido #{order.codigoExibicao || order.codigoMesa || order.numero}
                   </h4>
                   <p className="text-[11px] text-blue-700">
                     Altere itens, quantidades, dados do cliente e taxas. Os totais serão recalculados automaticamente.
@@ -736,6 +746,53 @@ export const OrderDetailsModal: React.FC = () => {
             </div>
           ) : (
             <>
+          {/* Conta (check) a que este lançamento pertence */}
+          {order.contaId && orderAccount && (
+            <div className="p-3.5 bg-purple-50/60 rounded-xl border border-purple-200 space-y-2">
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <div className="text-xs font-bold text-purple-900">
+                  Conta {orderAccount.numero} • Lançamento {order.sequencia ?? 1} de {getAccountOrders(orderAccount.id).filter(o => o.status !== 'cancelado').length}
+                  <span className="ml-2 font-normal text-purple-700">
+                    {orderAccount.status} • {order.mesaAtualNumero !== undefined ? `Mesa ${order.mesaAtualNumero}` : 'Sem mesa'}
+                  </span>
+                </div>
+                <div className="text-[11px] font-mono text-purple-900 font-bold">
+                  Conta: {formatCurrency(orderAccount.total)} • Saldo: {formatCurrency(orderAccount.saldoRestante)}
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <button
+                  type="button"
+                  id="order-account-goto-btn"
+                  onClick={() => { setSelectedOrderForModal(null); setActiveModule('contas'); }}
+                  className="px-2.5 py-1 bg-white border border-purple-300 text-purple-900 text-[10px] font-bold rounded-lg hover:bg-purple-100"
+                >
+                  Abrir Contas &amp; Checks
+                </button>
+                {orderAccount.status === 'aberta' && orderAccount.saldoRestante > 0 && (
+                  <button
+                    type="button"
+                    id="order-account-settle-btn"
+                    onClick={() => openPaymentModal(order)}
+                    className="px-2.5 py-1 bg-emerald-600 text-white text-[10px] font-bold rounded-lg hover:bg-emerald-700"
+                  >
+                    Baixar conta
+                  </button>
+                )}
+                {orderAccount.status === 'aberta' && orderAccount.saldoRestante <= 0 && (
+                  <button
+                    type="button"
+                    id="order-account-close-btn"
+                    onClick={() => handleCloseAccount(orderAccount.id)}
+                    className="px-2.5 py-1 bg-emerald-600 text-white text-[10px] font-bold rounded-lg hover:bg-emerald-700"
+                  >
+                    Encerrar conta
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* Customer / Destination Info */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 p-3.5 bg-slate-50 rounded-xl border border-slate-200 text-xs">
             <div className="space-y-1">
@@ -979,7 +1036,7 @@ export const OrderDetailsModal: React.FC = () => {
                           className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-xs"
                         >
                           <ShoppingBag className="w-3.5 h-3.5" />
-                          Adicionar ao Pedido #{order.codigoMesa || order.numero}
+                          Adicionar ao Pedido #{order.codigoExibicao || order.codigoMesa || order.numero}
                         </button>
                       </div>
                     </div>
@@ -1123,7 +1180,7 @@ export const OrderDetailsModal: React.FC = () => {
           {/* Cancel whole order prompt */}
           {showCancelOrderInput && (
             <div className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 space-y-2">
-              <div className="text-xs font-bold text-rose-900">Cancelar Todo o Pedido #{order.codigoMesa || order.numero}</div>
+              <div className="text-xs font-bold text-rose-900">Cancelar Todo o Pedido #{order.codigoExibicao || order.codigoMesa || order.numero}</div>
               <input
                 type="text"
                 placeholder="Motivo obrigatório de cancelamento..."

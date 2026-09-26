@@ -14,8 +14,23 @@ import React, { createContext, useContext, useState, useEffect, useCallback, use
   SystemAlert,
   ManualPaymentOption,
   CategoryType, Customer, Reservation, UserAccount, PermissionKey, AuditLog,
-  RestaurantSettings, MenuCategory
+  RestaurantSettings, MenuCategory,
+  Account, AccountStatus, AccountSearchFilters, AccountSplitInput, AccountSplitResult, CreateAccountInput
 } from '../types';
+import {
+  migrateOrdersToAccounts,
+  reconcileTableOccupancy,
+  nextAccountNumber,
+  nextOrderSequence,
+  buildDisplayCode,
+  accountOrders,
+  ordersAwaitingMirror,
+  isLastOperationalOrder,
+  isAccountOpen,
+  computeAccountTotals,
+  deriveAccountStatus,
+  searchAccounts
+} from '../lib/accountMigration';
 import { 
   INITIAL_MENU, 
   INITIAL_TABLES, 
@@ -24,6 +39,7 @@ import {
 } from '../data/seedData';
 import { LocalStore, useStoreField } from '../lib/localStore';
 import { uid, money, amount, subtotal as calculateSubtotal, totals, reconcile } from '../utils/business';
+import { formatCurrency as formatBRL } from '../utils/formatters';
 import { sounds } from '../utils/audio';
 import {
   DEFAULT_MENU_CATEGORIES,
@@ -121,13 +137,43 @@ interface RestaurantContextType {
   generateOrderMirror: (orderId: string) => void;
   rerouteOrderPrintBatch: (orderId: string, grupoId?: string) => void;
   setOrderPriority: (orderId: string, prioridade: 'normal' | 'urgente') => void;
-  reopenOrder: (orderId: string, motivo: string) => void;
+  reopenOrder: (id: string, motivo: string) => void;
   /** Edita campos de um pedido existente com recálculo de totais e auditoria. */
   editOrder: (orderId: string, patch: import('../types').OrderEditPatch) => void;
   selectedOrderForModal: Order | null;
   setSelectedOrderForModal: (order: Order | null) => void;
   selectedReceiptOrder: Order | null;
   setSelectedReceiptOrder: (order: Order | null) => void;
+
+  // ==========================================================
+  // CONTAS / CHECKS  (atendimento financeiro —≠ mesa e ≠ pedido)
+  // ==========================================================
+  accounts: Account[];
+  /** Contas que aceitam novos lançamentos. */
+  openAccounts: Account[];
+  getAccount: (contaId: string) => Account | undefined;
+  getAccountByNumber: (numero: number) => Account | undefined;
+  /** Cria uma nova conta (novo atendimento financeiro). */
+  createAccount: (input: CreateAccountInput) => Account;
+  /** Lançamentos da conta em ordem de sequência. */
+  getAccountOrders: (contaId: string) => Order[];
+  /** Próxima sequência comercial do lançamento (max(sequencia)+1). */
+  getNextSequence: (contaId: string) => number;
+  /** Localiza contas por número, lançamento, mesa, cliente, valor e status. */
+  searchAccounts: (filters: AccountSearchFilters) => Account[];
+  /** Baixa o pagamento distribuindo nos lançamentos da conta. */
+  payAccount: (contaId: string, formaId: PaymentMethodId, valor?: number, valorRecebido?: number, observacao?: string) => Order[];
+  /** Encerra a conta. Exige saldo zero e registra autor/motivo. */
+  closeAccount: (contaId: string, motivo?: string) => Account;
+  /** Move a conta para outra mesa. A conta e os lançamentos continuam os mesmos. */
+  transferAccount: (contaId: string, toTableNumber: number) => Account;
+  /** Divide a conta: os itens escolhidos vão para uma nova conta filha. */
+  splitAccount: (input: AccountSplitInput) => AccountSplitResult;
+  /** Une duas contas abertas preservando o histórico de origem. */
+  mergeAccounts: (sourceAccountId: string, targetAccountId: string) => Account;
+  /** Registra um novo lançamento na conta indicated (sem inferir pela mesa). */
+  addOrderToAccount: (contaId: string, data: Partial<Order>) => Order;
+
 
   // Manual Payments (No gateway, manual employee registration)
   paymentOptions: ManualPaymentOption[];
@@ -184,6 +230,7 @@ interface RestaurantDatabaseSnapshot {
   menu?: MenuItem[];
   menuCategories?: MenuCategory[];
   orders?: Order[];
+  accounts?: Account[];
   paymentOptions?: ManualPaymentOption[];
   tables?: Table[];
   cashRegister?: CashRegister;
@@ -196,6 +243,12 @@ const normalizeMenuItem = (item: any): MenuItem => ({ ...item, catalogo: item.ca
 
 const normalizeOrder = (order: any): Order => ({
   ...order,
+  contaId: order.contaId || order.mesaSessaoId,
+  contaNumero: Number.isFinite(Number(order.contaNumero)) ? Number(order.contaNumero)
+    : Number.isFinite(Number(order.mesaSessaoNumero)) ? Number(order.mesaSessaoNumero) : undefined,
+  sequencia: Number.isFinite(Number(order.sequencia)) ? Number(order.sequencia)
+    : Number.isFinite(Number(order.mesaPedidoSequencia)) ? Number(order.mesaPedidoSequencia) : undefined,
+  codigoExibicao: order.codigoExibicao || order.codigoMesa,
   mesaSessaoId: order.mesaSessaoId,
   mesaSessaoNumero: Number.isFinite(Number(order.mesaSessaoNumero)) ? Number(order.mesaSessaoNumero) : undefined,
   mesaPedidoSequencia: Number.isFinite(Number(order.mesaPedidoSequencia)) ? Number(order.mesaPedidoSequencia) : undefined,
@@ -206,6 +259,39 @@ const normalizeOrder = (order: any): Order => ({
   pagamentos: asArray(order.pagamentos, [] as Order['pagamentos']),
   impressoes: asArray(order.impressoes, [])
 });
+
+const normalizeAccount = (account: any): Account => ({
+  ...account,
+  numero: Number(account.numero) || 0,
+  status: (['aberta', 'paga', 'encerrada'] as const).includes(account.status) ? account.status : 'aberta',
+  total: Number(account.total) || 0,
+  valorPago: Number(account.valorPago) || 0,
+  saldoRestante: Number(account.saldoRestante) || 0
+});
+
+/**
+ * Aplica a migração CONTA sobre um snapshot inteiro. Só reconstrói a ocupação
+ * das mesas quando existe histórico de pedidos — assim a carga inicial não
+ * apaga a ocupação demo de uma instalação nova.
+ */
+const applyAccountModel = (snapshot: RestaurantDatabaseSnapshot): RestaurantDatabaseSnapshot => {
+  const orders = asArray(snapshot.orders, [] as Order[]).map(normalizeOrder);
+  const tables = asArray(snapshot.tables, [] as Table[]);
+  if (!orders.length) {
+    return { ...snapshot, orders, accounts: asArray(snapshot.accounts, [] as Account[]).map(normalizeAccount) };
+  }
+  const migrated = migrateOrdersToAccounts(
+    orders,
+    tables,
+    asArray(snapshot.accounts, [] as Account[]).map(normalizeAccount)
+  );
+  return {
+    ...snapshot,
+    orders: migrated.orders,
+    accounts: migrated.accounts,
+    tables: reconcileTableOccupancy(tables, migrated.accounts, migrated.orders)
+  };
+};
 
 export const normalizePrinter = (printer: any): PrinterDevice => ({
   ...printer,
@@ -245,7 +331,11 @@ const loadRestaurantDatabase = (): RestaurantDatabaseSnapshot => {
 
   const savedDatabase = parse<RestaurantDatabaseSnapshot>(localStorage.getItem(DATABASE_STORAGE_KEY));
   if (savedDatabase) {
-    return { ...savedDatabase, menu: (savedDatabase.menu || INITIAL_MENU).map(normalizeMenuItem), orders: (savedDatabase.orders || []).map(normalizeOrder), printers: (savedDatabase.printers || []).map(normalizePrinter), printQueue: (savedDatabase.printQueue || []).map(normalizePrintJob) };
+    return applyAccountModel({ ...savedDatabase,
+      menu: (savedDatabase.menu || INITIAL_MENU).map(normalizeMenuItem),
+      orders: (savedDatabase.orders || []).map(normalizeOrder),
+      printers: (savedDatabase.printers || []).map(normalizePrinter),
+      printQueue: (savedDatabase.printQueue || []).map(normalizePrintJob) });
   }
 
   // Migração única: importa o armazenamento antigo para o banco unificado.
@@ -257,7 +347,7 @@ const loadRestaurantDatabase = (): RestaurantDatabaseSnapshot => {
     return undefined;
   };
 
-  return {
+  return applyAccountModel({
     alerts: readLegacy<SystemAlert[]>('alerts'),
     menu: (readLegacy<MenuItem[]>('menu') || INITIAL_MENU).map(normalizeMenuItem),
     orders: (readLegacy<Order[]>('orders') || []).map(normalizeOrder),
@@ -266,7 +356,7 @@ const loadRestaurantDatabase = (): RestaurantDatabaseSnapshot => {
     cashRegister: readLegacy<CashRegister>('cash'),
     printers: ((readLegacy<PrinterDevice[]>('printers')?.length ? readLegacy<PrinterDevice[]>('printers') : INITIAL_PRINTERS) || []).map(normalizePrinter),
     printQueue: (readLegacy<PrintJob[]>('print_queue') || []).map(normalizePrintJob)
-  };
+  });
 };
 
 const clearDemoTableOccupancy = (tables: Table[]): Table[] => tables.map(table => ({
@@ -377,6 +467,12 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const [orders, setOrders] = useStoreField<Order[]>(store, 'orders', () => {
     return database.operationalDemoResetApplied ? (database.orders || []) : [];
   });
+  // =============================================================
+  // CONTAS (CHECKS) — unidade financeiro do atendimento.
+  // Sempre carregada junto dos pedidos: a migração reconstrói as contas
+  // a partir do histórico (mesaSessaoId -> contaId) sem perder nada.
+  // =============================================================
+  const [accounts, setAccounts] = useStoreField<Account[]>(store, 'accounts', () => database.accounts || []);
   const [selectedOrderForModal, setSelectedOrderForModal] = useState<Order | null>(null);
   const [selectedReceiptOrder, setSelectedReceiptOrder] = useState<Order | null>(null);
 
@@ -480,10 +576,17 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         setMenuCategories(asArray(remote.menuCategories, DEFAULT_MENU_CATEGORIES));
         setAlerts(remote.operationalDemoResetApplied ? asArray(remote.alerts, []) : []);
         setMenu(asArray(remote.menu, database.menu || INITIAL_MENU).map(normalizeMenuItem));
-        setOrders(remote.operationalDemoResetApplied ? asArray(remote.orders, []) : []);
+        const remoteSnapshot = applyAccountModel({
+          ...remote,
+          orders: remote.operationalDemoResetApplied ? asArray(remote.orders, []) : [],
+          accounts: asArray(remote.accounts, []),
+          tables: asArray(remote.tables, database.tables || INITIAL_TABLES)
+        });
+        setOrders(remoteSnapshot.orders);
+        setAccounts(remoteSnapshot.accounts);
         setPaymentOptions(asArray(remote.paymentOptions, database.paymentOptions || INITIAL_MANUAL_PAYMENTS));
-        const remoteTables = asArray(remote.tables, database.tables || INITIAL_TABLES);
-        setTables(remote.operationalDemoResetApplied ? remoteTables : clearDemoTableOccupancy(remoteTables));
+        const remoteTables = remoteSnapshot.tables.length ? remoteSnapshot.tables : (remote.operationalDemoResetApplied ? asArray(remote.tables, INITIAL_TABLES) : clearDemoTableOccupancy(asArray(remote.tables, INITIAL_TABLES)));
+        setTables(remoteTables);
         setCashRegister(remote.cashRegister || database.cashRegister || EMPTY_CASH_REGISTER);
         setPrinters(asArray(remote.printers, database.printers || INITIAL_PRINTERS).map(normalizePrinter));
         setPrintQueue(asArray(remote.printQueue, []).map(normalizePrintJob));
@@ -672,19 +775,212 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     ...structuredClone(item),
     cartItemId: item.cartItemId || uid('item')
   }));
-  const syncTableTotals = (order: Order) => {
-    if (order.tipo !== 'mesa' || !order.mesaSessaoId || order.mesaNumero === undefined) return;
-    const sessionTotal = store.state.orders
-      .filter((o: Order) => o.tipo === 'mesa' && o.mesaNumero === order.mesaNumero && o.mesaSessaoId === order.mesaSessaoId && o.status !== 'cancelado')
-      .reduce((sum: number, o: Order) => sum + o.saldoRestante, 0);
-    setTables(prev => prev.map(t => t.numero === order.mesaNumero ? { ...t, valorAtual: money(sessionTotal), pedidoAtivoId: order.id } : t));
+
+  // =================================================================
+  // NÚCLEO: CONTA (CHECK) x LANÇAMENTO x MESA
+  //
+  // Regras invioláveis implementadas aqui:
+  //  1. Toda alteração financeira é feita por conta (contaId), nunca por
+  //     número de mesa.
+  //  2. A ocupação física da mesa só é alterada pela conta que a ocupa
+  //     (table.contaAtualId === contaId). Pagamento de conta antiga nunca
+  //     toca na mesa ocupada por outra conta.
+  //  3. Espelho conclui o preparo do lançamento. Só quando não resta nenhum
+  //     lançamento aguardando espelho NA CONTA, a mesa é liberada.
+  //  4. Liberar mesa ≠ pagar ≠ encerrar conta ≠ apagar histórico.
+  // =================================================================
+
+  const accountList = (): Account[] => store.state.accounts as Account[];
+  const orderList = (): Order[] => store.state.orders as Order[];
+  const tableList = (): Table[] => store.state.tables as Table[];
+
+  const accountById = (contaId?: string): Account | undefined =>
+    contaId ? accountList().find(a => a.id === contaId) : undefined;
+  const tableByNumber = (numero?: number): Table | undefined =>
+    numero === undefined ? undefined : tableList().find(t => t.numero === numero);
+  const ordersOfAccount = (contaId: string): Order[] => accountOrders(orderList(), contaId);
+
+  /** Lançamentos da conta que ainda NÃO tiveram espelho (preparo pendente). */
+  const pendingMirrorOf = (contaId: string): Order[] => ordersAwaitingMirror(orderList(), contaId);
+
+  /**
+   * Espelha a ocupação da mesa a partir da conta.
+   * Só mexe na mesa que ESTA conta ocupa. Qualquer outra conta é intocável.
+   */
+  const syncTableOccupation = (contaId: string) => {
+    const account = accountById(contaId);
+    if (!account || account.mesaAtualNumero === undefined) return;
+    setTables(prev => prev.map(t => {
+      if (t.numero !== account.mesaAtualNumero) return t;
+      if (t.contaAtualId !== contaId) return t; // ISOLAMENTO DE CONTAS
+      const own = ordersOfAccount(contaId).filter(o => o.status !== 'cancelado');
+      return {
+        ...t,
+        valorAtual: money(account.saldoRestante),
+        pedidoAtivoId: own.length ? own[own.length - 1].id : t.pedidoAtivoId
+      };
+    }));
   };
+
+  /**
+   * Recalcula total/pago/saldo/status da conta a partir dos lançamentos.
+   * `paga` só é alcançada por baixa financeira; `encerrada` é explícita.
+   */
+  const syncAccountTotals = (contaId: string) => {
+    if (!contaId) return;
+    const { total, valorPago, saldoRestante } = computeAccountTotals(orderList(), contaId);
+    setAccounts(prev => prev.map(a => {
+      if (a.id !== contaId) return a;
+      const status = deriveAccountStatus(a.status, saldoRestante, total);
+      return {
+        ...a,
+        total,
+        valorPago,
+        saldoRestante,
+        status,
+        ...(status === 'paga' && !a.pagaEm ? { pagaEm: new Date().toISOString() } : {})
+      };
+    }));
+    syncTableOccupation(contaId);
+  };
+
+  /**
+   * Compatibilidade: o nome antigo continua existindo, mas resolve a conta do
+   * lançamento. Nunca mais procura a mesa apenas por `order.mesaNumero`.
+   */
+  const syncTableTotals = (order: Order) => {
+    if (!order?.contaId) return;
+    syncAccountTotals(order.contaId);
+  };
+
+  /** Ocupa fisicamente a mesa com a conta informada. */
+  const occupyTable = (table: Table, account: Account, pessoas?: number) => {
+    setTables(prev => prev.map(t => {
+      if (t.id !== table.id) return t;
+      // Uma mesa com conta atual de OUTRA conta não é sequestrada.
+      if (t.contaAtualId && t.contaAtualId !== account.id) return t;
+      return {
+        ...t,
+        status: (t.status === 'conta' || t.status === 'fechando') ? t.status : 'ocupada',
+        contaAtualId: account.id,
+        contaAtualNumero: account.numero,
+        sessaoAtivaId: account.id,
+        sessaoNumero: account.numero,
+        ultimaContaId: account.id,
+        ultimaContaNumero: account.numero,
+        pedidoAtivoId: ordersOfAccount(account.id).filter(o => o.status !== 'cancelado').slice(-1)[0]?.id,
+        clienteNome: account.nomeCliente || t.clienteNome,
+        garcomResponsavel: t.garcomResponsavel || currentUser?.nome,
+        abertaEm: t.abertaEm || account.abertaEm,
+        pessoasSentadas: pessoas ?? t.pessoasSentadas
+      };
+    }));
+  };
+
+  /**
+   * Libera apenas a OCUPAÇÃO física. Não paga, não encerra conta e não apaga
+   * pedidos. O histórico (ultimaConta*) continua na mesa.
+   */
+  const releaseTableOccupation = (tableNumber: number) => {
+    setTables(prev => prev.map(t => t.numero !== tableNumber ? t : {
+      ...t,
+      status: 'livre',
+      pedidoAtivoId: undefined,
+      contaAtualId: undefined,
+      contaAtualNumero: undefined,
+      sessaoAtivaId: undefined,
+      sessaoNumero: undefined,
+      clienteNome: undefined,
+      abertaEm: undefined,
+      valorAtual: 0,
+      pessoasSentadas: undefined
+    }));
+  };
+
+  /**
+   * Cria uma CONTA (novo atendimento financeiro). Só uma nova conta abre um
+   * novo atendimento — o espelho NUNCA cria conta por conta própria.
+   */
+  const createAccount = (input: CreateAccountInput): Account => {
+    const table = input.mesaNumero !== undefined ? tableByNumber(input.mesaNumero) : undefined;
+    if (input.mesaNumero !== undefined && !table) throw new Error('Mesa inexistente.');
+    if (input.id && accountById(input.id)) throw new Error('Já existe uma conta com este identificador.');
+    const numero = input.numero ?? nextAccountNumber(accountList());
+    const id = input.id || uid('acc');
+    const tipo = input.tipo || (table ? 'mesa' : 'balcao');
+    const account: Account = {
+      id,
+      numero,
+      tipo,
+      nomeCliente: input.nomeCliente,
+      telefoneCliente: input.telefoneCliente,
+      mesaOriginalId: table?.id,
+      mesaOriginalNumero: table?.numero,
+      mesaAtualId: table?.id,
+      mesaAtualNumero: table?.numero,
+      status: input.status || 'aberta',
+      abertaEm: input.abertaEm || new Date().toISOString(),
+      total: Number(input.total) || 0,
+      valorPago: Number(input.valorPago) || 0,
+      saldoRestante: Number(input.saldoRestante) || 0,
+      origem: input.origem || (table ? 'mesa' : tipo === 'delivery' ? 'delivery' : 'balcao'),
+      contaPaiId: input.contaPaiId,
+      observacoes: input.observacoes,
+      criadaPor: input.criadaPor || currentUser?.nome,
+      mesaSessaoId: table ? id : undefined,
+      mesaSessaoNumero: table ? numero : undefined
+    };
+    setAccounts(prev => [...prev, account]);
+    if (table) occupyTable(table, account, input.pessoas);
+    recordAudit('abriu conta', 'conta', account.id, `Conta ${account.numero}${table ? ` • Mesa ${table.numero}` : ''}`);
+    return account;
+  };
+
+  /**
+   * Decide a conta de um novo lançamento, na ordem de precedência:
+   *  1. contaId explícito (o operador escolheu "Adicionar lançamento");
+   *  2. conta ABERTA que ocupa a mesa ("continuar o atendimento");
+   *  3. nova conta ("Criar atendimento").
+   * Nunca deriva do saldo nem do status da mesa.
+   */
+  const resolveAccountForOrder = (data: Partial<Order>, table?: Table): Account => {
+    if (data.contaId) {
+      const account = accountById(data.contaId);
+      if (!account) throw new Error('A conta informada não existe.');
+      if (account.status === 'encerrada') throw new Error(`A Conta ${account.numero} está encerrada e não aceita novos lançamentos.`);
+      if (account.status === 'paga') throw new Error(`A Conta ${account.numero} já está quitada. Abra um novo atendimento para o próximo cliente.`);
+      if (table && account.mesaAtualNumero !== undefined && account.mesaAtualNumero !== table.numero) {
+        throw new Error(`A Conta ${account.numero} pertence à Mesa ${account.mesaAtualNumero}. Transfira a conta antes de lançar itens.`);
+      }
+      return account;
+    }
+    if (table) {
+      const current = accountById(table.contaAtualId);
+      if (isAccountOpen(current)) return current;
+      // Mesa livre COM conta aberta e saldo (o espelho do último lançamento
+      // liberou a mesa, mas o cliente continua na mesa): o novo lançamento
+      // continua o mesmo atendimento. Sem saldo, é um novo cliente.
+      const pending = accountList()
+        .filter(a => a.status === 'aberta' && a.saldoRestante > 0
+          && (a.mesaAtualNumero === table.numero || a.mesaOriginalNumero === table.numero))
+        .sort((a, b) => b.numero - a.numero)[0];
+      if (pending) return pending;
+    }
+    return createAccount({
+      tipo: data.tipo || (table ? 'mesa' : 'balcao'),
+      nomeCliente: data.nomeCliente,
+      telefoneCliente: data.telefoneCliente,
+      mesaNumero: table?.numero
+    });
+  };
+
   const activePrinters = () => store.state.printers.filter((p: PrinterDevice) => p.ativa && p.status === 'online');
   const buildOrderPrintContent = (order: Order, title: string, items = order.itens) => {
     const s = store.state.settings as RestaurantSettings;
     const headerName = (s?.nomeFantasia || s?.nomeCurto || 'ESTABELECIMENTO').toUpperCase();
     const lines = [
-      headerName, title, `PEDIDO ${order.codigoMesa ? order.codigoMesa + ' • ' : ''}#${order.numero}`, `TIPO: ${order.tipo.toUpperCase()}`,
+      headerName, title, `PEDIDO #${order.numero}${order.codigoExibicao ? ` • ${order.codigoExibicao}` : ''}`, `TIPO: ${order.tipo.toUpperCase()}`,
+      order.contaNumero !== undefined ? `CONTA: ${order.contaNumero} • LANÇAMENTO: ${order.sequencia ?? 1}` : '',
       order.mesaNumero ? `MESA: ${order.mesaNumero}` : '', order.nomeCliente ? `CLIENTE: ${order.nomeCliente}` : '',
       order.telefoneCliente ? `TELEFONE: ${order.telefoneCliente}` : '',
       order.tipo === 'delivery' && order.enderecoEntrega ? `ENDEREÇO: ${order.enderecoEntrega.logradouro}, ${order.enderecoEntrega.numero} - ${order.enderecoEntrega.bairro}` : '',
@@ -833,92 +1129,82 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       espelhoGeradoEm: result.jobs[0]?.dataHora
     } : item);
     setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: 'pronto', impressoes: nextBatches } : o));
-    // Regra de salão: com o espelho gerado o preparo da mesa está concluído.
-    // Quando não sobra nenhum pedido da sessão aguardando espelho, a mesa volta
-    // a ficar livre. Eventual débito permanece nos pedidos (visível em Pedidos).
-    if (order.tipo === 'mesa' && order.mesaNumero !== undefined) {
-      const sessionId = order.mesaSessaoId;
-      const stillAwaitingMirror = store.state.orders.some(o =>
-        o.tipo === 'mesa' && o.status === 'novo' && (sessionId
-          ? o.mesaSessaoId === sessionId
-          : o.mesaNumero === order.mesaNumero && !o.mesaSessaoId));
-      if (!stillAwaitingMirror) {
-        setTables(prev => prev.map(t => t.numero === order.mesaNumero ? {
-          ...t,
-          status: 'livre',
-          pedidoAtivoId: undefined,
-          sessaoAtivaId: undefined,
-          sessaoNumero: undefined,
-          clienteNome: undefined,
-          abertaEm: undefined,
-          valorAtual: 0,
-          pessoasSentadas: undefined
-        } : t));
+    recordAudit('gerou espelho', 'pedido', orderId, `Lançamento ${order.codigoExibicao || order.codigoMesa || order.numero} • conclui preparo (não paga a conta)`);
+    // REGRA DO SALÃO: com o espelho gerado o preparo daquele lançamento acaba.
+    // Se é o ÚLTIMO lançamento da conta ainda aguardando espelho, a mesa volta
+    // a ficar livre — e SOMENTE se esta conta for a que ocupa a mesa.
+    // O débito permanece nos lançamentos, visível na Central de Contas.
+    const contaId = order.contaId;
+    if (order.tipo === 'mesa' && contaId) {
+      const table = tableByNumber(order.mesaNumero);
+      const isCurrentOfTable = !!table && table.contaAtualId === contaId;
+      if (isCurrentOfTable && isLastOperationalOrder(orderList(), contaId, orderId)) {
+        releaseTableOccupation(table!.numero);
+        recordAudit('liberou mesa por espelho', 'mesa', table!.id, `Mesa ${table!.numero} • último lançamento da Conta ${accountById(contaId)?.numero} concluído`);
       }
     }
   };
 
-  const getNextTableSession = (tableNumber: number) => {
-    const table = store.state.tables.find((t: Table) => t.numero === tableNumber) as Table | undefined;
-    if (!table) throw new Error('Mesa inexistente.');
-    if (table.sessaoAtivaId && table.sessaoNumero) {
-      return { id: table.sessaoAtivaId, numero: table.sessaoNumero };
-    }
-    const previousNumbers = store.state.orders
-      .filter((o: Order) => o.tipo === 'mesa' && o.mesaNumero === tableNumber && Number.isFinite(Number(o.mesaSessaoNumero)))
-      .map((o: Order) => Number(o.mesaSessaoNumero));
-    const numero = Math.max(0, ...previousNumbers) + 1;
-    const id = uid(`mesa-${tableNumber}-sess`);
-    setTables(prev => prev.map(t => t.numero === tableNumber ? {
-      ...t,
-      status: t.status === 'conta' ? 'conta' : 'ocupada',
-      sessaoAtivaId: id,
-      sessaoNumero: numero,
-      abertaEm: t.abertaEm || new Date().toISOString(),
-    } : t));
-    return { id, numero };
-  };
+  /** Próxima sequência comercial do lançamento: max(sequencia) + 1. */
+  const getNextSequence = (contaId: string) => nextOrderSequence(orderList(), contaId);
 
-  const getNextTableOrderSequence = (sessionId: string) => {
-    const sequences = store.state.orders
-      .filter((o: Order) => o.mesaSessaoId === sessionId)
-      .map((o: Order) => Number(o.mesaPedidoSequencia))
-      .filter(Number.isFinite);
-    return Math.max(-1, ...sequences) + 1;
-  };
 
+  /**
+   * Cria um LANÇAMENTO (pedido) dentro de uma conta.
+   *
+   * A numeração comercial é `contaNumero.sequencia` (ex.: 0.1, 0.2, 0.3) e a
+   * sequência é SEMPRE `max(sequencia) + 1` da conta — ela nunca reinicia por
+   * causa de mesa liberada e nunca usa `Date.now()`.
+   */
   const createOrder = (data: Partial<Order>): Order => {
     if (data.operacaoId) {
-      const existing = store.state.orders.find((o: Order) => o.operacaoId === data.operacaoId);
+      const existing = orderList().find((o: Order) => o.operacaoId === data.operacaoId);
       if (existing) return existing;
     }
     if (!store.state.cashRegister.aberto) throw new Error('Abra o caixa antes de vender.');
     if (!data.itens?.length) throw new Error('Adicione produtos ao pedido.');
     const values = totals(data.itens, data.desconto, data.taxaServico, data.taxaEntrega);
-    const table = data.tipo === 'mesa' ? store.state.tables.find((t: Table) => t.numero === data.mesaNumero) as Table | undefined : undefined;
+    const table = data.tipo === 'mesa' ? tableByNumber(data.mesaNumero) : undefined;
     if (data.tipo === 'mesa' && !table) throw new Error('Mesa inexistente.');
-    if (data.tipo === 'mesa' && table.status === 'ocupada' && !data.mesaSessaoId && !table.sessaoAtivaId) {
-      throw new Error('Mesa inexistente ou com pedido ativo. Adicione itens à conta existente.');
-    }
+    // 1) conta explícita -> 2) conta aberta da mesa -> 3) nova conta
+    const account = resolveAccountForOrder(data, table);
     const items = snapshotItems(data.itens);
-    let mesaSessaoId = data.mesaSessaoId || table?.sessaoAtivaId;
-    let mesaSessaoNumero = data.mesaSessaoNumero || table?.sessaoNumero;
-    let mesaPedidoSequencia = data.mesaPedidoSequencia;
-    if (table && table.sessaoAtivaId) {
-      const session = getNextTableSession(table.numero);
-      mesaSessaoId = session.id;
-      mesaSessaoNumero = session.numero;
-      mesaPedidoSequencia = getNextTableOrderSequence(session.id);
-    }
-    const codigoMesa = table && mesaSessaoNumero !== undefined && mesaPedidoSequencia !== undefined
-      ? `${mesaSessaoNumero}.${mesaPedidoSequencia}` : undefined;
-    const order: Order = { ...data, ...values, id: uid('ord'), operacaoId: data.operacaoId || uid('op'), numero: Math.max(1000, ...store.state.orders.map((o: Order) => o.numero)) + 1,
-      tipo: data.tipo || 'balcao', mesaSessaoId, mesaSessaoNumero, mesaPedidoSequencia, codigoMesa,
-      garcomNome: data.garcomNome || currentUser.nome, canal: data.canal || (data.tipo === 'mesa' ? 'Salão' : data.tipo === 'delivery' ? 'Delivery' : 'Balcão'), criadoEm: new Date().toISOString(), itens: items,
-      status: 'novo', statusPagamento: values.total === 0 ? 'pago' : 'pendente', pagamentos: [], valorTotalPago: 0, saldoRestante: values.total };
+    const sequencia = getNextSequence(account.id);
+    const codigoExibicao = buildDisplayCode(account.numero, sequencia);
+    const order: Order = {
+      ...data,
+      ...values,
+      id: uid('ord'),
+      operacaoId: data.operacaoId || uid('op'),
+      numero: Math.max(1000, ...orderList().map((o: Order) => o.numero)) + 1,
+      tipo: data.tipo || 'balcao',
+      contaId: account.id,
+      contaNumero: account.numero,
+      sequencia,
+      codigoExibicao,
+      mesaNumero: account.mesaAtualNumero ?? table?.numero,
+      mesaOriginalNumero: account.mesaOriginalNumero ?? table?.numero,
+      // espelhamento legado (modo de compatibilidade com o modelo anterior)
+      mesaSessaoId: account.id,
+      mesaSessaoNumero: account.numero,
+      mesaPedidoSequencia: sequencia,
+      codigoMesa: codigoExibicao,
+      garcomNome: data.garcomNome || currentUser.nome,
+      canal: data.canal || (data.tipo === 'mesa' ? 'Salão' : data.tipo === 'delivery' ? 'Delivery' : 'Balcão'),
+      criadoEm: new Date().toISOString(),
+      itens: items,
+      status: 'novo',
+      statusPagamento: values.total === 0 ? 'pago' : 'pendente',
+      pagamentos: [],
+      valorTotalPago: 0,
+      saldoRestante: values.total
+    };
     setOrders(prev => [order, ...prev]);
     if (order.clienteId) setCustomers(prev => prev.map(c => c.id === order.clienteId ? { ...c, ultimoPedidoEm: order.criadoEm, totalComprado: money((c.totalComprado || 0) + order.total) } : c));
-    if (table) setTables(prev => prev.map(t => t.id === table.id ? { ...t, status: 'ocupada', pedidoAtivoId: order.id, sessaoAtivaId: mesaSessaoId, sessaoNumero: mesaSessaoNumero, valorAtual: money((prev.filter(x => x.sessaoAtivaId === mesaSessaoId).reduce((sum, x) => sum + x.valorAtual, 0)) + order.saldoRestante), abertaEm: t.abertaEm || order.criadoEm } : t));
+    // A mesa é ocupada por ESTA conta. Se outra conta já ocupa a mesa, ela não
+    // é sequestrada (a nova conta fica sem mesa até ser transferida).
+    if (table) occupyTable(table, account);
+    syncAccountTotals(account.id);
     // Processar pagamentos incluídos no pedido (ex: venda balcão paga na hora).
     // addManualPaymentToOrder atualiza o store de forma síncrona via setOrders;
     // relemos o estado APÓS o loop para garantir que o pedido retornado já
@@ -931,10 +1217,15 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       }
     }
     dispatchItems(order);
-    recordAudit('criou pedido','pedido',order.id,`${order.tipo} • ${order.codigoMesa || '#' + order.numero}`);
+    recordAudit('criou pedido', 'pedido', order.id, `Lançamento ${codigoExibicao} • conta ${account.numero}`);
     // Retorna o pedido mais atualizado do store (com pagamentos aplicados).
-    return store.state.orders.find((o: Order) => o.id === order.id) ?? order;
+    return orderList().find((o: Order) => o.id === order.id) ?? order;
   };
+
+  /** Lançamento explicitamente em uma conta escolhida pelo operador. */
+  const addOrderToAccount = (contaId: string, data: Partial<Order>): Order =>
+    createOrder({ ...data, contaId });
+
 
   const updateOrderStatus = useCallback((orderId: string, status: OrderStatus) => {
     if (status === 'pronto') {
@@ -956,9 +1247,17 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     if (!motivo.trim()) throw new Error('Informe o motivo do cancelamento.');
     if (order.valorTotalPago > 0) throw new Error('Estorne os pagamentos antes de cancelar.');
     setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: 'cancelado', cancelamento: { motivo, usuario: currentUser.nome, dataHora: new Date().toISOString() } } : o));
-    if (order.tipo === 'mesa' && order.mesaSessaoId) {
-      const next = store.state.orders.find((o: Order) => o.mesaSessaoId === order.mesaSessaoId && o.id !== orderId && o.status !== 'cancelado' && o.saldoRestante > 0);
-      setTables(prev => prev.map(t => t.numero === order.mesaNumero ? { ...t, status: next ? t.status : 'livre', pedidoAtivoId: next?.id, valorAtual: next ? t.valorAtual : 0, clienteNome: next ? t.clienteNome : undefined, abertaEm: next ? t.abertaEm : undefined, sessaoAtivaId: next ? t.sessaoAtivaId : undefined, sessaoNumero: next ? t.sessaoNumero : undefined } : t));
+    // A mesa só é liberada se ESTA conta a ocupava e não sobrou nenhum
+    // lançamento válido com saldo. Cancelar nunca toca em conta alheia.
+    if (order.tipo === 'mesa' && order.contaId) {
+      syncAccountTotals(order.contaId);
+      const account = accountById(order.contaId);
+      const table = tableByNumber(order.mesaNumero);
+      const own = ordersOfAccount(order.contaId).filter(o => o.status !== 'cancelado');
+      if (table && table.contaAtualId === order.contaId && !own.some(o => o.saldoRestante > 0)) {
+        releaseTableOccupation(table.numero);
+        recordAudit('liberou mesa', 'mesa', table.id, `Mesa ${table.numero} • lançamento cancelado, conta ${account?.numero} sem saldo`);
+      }
     }
     recordAudit('cancelou pedido','pedido',orderId,motivo);
   };
@@ -992,6 +1291,16 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     setOrders(prev => prev.map(o => o.id === orderId ? next : o));
     syncTableTotals(next);
     dispatchItems(next, added, 'pedido_adicional');
+    // O lançamento voltou para "aguardando espelho". Se a conta é a que ocupa
+    // a mesa, a ocupação é retomada; se outra conta já ocupa a mesa, nada muda.
+    const account = accountById(next.contaId);
+    if (account && account.status === 'aberta' && account.mesaAtualNumero !== undefined) {
+      const table = tableByNumber(account.mesaAtualNumero);
+      if (table && (!table.contaAtualId || table.contaAtualId === account.id)) {
+        occupyTable(table, account);
+        recordAudit('reocupou mesa', 'mesa', table.id, `Mesa ${table.numero} • novo item na Conta ${account.numero} aguardando espelho`);
+      }
+    }
   };
 
   const applyOrderDiscount = (orderId: string, desconto: number, motivo: string) => {
@@ -1020,12 +1329,15 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     // envio para cozinha. Novas alterações/itens gerarão um novo par impresso.
     setOrders(prev => prev.map(o => o.id === id ? { ...reconcile(o), status: 'pronto', cancelamento: undefined } : o));
     recordAudit('reabriu pedido','pedido',id,motivo);
-    const reopened = order.tipo === 'mesa' && order.mesaNumero;
-    if (reopened) {
-      setTables(prev => prev.map(t => t.numero === order.mesaNumero ? {
-        ...t, status: 'ocupada', pedidoAtivoId: order.id, clienteNome: order.nomeCliente,
-        abertaEm: t.abertaEm || order.criadoEm, valorAtual: order.saldoRestante
-      } : t));
+    // Reabertura é operação PREPARO: a mesa volta a ser ocupada apenas pela
+    // conta que realmente a ocupa. Uma conta antiga nunca reocupa a mesa.
+    const account = accountById(order.contaId);
+    if (order.tipo === 'mesa' && account && account.status === 'aberta') {
+      const table = account.mesaAtualNumero !== undefined ? tableByNumber(account.mesaAtualNumero) : tableByNumber(order.mesaNumero);
+      if (table && (!table.contaAtualId || table.contaAtualId === account.id)) {
+        occupyTable(table, account);
+        syncAccountTotals(account.id);
+      }
     }
   };
 
@@ -1153,167 +1465,363 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     setOrderForPaymentModal(null);
   }, []);
 
-  // Tables Management
-  const openTableWithOrder = useCallback((tableNumber: number, customerName?: string, pessoas: number = 2) => {
-    setTables(prev => prev.map(t => {
-      if (t.numero === tableNumber && t.status === 'livre') {
-        const previousNumbers = store.state.orders
-          .filter((o: Order) => o.tipo === 'mesa' && o.mesaNumero === tableNumber && Number.isFinite(Number(o.mesaSessaoNumero)))
-          .map((o: Order) => Number(o.mesaSessaoNumero));
-        const sessaoNumero = Math.max(0, ...previousNumbers) + 1;
-        return {
-          ...t,
-          status: 'ocupada',
-          clienteNome: customerName || 'Cliente Salão',
-          garcomResponsavel: currentUser.nome,
-          abertaEm: new Date().toISOString(),
-          pessoasSentadas: pessoas,
-          valorAtual: 0,
-          sessaoAtivaId: uid(`mesa-${tableNumber}-sess`),
-          sessaoNumero,
-          pedidoAtivoId: undefined,
-        };
-      }
-      return t;
-    }));
-  }, [setTables, currentUser]);
+  // =================================================================
+  // OPERAÇÕES DE CONTA (CHECK)
+  // =================================================================
 
-  const addItemsToTable = (number: number, items: CartItem[]) => {
-    const table = store.state.tables.find((t: Table) => t.numero === number) as Table | undefined;
-    if (!table || !items.length) return;
-    // Cada novo lançamento na mesa vira um novo pedido da mesma sessão:
-    // 1.0, 1.1, 1.2... O histórico nunca é sobrescrito.
-    createOrder({ tipo: 'mesa', mesaNumero: number, mesaSessaoId: table.sessaoAtivaId, mesaSessaoNumero: table.sessaoNumero, nomeCliente: table.clienteNome, itens: items });
+  const getAccount = (contaId: string) => accountById(contaId);
+  const getAccountByNumber = (numero: number) => accountList().find(a => a.numero === numero);
+  const getAccountOrders = (contaId: string) => ordersOfAccount(contaId);
+
+  /**
+   * Conta que pode ser cobrada a partir de uma mesa: a conta que ocupa a mesa
+   * ou, se ela já estiver livre, a conta ABERTA mais recente daquela mesa com
+   * saldo. Nunca inventa vínculo por número de mesa quando existe outra conta.
+   */
+  const settleableAccountOf = (table: Table): Account | undefined => {
+    const current = accountById(table.contaAtualId);
+    if (current && current.saldoRestante > 0) return current;
+    if (current && !current.saldoRestante) return current;
+    return accountList()
+      .filter(a => a.status !== 'encerrada' && a.saldoRestante > 0 && (a.mesaAtualNumero === table.numero || a.mesaOriginalNumero === table.numero))
+      .sort((a, b) => b.numero - a.numero)[0];
   };
 
-  const requestTableBill = useCallback((tableNumber: number) => {
-    setTables(prev => prev.map(t => t.numero === tableNumber ? { ...t, status: 'conta' } : t));
-  }, [setTables]);
-
-  const settleTableAccount = useCallback((tableNumber: number, method?: PaymentMethodId, amountPaid?: number, change?: number): Order | null => {
-    const table = store.state.tables.find((t: Table) => t.numero === tableNumber) as Table | undefined;
-    if (!table || table.status === 'livre') throw new Error('Esta mesa não possui uma sessão ativa.');
-    const sessionOrders = store.state.orders
-      .filter((o: Order) => o.tipo === 'mesa' && o.mesaNumero === tableNumber && (table.sessaoAtivaId ? o.mesaSessaoId === table.sessaoAtivaId : (o.id === table.pedidoAtivoId || (o.status !== 'cancelado' && o.status !== 'finalizado'))) && o.status !== 'cancelado')
-      .sort((a: Order, b: Order) => (a.mesaPedidoSequencia ?? 0) - (b.mesaPedidoSequencia ?? 0));
-    if (!sessionOrders.length) throw new Error('Esta mesa ainda não possui pedidos.');
-    const totalDue = money(sessionOrders.reduce((sum, o) => sum + o.saldoRestante, 0));
-    if (totalDue <= 0) {
-      setTables(prev => prev.map(t => t.numero === tableNumber ? { ...t, status: 'livre', pedidoAtivoId: undefined, sessaoAtivaId: undefined, sessaoNumero: undefined, clienteNome: undefined, abertaEm: undefined, valorAtual: 0, pessoasSentadas: undefined } : t));
-      return sessionOrders[sessionOrders.length - 1] || null;
-    }
-    if (!method) throw new Error('Selecione a forma de pagamento antes de fechar a conta.');
-    const requested = amountPaid === undefined ? totalDue : Math.min(totalDue, amount(amountPaid, 'Pagamento', false));
+  /**
+   * Baixa financeira da CONTA: distribui o valor recebido nos lançamentos
+   * (ordem de sequência) e, quando o saldo zera, conclui o atendimento.
+   *
+   * Não confunde com o espelho: o espelho NÃO paga. E nunca altera a mesa de
+   * outra conta — só libera a mesa quando ESTA conta é a que a ocupa.
+   */
+  const payAccount = (contaId: string, formaId: PaymentMethodId, valor?: number, valorRecebido?: number, observacao?: string): Order[] => {
+    const account = accountById(contaId);
+    if (!account) throw new Error('Conta não encontrada.');
+    if (account.status === 'encerrada') throw new Error(`A Conta ${account.numero} está encerrada e não recebe lançamentos.`);
+    const own = ordersOfAccount(contaId).filter(o => o.status !== 'cancelado');
+    if (!own.length) throw new Error('Esta conta ainda não possui lançamentos.');
+    const totalDue = money(own.reduce((sum, o) => sum + o.saldoRestante, 0));
+    if (totalDue <= 0) return [];
+    if (!formaId) throw new Error('Selecione a forma de pagamento antes de cobrar a conta.');
+    const requested = valor === undefined ? totalDue : Math.min(totalDue, amount(valor, 'Pagamento', false));
     if (requested <= 0) throw new Error('Informe um valor de pagamento válido.');
     let remaining = requested;
-    for (const order of sessionOrders) {
+    const paid: Order[] = [];
+    for (const order of own) {
       if (remaining <= 0) break;
       const pay = Math.min(order.saldoRestante, remaining);
       if (pay <= 0) continue;
-      const received = order === sessionOrders[0] && change !== undefined && method === 'dinheiro' ? Math.max(pay, pay + Math.max(0, change)) : pay;
-      if (!addManualPaymentToOrder(order.id, method, pay, received, `Baixa manual da Mesa ${tableNumber} • Pedido ${order.codigoMesa || order.numero}`)) {
-        throw new Error('Falha ao registrar pagamento da mesa. Verifique se o caixa está aberto.');
+      const first = paid.length === 0;
+      const received = first && formaId === 'dinheiro' && valorRecebido !== undefined
+        ? Math.max(pay, valorRecebido)
+        : pay;
+      const label = observacao || `Baixa da Conta ${account.numero} • Lançamento ${order.codigoExibicao || order.numero}`;
+      if (!addManualPaymentToOrder(order.id, formaId, pay, received, label)) {
+        throw new Error('Falha ao registrar o pagamento. Verifique se o caixa está aberto e a forma de pagamento está ativa.');
       }
+      paid.push(order);
       remaining = money(remaining - pay);
     }
-    const updatedOrders = store.state.orders.filter((o: Order) => sessionOrders.some(x => x.id === o.id));
-    const stillDue = money(updatedOrders.reduce((sum, o) => sum + o.saldoRestante, 0));
-    const lastOrder = updatedOrders[updatedOrders.length - 1] || sessionOrders[sessionOrders.length - 1];
+    if (!paid.length) throw new Error('Não foi possível registrar o pagamento.');
+    const stillDue = money(ordersOfAccount(contaId).reduce((sum, o) => sum + (o.status === 'cancelado' ? 0 : o.saldoRestante), 0));
     if (stillDue > 0) {
-      setTables(prev => prev.map(t => t.numero === tableNumber ? { ...t, status: 'conta', valorAtual: stillDue } : t));
-      return lastOrder;
+      recordAudit('registrou pagamento', 'conta', contaId, `Conta ${account.numero} • parcial • restante ${formatBRL(stillDue)}`);
+      return paid;
     }
-    setOrders(prev => prev.map(o => sessionOrders.some(x => x.id === o.id) ? { ...o, status: 'finalizado' } : o));
-    const finalized = updatedOrders.map(o => ({ ...o, status: 'finalizado' as const }));
-    setTables(prev => prev.map(t => t.numero === tableNumber ? { ...t, status: 'livre', pedidoAtivoId: undefined, sessaoAtivaId: undefined, sessaoNumero: undefined, clienteNome: undefined, abertaEm: undefined, valorAtual: 0, pessoasSentadas: undefined } : t));
-    return finalized[finalized.length - 1] || lastOrder;
-  }, [setTables, setOrders, store]);
+    // Conta quitada: conclui o atendimento dos lançamentos e libera a mesa
+    // SOMENTE se esta conta for a que a ocupa.
+    setOrders(prev => prev.map(o => o.contaId === contaId && o.status !== 'cancelado' && o.status !== 'finalizado'
+      ? { ...o, status: 'finalizado' } : o));
+    const table = account.mesaAtualNumero !== undefined ? tableByNumber(account.mesaAtualNumero) : undefined;
+    if (table && table.contaAtualId === contaId) {
+      releaseTableOccupation(table.numero);
+      recordAudit('liberou mesa', 'mesa', table.id, `Mesa ${table.numero} • Conta ${account.numero} quitada`);
+    }
+    syncAccountTotals(contaId);
+    recordAudit('pagou conta', 'conta', contaId, `Conta ${account.numero} • ${paid.length} lançamento(s) baixado(s)`);
+    return paid;
+  };
 
-  const freeTableManually = useCallback((tableNumber: number) => {
-    setTables(prev => prev.map(t => {
-      if (t.numero === tableNumber) {
-        return {
-          ...t,
-          status: 'livre',
-          pedidoAtivoId: undefined,
-          sessaoAtivaId: undefined,
-          sessaoNumero: undefined,
-          clienteNome: undefined,
-          abertaEm: undefined,
-          valorAtual: 0,
-          pessoasSentadas: undefined
-        };
+  /**
+   * ENCERRAMENTO DA CONTA: etapa explícita e separada do pagamento.
+   * A mesa não precisa estar ocupada. Depois disso a conta não aceita novos
+   * lançamentos.
+   */
+  const closeAccount = (contaId: string, motivo?: string): Account => {
+    const account = accountById(contaId);
+    if (!account) throw new Error('Conta não encontrada.');
+    if (account.status === 'encerrada') throw new Error(`A Conta ${account.numero} já está encerrada.`);
+    if (account.saldoRestante > 0) throw new Error(`A Conta ${account.numero} ainda tem ${formatBRL(account.saldoRestante)} em aberto. Registre o pagamento antes de encerrar.`);
+    const agora = new Date().toISOString();
+    setAccounts(prev => prev.map(a => a.id === contaId ? {
+      ...a,
+      status: 'encerrada',
+      encerradaEm: agora,
+      encerramento: { usuario: currentUser?.nome || 'sistema', dataHora: agora, motivo: motivo?.trim() || undefined }
+    } : a));
+    // A conta encerrada não ocupa mais a mesa. O histórico permanece.
+    const table = account.mesaAtualNumero !== undefined ? tableByNumber(account.mesaAtualNumero) : undefined;
+    if (table && table.contaAtualId === contaId) releaseTableOccupation(table.numero);
+    recordAudit('encerrou conta', 'conta', contaId, `Conta ${account.numero}${motivo ? ` • ${motivo}` : ''}`);
+    return { ...account, status: 'encerrada', encerradaEm: agora };
+  };
+
+  /** TRANSFERÊNCIA DE MESA: a conta e os lançamentos continuam os mesmos. */
+  const transferAccount = (contaId: string, toTableNumber: number): Account => {
+    const account = accountById(contaId);
+    if (!account) throw new Error('Conta não encontrada.');
+    if (account.status === 'encerrada') throw new Error(`A Conta ${account.numero} está encerrada e não pode ser transferida.`);
+    const target = tableByNumber(toTableNumber);
+    if (!target) throw new Error('Mesa inexistente.');
+    if (account.mesaAtualNumero === toTableNumber) return account;
+    if (target.contaAtualId && target.contaAtualId !== contaId) throw new Error(`A Mesa ${toTableNumber} já está ocupada por outra conta.`);
+    const from = account.mesaAtualNumero !== undefined ? tableByNumber(account.mesaAtualNumero) : undefined;
+    setAccounts(prev => prev.map(a => a.id === contaId ? {
+      ...a,
+      mesaAtualId: target.id,
+      mesaAtualNumero: target.numero,
+      mesaOriginalId: a.mesaOriginalId || target.id,
+      mesaOriginalNumero: a.mesaOriginalNumero ?? target.numero,
+      mesaSessaoId: a.mesaSessaoId || contaId,
+      mesaSessaoNumero: a.mesaSessaoNumero ?? a.numero
+    } : a));
+    // Os lançamentos mudam apenas a referência de mesa atual.
+    setOrders(prev => prev.map(o => o.contaId === contaId ? { ...o, mesaNumero: target.numero } : o));
+    if (from && from.contaAtualId === contaId) releaseTableOccupation(from.numero);
+    occupyTable(target, { ...account, mesaAtualId: target.id, mesaAtualNumero: target.numero });
+    syncAccountTotals(contaId);
+    recordAudit('transferiu conta', 'conta', contaId, `Conta ${account.numero} • Mesa ${from?.numero ?? '—'} → Mesa ${target.numero}`);
+    return { ...account, mesaAtualId: target.id, mesaAtualNumero: target.numero };
+  };
+
+  /**
+   * SPLIT DE CONTA: os itens escolhidos vão para uma nova conta filha.
+   * Lançamentos são copiados (nunca apagados) quando só parte dos itens sai.
+   */
+  const splitAccount = (input: AccountSplitInput): AccountSplitResult => {
+    const origin = accountById(input.contaId);
+    if (!origin) throw new Error('Conta não encontrada.');
+    if (origin.status !== 'aberta') throw new Error(`A Conta ${origin.numero} não está aberta para divisão.`);
+    const selected = new Set(input.itemIds || []);
+    if (!selected.size) throw new Error('Selecione ao menos um item para dividir a conta.');
+    const own = ordersOfAccount(origin.id).filter(o => o.status !== 'cancelado');
+    const movable = own.flatMap(o => o.itens).filter(i => selected.has(i.cartItemId));
+    if (!movable.length) throw new Error('Nenhum item selecionado pertence a esta conta.');
+    if (movable.length === own.reduce((sum, o) => sum + o.itens.length, 0)) {
+      throw new Error('A divisão precisa manter ao menos um item na conta original.');
+    }
+    const created: Order[] = [];
+    const touched: string[] = [];
+    for (const order of own) {
+      const kept = order.itens.filter(i => !selected.has(i.cartItemId));
+      const moving = order.itens.filter(i => selected.has(i.cartItemId));
+      if (!moving.length) continue;
+      const values = totals(moving, 0, order.taxaServico, order.taxaEntrega);
+      created.push({
+        ...order,
+        ...values,
+        id: uid('ord'),
+        operacaoId: uid('op'),
+        itens: moving.map(i => ({ ...structuredClone(i), cartItemId: uid('item') })),
+        valorTotalPago: 0,
+        saldoRestante: values.total,
+        statusPagamento: values.total === 0 ? 'pago' : 'pendente',
+        pagamentos: [],
+        impressoes: [],
+        observacoesGerais: `Divisão da Conta ${origin.numero}`
+      });
+      if (kept.length) {
+        const keptValues = totals(kept, order.desconto, order.taxaServico, order.taxaEntrega);
+        if (keptValues.total < order.valorTotalPago) {
+          throw new Error(`O lançamento ${order.codigoExibicao} já tem pagamento. Estorne o excedente antes de dividir.`);
+        }
+        touched.push(order.id);
+        setOrders(prev => prev.map(o => o.id === order.id ? reconcile({ ...o, ...keptValues, itens: kept }) : o));
+      } else {
+        touched.push(order.id);
       }
-      return t;
+    }
+    // A conta filha herda a mesa como origem, mas NÃO ocupa a mesa.
+    const child = createAccount({
+      tipo: origin.tipo,
+      nomeCliente: input.nomeCliente || origin.nomeCliente,
+      telefoneCliente: origin.telefoneCliente,
+      origem: 'split',
+      contaPaiId: origin.id,
+      observacoes: `Divisão da Conta ${origin.numero}`
+    });
+    let sequencia = getNextSequence(child.id);
+    for (const order of created) {
+      const codigoExibicao = buildDisplayCode(child.numero, sequencia);
+      setOrders(prev => [reconcile({ ...order, contaId: child.id, contaNumero: child.numero, sequencia, codigoExibicao, mesaSessaoId: child.id, mesaSessaoNumero: child.numero, mesaPedidoSequencia: sequencia, codigoMesa: codigoExibicao }), ...prev]);
+      sequencia += 1;
+    }
+    // Lançamentos esvaziados: ficam sem saldo, mas nunca são apagados.
+    setOrders(prev => prev.map(o => touched.includes(o.id) && !o.itens.length
+      ? reconcile({ ...o, status: o.status === 'finalizado' ? 'finalizado' : o.status })
+      : o));
+    setAccounts(prev => prev.map(a => a.id === origin.id ? { ...a, contaFilhaId: child.id } : a));
+    syncAccountTotals(origin.id);
+    syncAccountTotals(child.id);
+    recordAudit('dividiu conta', 'conta', origin.id, `Conta ${origin.numero} → Conta ${child.numero} (${created.length} lançamento(s))`);
+    return {
+      contaOrigemId: origin.id,
+      contaNovaId: child.id,
+      contaNovaNumero: child.numero,
+      lancamentosOrigem: touched,
+      lancamentosNovos: created.map(o => o.id)
+    };
+  };
+
+  /** UNE DUAS CONTAS ABERTAS. Nenhum registro de origem é apagado. */
+  const mergeAccounts = (sourceAccountId: string, targetAccountId: string): Account => {
+    if (sourceAccountId === targetAccountId) throw new Error('Escolha duas contas diferentes.');
+    const source = accountById(sourceAccountId);
+    const target = accountById(targetAccountId);
+    if (!source || !target) throw new Error('Conta não encontrada.');
+    if (target.status !== 'aberta') throw new Error(`A Conta ${target.numero} não está aberta.`);
+    if (source.status === 'encerrada') throw new Error(`A Conta ${source.numero} está encerrada e não pode ser unificada.`);
+    const moving = ordersOfAccount(source.id).filter(o => o.status !== 'cancelado');
+    if (!moving.length) throw new Error(`A Conta ${source.numero} não possui lançamentos válidos.`);
+    let sequencia = getNextSequence(target.id);
+    for (const order of moving) {
+      const codigoExibicao = buildDisplayCode(target.numero, sequencia);
+      setOrders(prev => prev.map(o => o.id === order.id ? {
+        ...o,
+        contaId: target.id,
+        contaNumero: target.numero,
+        sequencia,
+        codigoExibicao,
+        mesaSessaoId: target.id,
+        mesaSessaoNumero: target.numero,
+        mesaPedidoSequencia: sequencia,
+        codigoMesa: codigoExibicao,
+        mesaNumero: target.mesaAtualNumero ?? o.mesaNumero
+      } : o));
+      sequencia += 1;
+    }
+    const agora = new Date().toISOString();
+    setAccounts(prev => prev.map(a => {
+      if (a.id === source.id) {
+        return { ...a, status: 'encerrada', encerradaEm: agora, contaFilhaId: target.id, encerramento: { usuario: currentUser?.nome || 'sistema', dataHora: agora, motivo: `Unificada na Conta ${target.numero}` } };
+      }
+      if (a.id === target.id) return { ...a, nomeCliente: a.nomeCliente || source.nomeCliente };
+      return a;
     }));
-  }, [setTables]);
+    // A mesa de origem é liberada; a conta de destino permanece na sua mesa.
+    const sourceTable = source.mesaAtualNumero !== undefined ? tableByNumber(source.mesaAtualNumero) : undefined;
+    if (sourceTable && sourceTable.contaAtualId === source.id) {
+      releaseTableOccupation(sourceTable.numero);
+    }
+    syncAccountTotals(target.id);
+    const targetTable = target.mesaAtualNumero !== undefined ? tableByNumber(target.mesaAtualNumero) : undefined;
+    if (targetTable) occupyTable(targetTable, accountById(target.id) || target);
+    recordAudit('unificou conta', 'conta', target.id, `Conta ${source.numero} + Conta ${target.numero} → Conta ${target.numero}`);
+    return accountById(target.id) || target;
+  };
 
-  const transferTable = useCallback((fromTable: number, toTable: number) => {
-    const origin = store.state.tables.find(t => t.numero === fromTable);
-    if (!origin || origin.status === 'livre') return;
-    const target = store.state.tables.find((t: Table) => t.numero === toTable);
-    if (!target || target.status !== 'livre' || fromTable === toTable) throw new Error('Escolha uma mesa livre.');
+  const searchAccountList = (filters: AccountSearchFilters) => searchAccounts(accountList(), orderList(), filters);
 
-    setTables(prev => prev.map(t => {
-      if (t.numero === toTable) {
-        return {
-          ...t,
-          status: 'ocupada',
-          clienteNome: origin.clienteNome,
-          pedidoAtivoId: origin.pedidoAtivoId,
-          sessaoAtivaId: origin.sessaoAtivaId,
-          sessaoNumero: origin.sessaoNumero,
-          abertaEm: origin.abertaEm,
-          valorAtual: origin.valorAtual,
-          garcomResponsavel: origin.garcomResponsavel,
-          pessoasSentadas: origin.pessoasSentadas
-        };
+  // =================================================================
+  // OPERAÇÕES DE MESA (ocupação física) — todas via Table + Account + Order
+  // =================================================================
+
+  /** Abre um NOVO atendimento: cria uma conta nova na mesa. */
+  const openTableWithOrder = (tableNumber: number, customerName?: string, pessoas: number = 2) => {
+    const table = tableByNumber(tableNumber);
+    if (!table) throw new Error('Mesa inexistente.');
+    if (table.contaAtualId) {
+      const current = accountById(table.contaAtualId);
+      if (current && current.status === 'aberta') {
+        throw new Error(`A Mesa ${tableNumber} já possui o atendimento da Conta ${current.numero} em aberto. Use "Adicionar lançamento" para continuar nesta conta.`);
       }
-      if (t.numero === fromTable) {
-        return {
-          ...t,
-          status: 'livre',
-          clienteNome: undefined,
-          pedidoAtivoId: undefined,
-          abertaEm: undefined,
-          valorAtual: 0,
-          pessoasSentadas: undefined
-        };
-      }
-      return t;
-    }));
+    }
+    createAccount({
+      tipo: 'mesa',
+      nomeCliente: customerName || `Mesa ${tableNumber}`,
+      mesaNumero: tableNumber,
+      pessoas
+    });
+  };
 
-    // Update order table reference
-    setOrders(prev => prev.map(o => 
-      (origin.sessaoAtivaId && o.mesaSessaoId === origin.sessaoAtivaId) || o.id === origin.pedidoAtivoId || o.mesaNumero === fromTable
-        ? { ...o, mesaNumero: toTable }
-        : o
-    ));
-  }, [tables, setTables, setOrders]);
+  /** Novo lançamento na conta que ocupa a mesa. */
+  const addItemsToTable = (number: number, items: CartItem[]) => {
+    const table = tableByNumber(number);
+    if (!table || !items.length) return;
+    const current = accountById(table.contaAtualId);
+    // Continua a conta aberta da mesa; se não houver, cria o atendimento.
+    createOrder({
+      tipo: 'mesa',
+      mesaNumero: number,
+      contaId: isAccountOpen(current) ? current.id : undefined,
+      nomeCliente: table.clienteNome,
+      itens: items
+    });
+  };
 
-  const joinTables = useCallback((sourceTable: number, targetTable: number) => {
-    const src = store.state.tables.find((t: Table) => t.numero === sourceTable);
-    const tgt = store.state.tables.find((t: Table) => t.numero === targetTable);
-    if (!src || !tgt || sourceTable === targetTable) return;
-    if (tgt.status === 'livre' && src.status === 'livre') throw new Error('Não há mesas ocupadas para juntar.');
-    if (tgt.status !== 'livre' && src.status !== 'livre' && src.pedidoAtivoId && tgt.pedidoAtivoId) {
-      const sourceOrder = store.state.orders.find((o: Order) => o.id === src.pedidoAtivoId) as Order | undefined;
-      const targetOrder = store.state.orders.find((o: Order) => o.id === tgt.pedidoAtivoId) as Order | undefined;
-      if (!sourceOrder || !targetOrder) throw new Error('Não foi possível localizar as contas das mesas.');
-      const items = [...targetOrder.itens, ...sourceOrder.itens];
-      const values = totals(items, targetOrder.desconto + sourceOrder.desconto, targetOrder.taxaServico + sourceOrder.taxaServico, targetOrder.taxaEntrega + sourceOrder.taxaEntrega);
-      const merged = reconcile({ ...targetOrder, ...values, itens: items });
-      setOrders(prev => prev.map(o => o.id === targetOrder.id ? merged : o));
-      setOrders(prev => prev.filter(o => o.id !== sourceOrder.id));
-      syncTableTotals(merged);
-      setTables(prev => prev.map(t => t.numero === targetTable ? { ...t, status: 'ocupada', valorAtual: merged.saldoRestante, clienteNome: `${tgt.clienteNome || ''}${src.clienteNome ? ` + ${src.clienteNome}` : ''}`.trim() } : t.numero === sourceTable ? { ...t, status: 'livre', valorAtual: 0, clienteNome: undefined, pedidoAtivoId: undefined, abertaEm: undefined, pessoasSentadas: undefined } : t));
+  /** "Pedindo conta": sinaliza que a mesa aguarda baixa. Não paga nada. */
+  const requestTableBill = (tableNumber: number) => {
+    const table = tableByNumber(tableNumber);
+    if (!table) throw new Error('Mesa inexistente.');
+    if (!table.contaAtualId) return; // mesa livre não tem conta em espera
+    setTables(prev => prev.map(t => t.numero === tableNumber ? { ...t, status: 'conta' } : t));
+    recordAudit('solicitou conta', 'mesa', table.id, `Mesa ${tableNumber} • Conta ${table.contaAtualNumero}`);
+  };
+
+  /** Baixa manual da conta que ocupa a mesa (ou a última conta aberta dela). */
+  const settleTableAccount = (tableNumber: number, method?: PaymentMethodId, amountPaid?: number, change?: number): Order | null => {
+    const table = tableByNumber(tableNumber);
+    if (!table) throw new Error('Mesa inexistente.');
+    const account = settleableAccountOf(table);
+    if (!account) throw new Error('Esta mesa não possui uma conta ativa.');
+    const own = ordersOfAccount(account.id).filter(o => o.status !== 'cancelado');
+    if (!own.length) throw new Error('Esta conta ainda não possui lançamentos.');
+    if (account.saldoRestante <= 0) {
+      if (table.contaAtualId === account.id) releaseTableOccupation(tableNumber);
+      return own[own.length - 1] || null;
+    }
+    const paid = payAccount(account.id, method as PaymentMethodId, amountPaid, method === 'dinheiro' && change ? amountPaid! + change : undefined, `Baixa manual da Mesa ${tableNumber}`);
+    const updated = ordersOfAccount(account.id);
+    return updated[updated.length - 1] || paid[paid.length - 1] || null;
+  };
+
+  /**
+   * LIBERAR MESA manualmente: ação administrativa que altera SOMENTE a
+   * ocupação física. Não paga, não encerra conta e não apaga pedidos.
+   */
+  const freeTableManually = (tableNumber: number) => {
+    const table = tableByNumber(tableNumber);
+    if (!table) throw new Error('Mesa inexistente.');
+    if (!table.contaAtualId) return;
+    const account = accountById(table.contaAtualId);
+    releaseTableOccupation(tableNumber);
+    recordAudit('liberou mesa manualmente', 'mesa', table.id,
+      `Mesa ${tableNumber} • conta ${account?.numero ?? '—'} mantida${account && account.saldoRestante > 0 ? ` com saldo ${formatBRL(account.saldoRestante)}` : ''}`);
+  };
+
+  /** Transferência de mesa = transferência da conta que a ocupa. */
+  const transferTable = (fromTable: number, toTable: number) => {
+    const origin = tableByNumber(fromTable);
+    if (!origin) throw new Error('Mesa inexistente.');
+    if (fromTable === toTable) throw new Error('A mesa de origem e destino são a mesma.');
+    if (!origin.contaAtualId) return; // nada ocupando a mesa
+    transferAccount(origin.contaAtualId, toTable);
+  };
+
+  /** Juntar mesas: une as contas abertas ou move a única conta ocupada. */
+  const joinTables = (sourceTable: number, targetTable: number) => {
+    const src = tableByNumber(sourceTable);
+    const tgt = tableByNumber(targetTable);
+    if (!src || !tgt) throw new Error('Mesa inexistente.');
+    if (sourceTable === targetTable) throw new Error('A mesa de origem e destino são a mesma.');
+    if (!src.contaAtualId && !tgt.contaAtualId) throw new Error('Não há mesas ocupadas para juntar.');
+    if (src.contaAtualId && tgt.contaAtualId) {
+      mergeAccounts(src.contaAtualId, tgt.contaAtualId);
       return;
     }
-    const occupied = src.status !== 'livre' ? src : tgt;
-    const target = tgt.status === 'livre' ? tgt : src;
-    setTables(prev => prev.map(t => t.numero === target.numero ? { ...t, status: 'ocupada', clienteNome: occupied.clienteNome, pedidoAtivoId: occupied.pedidoAtivoId, abertaEm: occupied.abertaEm, valorAtual: occupied.valorAtual, garcomResponsavel: occupied.garcomResponsavel, pessoasSentadas: occupied.pessoasSentadas } : t.numero === occupied.numero ? { ...t, status: 'livre', clienteNome: undefined, pedidoAtivoId: undefined, abertaEm: undefined, valorAtual: 0, pessoasSentadas: undefined } : t));
-    if (occupied.pedidoAtivoId) setOrders(prev => prev.map(o => o.id === occupied.pedidoAtivoId ? { ...o, mesaNumero: target.numero } : o));
-  }, [setTables, setOrders, store]);
+    const accountId = (src.contaAtualId || tgt.contaAtualId)!;
+    transferAccount(accountId, src.contaAtualId ? targetTable : sourceTable);
+  };
 
   const updateTableLayout = useCallback((tableId: string, x: number, y: number, formato?: Table['formato'], setor?: Table['setor']) => {
     setTables(prev => prev.map(t => {
@@ -1483,6 +1991,21 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         setSelectedOrderForModal,
         selectedReceiptOrder,
         setSelectedReceiptOrder,
+
+        accounts,
+        openAccounts: accounts.filter(a => a.status === 'aberta'),
+        getAccount,
+        getAccountByNumber,
+        getAccountOrders,
+        getNextSequence,
+        addOrderToAccount,
+        createAccount,
+        payAccount,
+        closeAccount,
+        transferAccount,
+        splitAccount,
+        mergeAccounts,
+        searchAccounts: searchAccountList,
 
         paymentOptions,
         addManualPaymentToOrder,
