@@ -94,6 +94,41 @@ export interface CartItem {
   acompanhamentosEscolhidos?: string[];
   segundoSaborNome?: string; // Para pizza meio a meio
   segundoSaborPreco?: number;
+
+  // --- NOVO: Estado operacional do item ---
+  /** Estado operacional individual do item. */
+  status?: CartItemStatus;
+  /** Histórico de alterações do item para rastreabilidade completa. */
+  historico?: CartItemHistoryEntry[];
+  /** Se o item foi voided (cancelado após impressão), guarda o motivo e quem cancelou. */
+  voidInfo?: {
+    motivo: string;
+    usuarioId: string;
+    usuarioNome: string;
+    dataHora: string;
+    quantidadeAnterior: number;
+  };
+}
+
+/** Estado operacional individual de cada item do pedido. */
+export type CartItemStatus = 
+  | 'pending'       // Item criado, ainda não enviado para produção
+  | 'submitted'     // Enviado para a cozinha (pedido inicial)
+  | 'preparing'     // Em preparação na cozinha
+  | 'ready'         // Pronto (espelhado)
+  | 'served'        // Entregue/servido ao cliente
+  | 'voided';       // Cancelado/VOID após impressão
+
+/** Entrada de histórico de alteração do item para rastreabilidade. */
+export interface CartItemHistoryEntry {
+  tipo: 'created' | 'added' | 'quantity_changed' | 'voided' | 'reprinted' | 'served' | 'reopened';
+  quantidadeAnterior?: number;
+  quantidadeNova?: number;
+  motivo?: string;
+  usuarioId: string;
+  usuarioNome: string;
+  dataHora: string;
+  grupoImpressaoId?: string;
 }
 
 // ------------------------------------------
@@ -255,9 +290,11 @@ export interface PrintBatch {
   espelhoJobId?: string;
   espelhoJobIds?: string[];
   espelhoGeradoEm?: string;
-  tipoOperacao: 'pedido_inicial' | 'pedido_adicional';
+  tipoOperacao: 'pedido_inicial' | 'pedido_adicional' | 'reprint';
   /** IDs dos itens cobertos por esta dupla de vias (pedido + espelho). */
   itemIds?: string[];
+  /** Snapshot dos itens no momento da criação do lote (imutável após criação). */
+  itemsSnapshot?: CartItem[];
 }
 
 export interface Order {

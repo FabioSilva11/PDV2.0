@@ -15,7 +15,8 @@ import React, { createContext, useContext, useState, useEffect, useCallback, use
   ManualPaymentOption,
   CategoryType, Customer, Reservation, UserAccount, PermissionKey, AuditLog,
   RestaurantSettings, MenuCategory,
-  Account, AccountStatus, AccountSearchFilters, AccountSplitInput, AccountSplitResult, CreateAccountInput, CreateOrderInput
+  Account, AccountStatus, AccountSearchFilters, AccountSplitInput, AccountSplitResult, CreateAccountInput, CreateOrderInput,
+  CartItemStatus, CartItemHistoryEntry
 } from '../types';
 import {
   migrateOrdersToAccounts,
@@ -156,8 +157,14 @@ interface RestaurantContextType {
   updateOrderStatus: (orderId: string, status: OrderStatus) => void;
   cancelOrder: (orderId: string, motivo: string) => void;
   cancelOrderItem: (orderId: string, cartItemId: string, motivo: string) => void;
-  applyOrderDiscount: (orderId: string, desconto: number, motivo: string) => void;
+  /** Anula (VOID) um item específico após impressão, preservando histórico. */
+  voidOrderItem: (orderId: string, cartItemId: string, motivo: string) => void;
+  /** Reimprime um item específico criando novo lote de impressão. */
+  reprintOrderItem: (orderId: string, cartItemId: string) => void;
   addItemsToOrder: (orderId: string, items: CartItem[]) => void;
+  /** Atualiza quantidade de um item específico (diferencial). */
+  updateOrderItemQuantity: (orderId: string, cartItemId: string, novaQuantidade: number) => void;
+  applyOrderDiscount: (orderId: string, desconto: number, motivo: string) => void;
   generateOrderMirror: (orderId: string) => void;
   rerouteOrderPrintBatch: (orderId: string, grupoId?: string) => void;
   setOrderPriority: (orderId: string, prioridade: 'normal' | 'urgente') => void;
@@ -1248,18 +1255,39 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     if (order.status !== 'novo') throw new Error('O espelho só pode ser gerado para um pedido aguardando preparo.');
     const pedidoJobs = (batch.pedidoJobIds || [batch.pedidoJobId]).filter(Boolean).map(id => store.state.printQueue.find((job: PrintJob) => job.id === id)).filter(Boolean) as PrintJob[];
     if (!pedidoJobs.length || pedidoJobs.some(job => job.status === 'falha')) throw new Error('A via PEDIDO não foi impressa em todos os destinos. Corrija o roteamento e reimprima antes de gerar o espelho.');
-    const batchItems = batch.itemIds?.length ? order.itens.filter(item => batch.itemIds!.includes(item.cartItemId)) : order.itens;
-    if (!batchItems.length) throw new Error('Não há itens vinculados a este lote de impressão.');
+    
+    // Usar snapshot do lote se disponível (imutável), senão filtrar itens atuais
+    // Filtrar itens voided que não devem ir para o espelho
+    const batchItems = batch.itemsSnapshot?.length
+      ? batch.itemsSnapshot.filter(i => i.status !== 'voided')
+      : (batch.itemIds?.length 
+        ? order.itens.filter(item => batch.itemIds!.includes(item.cartItemId) && item.status !== 'voided')
+        : order.itens.filter(i => i.status !== 'voided'));
+    
+    if (!batchItems.length) throw new Error('Não há itens válidos vinculados a este lote de impressão.');
+    
     const result = routePrintJobs(order, 'espelho', batchItems, batch.grupoId);
     if (!result.ok) throw new Error('O espelho não foi roteado para todas as impressoras configuradas. Corrija o roteamento antes de concluir o preparo.');
+    
+    // Atualizar status dos itens no lote para 'ready'
+    const updatedItems = order.itens.map(item => {
+      if (batch.itemIds?.includes(item.cartItemId) || batch.itemsSnapshot?.some(s => s.cartItemId === item.cartItemId)) {
+        return { ...item, status: 'ready' as CartItemStatus };
+      }
+      return item;
+    });
+    
     const nextBatches = batches.map(item => item.grupoId === batch.grupoId ? {
       ...item,
       espelhoJobId: result.jobs.find(j => j.status !== 'falha')?.id,
       espelhoJobIds: result.jobs.filter(j => j.status !== 'falha').map(j => j.id),
       espelhoGeradoEm: result.jobs[0]?.dataHora
     } : item);
-    setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: 'pronto', impressoes: nextBatches } : o));
+    
+    const nextOrder = { ...order, status: 'pronto' as OrderStatus, impressoes: nextBatches, itens: updatedItems };
+    setOrders(prev => prev.map(o => o.id === orderId ? nextOrder : o));
     recordAudit('gerou espelho', 'pedido', orderId, `Lançamento ${order.codigoExibicao || order.codigoMesa || order.numero} • conclui preparo (não paga a conta)`);
+    
     // REGRA DO SALÃO: com o espelho gerado o preparo daquele lançamento acaba.
     // Se é o ÚLTIMO lançamento da conta ainda aguardando espelho, a mesa volta
     // a ficar livre — e SOMENTE se esta conta for a que ocupa a mesa.
@@ -1429,19 +1457,152 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const cancelOrderItem = (orderId: string, itemId: string, motivo: string) => {
     const order = store.state.orders.find((o: Order) => o.id === orderId) as Order | undefined;
     if (!order || order.status === 'cancelado' || order.status === 'finalizado' || order.status === 'entregue') return;
-    const removed = asArray(order.itens, []).find(i => i.cartItemId === itemId);
-    if (!removed) return;
+    const item = asArray(order.itens, []).find(i => i.cartItemId === itemId);
+    if (!item) return;
     if (!motivo.trim()) throw new Error('Informe o motivo.');
+    
+    // Se o item já foi impresso (tem lote com espelho), fazer VOID ao invés de remover
     const printedBatch = (order.impressoes || []).some(batch =>
       batch.espelhoJobId && batch.itemIds?.includes(itemId)
     );
-    if (printedBatch) throw new Error('Este item já foi espelhado. Reabra o pedido para fazer uma correção administrativa.');
+    
+    if (printedBatch) {
+      // VOID: marcar como voided, preservar no histórico
+      return voidOrderItem(orderId, itemId, motivo);
+    }
+    
+    // Item ainda não impresso: remover do array (comportamento legado para itens nunca impressos)
     const items = asArray(order.itens, []).filter(i => i.cartItemId !== itemId);
     const values = totals(items, Math.min(order.desconto, calculateSubtotal(items)), order.taxaServico, order.taxaEntrega);
     if (values.total < order.valorTotalPago) throw new Error('Estorne o valor excedente antes de remover o item.');
     const next = reconcile({ ...order, ...values, itens: items });
     setOrders(prev => prev.map(o => o.id === orderId ? next : o));
     syncTableTotals(next);
+    recordAudit('removeu item (pré-impressão)', 'pedido', orderId, `${item.nome} • ${motivo}`);
+  };
+
+  /** Anula (VOID) um item específico após impressão, preservando histórico completo. */
+  const voidOrderItem = (orderId: string, itemId: string, motivo: string) => {
+    const order = store.state.orders.find((o: Order) => o.id === orderId) as Order | undefined;
+    if (!order || order.status === 'cancelado' || order.status === 'finalizado' || order.status === 'entregue') return;
+    const item = asArray(order.itens, []).find(i => i.cartItemId === itemId);
+    if (!item) return;
+    if (!motivo.trim()) throw new Error('Informe o motivo.');
+    
+    const currentUser = store.state.currentUser;
+    if (!currentUser) throw new Error('Usuário não identificado.');
+
+    // Marcar item como voided, preservando no array com histórico
+    const updatedItems = asArray(order.itens, []).map(i => {
+      if (i.cartItemId !== itemId) return i;
+      return {
+        ...i,
+        status: 'voided' as CartItemStatus,
+        quantidade: 0, // quantidade zero para não afetar totais
+        voidInfo: {
+          motivo,
+          usuarioId: currentUser.id,
+          usuarioNome: currentUser.nome,
+          dataHora: new Date().toISOString(),
+          quantidadeAnterior: i.quantidade
+        },
+        historico: [
+          ...(i.historico || []),
+          {
+            tipo: 'voided' as const,
+            quantidadeAnterior: i.quantidade,
+            quantidadeNova: 0,
+            motivo,
+            usuarioId: currentUser.id,
+            usuarioNome: currentUser.nome,
+            dataHora: new Date().toISOString()
+          }
+        ]
+      };
+    });
+
+    const values = totals(updatedItems.filter(i => i.status !== 'voided'), order.desconto, order.taxaServico, order.taxaEntrega);
+    if (values.total < order.valorTotalPago) throw new Error('Estorne o valor excedente antes de cancelar o item.');
+
+    const next = reconcile({ ...order, ...values, itens: updatedItems });
+    setOrders(prev => prev.map(o => o.id === orderId ? next : o));
+    syncTableTotals(next);
+    recordAudit('anulou item (VOID)', 'pedido', orderId, `${item.nome} (qtd: ${item.quantidade}) • ${motivo}`);
+  };
+
+  /** Reimprime um item específico criando novo lote de impressão. */
+  const reprintOrderItem = (orderId: string, itemId: string) => {
+    const order = store.state.orders.find((o: Order) => o.id === orderId) as Order | undefined;
+    if (!order) throw new Error('Pedido não encontrado.');
+    
+    const item = asArray(order.itens, []).find(i => i.cartItemId === itemId);
+    if (!item) throw new Error('Item não encontrado.');
+    
+    // Não reimprimir itens voided
+    if (item.status === 'voided') throw new Error('Não é possível reimprimir item anulado (VOID).');
+
+    // Criar novo lote de impressão apenas para este item
+    const newBatch = dispatchItems(order, [item], 'pedido_adicional');
+    
+    setOrders(prev => prev.map(o => 
+      o.id === orderId 
+        ? { ...o, impressoes: [...(o.impressoes || []), newBatch] }
+        : o
+    ));
+    
+    recordAudit('reimprimiu item', 'pedido', orderId, `${item.nome} (qtd: ${item.quantidade})`);
+  };
+
+  /** Atualiza quantidade de um item específico (operação diferencial). */
+  const updateOrderItemQuantity = (orderId: string, itemId: string, novaQuantidade: number) => {
+    const order = store.state.orders.find((o: Order) => o.id === orderId) as Order | undefined;
+    if (!order) throw new Error('Pedido não encontrado.');
+    if (!store.state.cashRegister.aberto) throw new Error('Abra o caixa antes de alterar itens.');
+    
+    const item = asArray(order.itens, []).find(i => i.cartItemId === itemId);
+    if (!item) throw new Error('Item não encontrado.');
+    
+    // Não permitir alterar itens voided
+    if (item.status === 'voided') throw new Error('Não é possível alterar quantidade de item anulado (VOID).');
+    
+    // Não permitir alterar itens já servidos/entregues
+    if (item.status === 'served') throw new Error('Não é possível alterar quantidade de item já entregue. Use reabertura administrativa se necessário.');
+    
+    if (novaQuantidade < 0) throw new Error('Quantidade não pode ser negativa.');
+    
+    const quantidadeAnterior = item.quantidade;
+    const currentUser = store.state.currentUser;
+    if (!currentUser) throw new Error('Usuário não identificado.');
+
+    const updatedItems = asArray(order.itens, []).map(i => {
+      if (i.cartItemId !== itemId) return i;
+      
+      const historyEntry: CartItemHistoryEntry = {
+        tipo: 'quantity_changed',
+        quantidadeAnterior: i.quantidade,
+        quantidadeNova: novaQuantidade,
+        usuarioId: currentUser.id,
+        usuarioNome: currentUser.nome,
+        dataHora: new Date().toISOString()
+      };
+      
+      return {
+        ...i,
+        quantidade: novaQuantidade,
+        historico: [...(i.historico || []), historyEntry]
+      };
+    });
+
+    const values = totals(updatedItems.filter(i => i.status !== 'voided'), order.desconto, order.taxaServico, order.taxaEntrega);
+    if (values.total < order.valorTotalPago) throw new Error('Estorne o valor excedente antes de reduzir a quantidade.');
+
+    const next = reconcile({ ...order, ...values, itens: updatedItems });
+    setOrders(prev => prev.map(o => o.id === orderId ? next : o));
+    syncTableTotals(next);
+    
+    const diff = novaQuantidade - quantidadeAnterior;
+    const acao = diff > 0 ? 'aumentou' : diff < 0 ? 'reduziu' : 'manteve';
+    recordAudit('alterou quantidade item', 'pedido', orderId, `${item.nome}: ${quantidadeAnterior} → ${novaQuantidade} (${acao} ${Math.abs(diff)})`);
   };
 
   const addItemsToOrder = (orderId: string, newItems: CartItem[]) => {
@@ -1507,7 +1668,7 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   // ---------------------------------------------------------------------------
   // editOrder — edição real de pedido com recálculo de totais e auditoria.
-  // Permite alterar: itens, cliente, telefone, endereço, observação, taxaEntrega.
+  // Permite alterar: itens (diferencial), cliente, telefone, endereço, observação, taxaEntrega.
   // Não altera: id, numero, status, impressoes, pagamentos, operacaoId.
   // ---------------------------------------------------------------------------
   const editOrder = (orderId: string, patch: import('../types').OrderEditPatch) => {
@@ -1524,37 +1685,188 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     }
     if (!store.state.cashRegister.aberto) throw new Error('Abra o caixa antes de editar pedidos.');
 
-    // Montar objeto atualizado com os campos do patch
-    const updated: Order = {
+    const currentUser = store.state.currentUser || { id: 'system', nome: 'Sistema' };
+
+    // Se não há alteração de itens, apenas atualizar campos simples
+    if (!patch.itens) {
+      const updated: Order = {
+        ...order,
+        ...(patch.nomeCliente !== undefined && { nomeCliente: patch.nomeCliente }),
+        ...(patch.telefoneCliente !== undefined && { telefoneCliente: patch.telefoneCliente }),
+        ...(patch.enderecoEntrega !== undefined && { enderecoEntrega: patch.enderecoEntrega }),
+        ...(patch.observacoesGerais !== undefined && { observacoesGerais: patch.observacoesGerais }),
+        ...(patch.taxaEntrega !== undefined && { taxaEntrega: Math.max(0, patch.taxaEntrega) }),
+      };
+      const recalculated = reconcile({ ...updated });
+      setOrders(prev => prev.map(o => o.id === orderId ? recalculated : o));
+      syncTableTotals(recalculated);
+      return;
+    }
+
+    // --- DIFERENCIAL DE ITENS ---
+    const oldItems = asArray(order.itens, []);
+    const newItemsInput = patch.itens;
+    
+    // Mapear itens antigos por cartItemId
+    const oldItemsMap = new Map(oldItems.map(i => [i.cartItemId, i]));
+    const newItemsMap = new Map(patch.itens.map(i => [i.cartItemId, i]));
+
+    const updatedItems: CartItem[] = [];
+    const now = new Date().toISOString();
+
+    // Processar itens novos/alterados
+    for (const newItem of patch.itens) {
+      const oldItem = oldItemsMap.get(newItem.cartItemId);
+      
+      if (oldItem) {
+        // Item existente: verificar alterações
+        const qtyChanged = oldItem.quantidade !== newItem.quantidade;
+        const obsChanged = oldItem.observacao !== newItem.observacao;
+        const varChanged = oldItem.variacaoNome !== newItem.variacaoNome;
+        
+        if (qtyChanged || obsChanged || varChanged) {
+          // Item alterado: criar entrada de histórico
+          const historyEntries: CartItemHistoryEntry[] = [];
+          
+          if (oldItem.quantidade !== newItem.quantidade) {
+            historyEntries.push({
+              tipo: 'quantity_changed' as const,
+              quantidadeAnterior: oldItem.quantidade,
+              quantidadeNova: newItem.quantidade,
+              usuarioId: currentUser.id,
+              usuarioNome: currentUser.nome,
+              dataHora: new Date().toISOString()
+            });
+          }
+          if (obsChanged) {
+            historyEntries.push({
+              tipo: 'quantity_changed' as const,
+              motivo: `Observação alterada: "${oldItem.observacao}" → "${newItem.observacao}"`,
+              usuarioId: currentUser.id,
+              usuarioNome: currentUser.nome,
+              dataHora: new Date().toISOString()
+            });
+          }
+          if (varChanged) {
+            historyEntries.push({
+              tipo: 'quantity_changed' as const,
+              motivo: `Variação alterada: "${oldItem.variacaoNome || 'padrão'}" → "${newItem.variacaoNome || 'padrão'}"`,
+              usuarioId: currentUser.id,
+              usuarioNome: currentUser.nome,
+              dataHora: new Date().toISOString()
+            });
+          }
+
+          updatedItems.push({
+            ...newItem,
+            cartItemId: newItem.cartItemId, // manter ID original
+            status: newItem.status || 'pending',
+            historico: [...(newItem.historico || []), ...historyEntries]
+          });
+        } else {
+          // Sem alterações: manter item como está (preservar status, histórico)
+          updatedItems.push({ ...oldItem });
+        }
+      } else {
+        // Item novo: adicionado ao pedido
+        const newItemWithMeta = {
+          ...newItem,
+          status: 'pending' as CartItemStatus,
+          historico: [{
+            tipo: 'added' as const,
+            quantidadeNova: newItem.quantidade,
+            usuarioId: currentUser.id,
+            usuarioNome: currentUser.nome,
+            dataHora: new Date().toISOString()
+          }]
+        };
+        updatedItems.push(newItemWithMeta);
+      }
+    }
+
+    // Itens removidos: verificar se estavam impressos (VOID) ou não (remover)
+    for (const oldItem of oldItems) {
+      if (!newItemsMap.has(oldItem.cartItemId)) {
+        // Item removido: verificar se já foi impresso
+        const printedBatch = (order.impressoes || []).some(batch =>
+          batch.espelhoJobId && batch.itemIds?.includes(oldItem.cartItemId)
+        );
+        
+        if (printedBatch) {
+          // VOID: preservar no array com status voided
+          updatedItems.push({
+            ...oldItem,
+            status: 'voided' as CartItemStatus,
+            quantidade: 0,
+            voidInfo: {
+              motivo: 'Removido durante edição',
+              usuarioId: currentUser.id,
+              usuarioNome: currentUser.nome,
+              dataHora: new Date().toISOString(),
+              quantidadeAnterior: oldItem.quantidade
+            },
+            historico: [
+              ...(oldItem.historico || []),
+              {
+                tipo: 'voided' as const,
+                quantidadeAnterior: oldItem.quantidade,
+                quantidadeNova: 0,
+                motivo: 'Removido durante edição do pedido',
+                usuarioId: currentUser.id,
+                usuarioNome: currentUser.nome,
+                dataHora: new Date().toISOString()
+              }
+            ]
+          });
+        }
+        // Se não impresso, não adiciona (remove silenciosamente)
+      }
+    }
+
+    // Calcular totais (excluir itens voided)
+    const activeItems = updatedItems.filter(i => i.status !== 'voided');
+    const calcTotals = totals(activeItems, order.desconto || 0, order.taxaServico || 0, order.taxaEntrega || 0);
+    
+    if (calcTotals.total < order.valorTotalPago + 0.001) {
+      throw new Error(
+        `Impossível salvar: o valor já pago (${order.valorTotalPago.toFixed(2)}) ` +
+        `supera o novo total (${calcTotals.total.toFixed(2)}). ` +
+        `Estorne o excedente antes de reduzir o pedido.`
+      );
+    }
+
+    // Preparar itens para novo lote de impressão (apenas alterados/adicionados)
+    const itemsToReprint = updatedItems.filter(item => {
+      // Item novo
+      if (!order.itens.some(o => o.cartItemId === item.cartItemId)) return true;
+      // Item com quantidade alterada
+      const oldItem = order.itens.find(o => o.cartItemId === item.cartItemId);
+      if (oldItem && oldItem.quantidade !== item.quantidade) return true;
+      // Item com observação/variacao alterada
+      const old = order.itens.find(o => o.cartItemId === item.cartItemId);
+      if (old && (old.observacao !== item.observacao || old.variacaoNome !== item.variacaoNome)) return true;
+      return false;
+    });
+
+    // Montar pedido final
+    const withTotals = {
       ...order,
       ...(patch.nomeCliente !== undefined && { nomeCliente: patch.nomeCliente }),
       ...(patch.telefoneCliente !== undefined && { telefoneCliente: patch.telefoneCliente }),
       ...(patch.enderecoEntrega !== undefined && { enderecoEntrega: patch.enderecoEntrega }),
       ...(patch.observacoesGerais !== undefined && { observacoesGerais: patch.observacoesGerais }),
       ...(patch.taxaEntrega !== undefined && { taxaEntrega: Math.max(0, patch.taxaEntrega) }),
-      ...(patch.itens !== undefined && { itens: patch.itens }),
-    };
-
-    // Recalcular totais financeiros com as mesmas funções do contexto
-    const calcTotals = totals(
-      updated.itens,
-      updated.desconto || 0,
-      updated.taxaServico || 0,
-      updated.taxaEntrega || 0
-    );
-
-    const withTotals: Order = {
-      ...updated,
+      itens: updatedItems,
       subtotal: calcTotals.subtotal,
       desconto: calcTotals.desconto,
       taxaServico: calcTotals.taxaServico,
       taxaEntrega: calcTotals.taxaEntrega,
       total: calcTotals.total,
     };
-
+    
     const recalculated = reconcile(withTotals);
 
-    // Guardar validação financeira: nunca pode ficar com valorTotalPago > total
+    // Guardar validação financeira
     if (recalculated.valorTotalPago > recalculated.total + 0.001) {
       throw new Error(
         `Impossível salvar: o valor já pago (${recalculated.valorTotalPago.toFixed(2)}) ` +
@@ -1569,16 +1881,25 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     if (patch.telefoneCliente !== undefined && patch.telefoneCliente !== order.telefoneCliente) changes.push(`telefone alterado`);
     if (patch.observacoesGerais !== undefined && patch.observacoesGerais !== order.observacoesGerais) changes.push(`observação alterada`);
     if (patch.taxaEntrega !== undefined && patch.taxaEntrega !== order.taxaEntrega) changes.push(`taxaEntrega: ${order.taxaEntrega?.toFixed(2)} → ${patch.taxaEntrega.toFixed(2)}`);
-    if (patch.itens !== undefined) changes.push(`itens editados (${order.itens.length} → ${patch.itens.length} itens)`);
+    if (patch.itens !== undefined) changes.push(`itens editados`);
     if (order.total !== recalculated.total) changes.push(`total: R$${order.total.toFixed(2)} → R$${recalculated.total.toFixed(2)}`);
     const auditDetail = changes.length > 0 ? changes.join('; ') : 'sem alterações relevantes';
 
-    // Se os itens foram alterados, criar um novo lote de impressão com os itens atuais
-    // para garantir que o espelho possa localizar os itens corretos.
-    // O lote anterior é mantido para auditoria/histórico.
+    // Criar novo lote de impressão se houver itens alterados/adicionados
     let finalOrder = recalculated;
-    if (patch.itens !== undefined) {
-      const newBatch = dispatchItems(recalculated, recalculated.itens, 'pedido_adicional');
+    const itemsToReprintFinal = updatedItems.filter(item => {
+      // Item novo
+      if (!order.itens.some(o => o.cartItemId === item.cartItemId)) return true;
+      // Item com quantidade alterada
+      const oldItem = order.itens.find(o => o.cartItemId === item.cartItemId);
+      if (oldItem && oldItem.quantidade !== item.quantidade) return true;
+      // Item com observação/variacao alterada
+      const old = order.itens.find(o => o.cartItemId === item.cartItemId);
+      if (old && (old.observacao !== item.observacao || old.variacaoNome !== item.variacaoNome)) return true;
+      return false;
+    });
+    if (itemsToReprintFinal.length > 0) {
+      const newBatch = dispatchItems(recalculated, itemsToReprintFinal, 'pedido_adicional');
       finalOrder = {
         ...recalculated,
         impressoes: [...(recalculated.impressoes || []), newBatch]
