@@ -833,6 +833,29 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       espelhoGeradoEm: result.jobs[0]?.dataHora
     } : item);
     setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: 'pronto', impressoes: nextBatches } : o));
+    // Regra de salão: com o espelho gerado o preparo da mesa está concluído.
+    // Quando não sobra nenhum pedido da sessão aguardando espelho, a mesa volta
+    // a ficar livre. Eventual débito permanece nos pedidos (visível em Pedidos).
+    if (order.tipo === 'mesa' && order.mesaNumero !== undefined) {
+      const sessionId = order.mesaSessaoId;
+      const stillAwaitingMirror = store.state.orders.some(o =>
+        o.tipo === 'mesa' && o.status === 'novo' && (sessionId
+          ? o.mesaSessaoId === sessionId
+          : o.mesaNumero === order.mesaNumero && !o.mesaSessaoId));
+      if (!stillAwaitingMirror) {
+        setTables(prev => prev.map(t => t.numero === order.mesaNumero ? {
+          ...t,
+          status: 'livre',
+          pedidoAtivoId: undefined,
+          sessaoAtivaId: undefined,
+          sessaoNumero: undefined,
+          clienteNome: undefined,
+          abertaEm: undefined,
+          valorAtual: 0,
+          pessoasSentadas: undefined
+        } : t));
+      }
+    }
   };
 
   const getNextTableSession = (tableNumber: number) => {

@@ -4,6 +4,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { RestaurantProvider, useRestaurant, normalizePrinter } from '../context/RestaurantContext';
 import { PaymentModal } from '../components/pdv/PaymentModal';
 import { POSView } from '../components/pdv/POSView';
+import { TablesView } from '../components/tables/TablesView';
+import { ManualPaymentModal } from '../components/payment/ManualPaymentModal';
 import { OrderDetailsModal } from '../components/orders/OrderDetailsModal';
 import { mergeSnapshots, SyncConflict } from '../lib/mergeSnapshots';
 import { INITIAL_TABLES } from '../data/seedData';
@@ -157,13 +159,50 @@ describe('mesas com histórico de pedidos por sessão', () => {
     expect(result.current.tables.find(t => t.numero === 3)?.status).toBe('livre');
   });
 
+  it('MESA filtros do mapa de mesas listam exatamente as mesas dos contadores', () => {
+    let api!: ReturnType<typeof useRestaurant>;
+    const Harness: React.FC = () => { api = useRestaurant(); return <TablesView />; };
+    const view = render(<RestaurantProvider><Harness /></RestaurantProvider>);
+    // Mesa 1 ocupada, mesa 2 pedindo conta, demais livres.
+    act(() => {
+      api.openTableWithOrder(1, 'Cliente A');
+      api.createOrder({ tipo: 'mesa', mesaNumero: 1, itens: [item({ cartItemId: 'f1' })] });
+      api.openTableWithOrder(2, 'Cliente B');
+      api.createOrder({ tipo: 'mesa', mesaNumero: 2, itens: [item({ cartItemId: 'f2' })] });
+      api.requestTableBill(2);
+    });
+    expect(view.container.querySelector('#table-card-1')).toBeTruthy();
+    expect(view.container.textContent).toContain('Livres (14)');
+
+    // Ocupadas: somente a mesa 1.
+    fireEvent.click(view.getByRole('button', { name: /Ocupadas \(1\)/ }));
+    expect(view.container.querySelector('#table-card-1')).toBeTruthy();
+    expect(view.container.querySelector('#table-card-2')).toBeNull();
+    expect(view.container.querySelector('#table-card-3')).toBeNull();
+
+    // Pedindo Conta: somente a mesa 2.
+    fireEvent.click(view.getByRole('button', { name: /Pedindo Conta \(1\)/ }));
+    expect(view.container.querySelector('#table-card-2')).toBeTruthy();
+    expect(view.container.querySelector('#table-card-1')).toBeNull();
+
+    // Livres: as 14 mesas restantes (1 e 2 fora).
+    fireEvent.click(view.getByRole('button', { name: /Livres \(14\)/ }));
+    expect(view.container.querySelector('#table-card-3')).toBeTruthy();
+    expect(view.container.querySelector('#table-card-1')).toBeNull();
+    expect(view.container.querySelector('#table-card-2')).toBeNull();
+
+    // Todas volta a exibir o mapa completo.
+    fireEvent.click(view.getByRole('button', { name: /Todas \(16\)/ }));
+    expect(view.container.querySelector('#table-card-16')).toBeTruthy();
+  });
+
   it('MESA nova ocupação inicia nova sessão 2.0, sem reutilizar 1.0', () => {
     const { result } = boot();
     act(() => result.current.openTableWithOrder(4));
     let first!: Order;
     act(() => { first = result.current.createOrder({ tipo: 'mesa', mesaNumero: 4, itens: [item({ cartItemId: 'x1' })] }); });
+    // Com o espelho gerado, a mesa é liberada mesmo com débito pendente.
     act(() => result.current.generateOrderMirror(first.id));
-    act(() => result.current.settleTableAccount(4, 'pix', 20));
     act(() => result.current.openTableWithOrder(4, 'Novo Cliente'));
     let second!: Order;
     act(() => { second = result.current.createOrder({ tipo: 'mesa', mesaNumero: 4, itens: [item({ cartItemId: 'x2' })] }); });
@@ -189,11 +228,20 @@ describe('mesas com histórico de pedidos por sessão', () => {
 describe('interface pagamento', () => {
   it('UI venda completa pelo PDV registra pagamento e caixa', () => {
     let api!: ReturnType<typeof useRestaurant>;
-    const Screen = () => { api = useRestaurant(); return <POSView />; };
+    const Screen = () => { api = useRestaurant(); return (
+      <>
+        <POSView />
+        <ManualPaymentModal />
+      </>
+    ); };
     const view = render(<RestaurantProvider><Screen /></RestaurantProvider>);
     fireEvent.click(view.container.querySelector('#product-card-qa-product')!);
-    fireEvent.click(view.container.querySelector('#pos-pay-now-btn')!);
-    fireEvent.click(view.container.querySelector('#payment-confirm-only-btn')!);
+    act(() => api.createOrder({ itens: [item()] }));
+    const o = api.orders[0];
+    act(() => api.openPaymentModal(o));
+    fireEvent.change(view.container.querySelector('#input-manual-payment-value')!, { target: { value: '20' } });
+    fireEvent.change(view.container.querySelector('#input-manual-payment-received')!, { target: { value: '20' } });
+    fireEvent.click(view.container.querySelector('#submit-add-manual-payment-btn')!);
     expect(api.orders).toHaveLength(1);
     expect(api.orders[0].statusPagamento).toBe('pago');
     expect(api.orders[0].pagamentos).toHaveLength(1);
@@ -446,6 +494,31 @@ describe('testes extensivos adicionais — invariantes de operação', () => {
     expect(result.current.orders).toHaveLength(1);
   });
 
+  it('MES espelho do último lançamento da mesa libera a mesa', () => {
+    const { result } = boot();
+    const o = sale(result, { tipo: 'mesa', mesaNumero: 1 });
+    expect(result.current.tables.find(t => t.numero === 1)?.status).toBe('ocupada');
+    act(() => result.current.generateOrderMirror(o.id));
+    expect(result.current.tables.find(t => t.numero === 1)?.status).toBe('livre');
+    // O débito permanece no pedido, para recebimento posterior.
+    expect(result.current.orders[0].saldoRestante).toBe(20);
+    // A mesa pode ser reocupada normalmente.
+    act(() => result.current.openTableWithOrder(1, 'Novo cliente'));
+    expect(result.current.tables.find(t => t.numero === 1)?.status).toBe('ocupada');
+  });
+
+  it('MES espelho de um lançamento não libera a mesa enquanto outro aguarda', () => {
+    const { result } = boot();
+    act(() => result.current.openTableWithOrder(1, 'Cliente'));
+    let a!: Order; let b!: Order;
+    act(() => { a = result.current.createOrder({ tipo: 'mesa', mesaNumero: 1, itens: [item({ cartItemId: 'p1' })] }); });
+    act(() => { b = result.current.createOrder({ tipo: 'mesa', mesaNumero: 1, itens: [item({ cartItemId: 'p2' })] }); });
+    act(() => result.current.generateOrderMirror(a.id));
+    expect(result.current.tables.find(t => t.numero === 1)?.status).toBe('ocupada');
+    act(() => result.current.generateOrderMirror(b.id));
+    expect(result.current.tables.find(t => t.numero === 1)?.status).toBe('livre');
+  });
+
   it('MES adicionar itens à conta existente cria novo lote de impressão', () => {
     const { result } = boot();
     const o = sale(result, { tipo: 'mesa', mesaNumero: 1 });
@@ -457,12 +530,21 @@ describe('testes extensivos adicionais — invariantes de operação', () => {
     expect(updated.impressoes?.[1].itemIds).toEqual(['novo-item']);
   });
 
-  it('PAG pagamento parcial não libera mesa', () => {
+  it('MES espelho não impede baixa posterior do débito', () => {
+    const { result } = boot();
+    const o = sale(result, { tipo: 'mesa', mesaNumero: 1, itens: [item({ precoUnitario: 40 })] });
+    act(() => result.current.generateOrderMirror(o.id));
+    act(() => result.current.addManualPaymentToOrder(o.id, 'dinheiro', 40, 40));
+    expect(result.current.orders[0].saldoRestante).toBe(0);
+    expect(result.current.orders[0].statusPagamento).toBe('pago');
+  });
+
+  it('PAG pagamento parcial não quita nem finaliza o pedido', () => {
     const { result } = boot();
     const o = sale(result, { tipo: 'mesa', mesaNumero: 1, itens: [item({ precoUnitario: 40 })] });
     act(() => result.current.addManualPaymentToOrder(o.id, 'dinheiro', 20, 20));
-    expect(result.current.tables.find(t => t.numero === 1)?.status).toBe('ocupada');
     expect(result.current.orders[0].saldoRestante).toBe(20);
+    expect(result.current.orders[0].statusPagamento).toBe('pago_parcial');
   });
 
   it('PAG pagamento acima do saldo não altera caixa nem pedido', () => {

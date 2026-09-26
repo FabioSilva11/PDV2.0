@@ -38,7 +38,16 @@ export const TablesView: React.FC = () => {
   const remainingTotal = selectedSessionOrders.reduce((sum, o) => sum + (o.status === 'cancelado' ? 0 : o.saldoRestante), 0);
   const splitAmount = splitCount > 0 ? remainingTotal / splitCount : remainingTotal;
 
-  const filteredTables = tables.filter(t => filter === 'todas' || t.status === filter || (filter === 'ocupadas' && t.status === 'fechando'));
+  // Os botões usam nomes no plural ('livres'/'ocupadas') enquanto os status das
+  // mesas são singulares ('livre'/'ocupada'); o mesmo predicado alimenta os
+  // contadores dos botões e a grade, para o número exibido bater com a listagem.
+  const tableMatchesFilter = (table: Table, f: typeof filter) => {
+    if (f === 'todas') return true;
+    if (f === 'livres') return table.status === 'livre';
+    if (f === 'ocupadas') return table.status === 'ocupada' || table.status === 'fechando';
+    return table.status === 'conta';
+  };
+  const filteredTables = tables.filter(t => tableMatchesFilter(t, filter));
 
   const handleOpenTableClick = (tableNumber: number) => {
     openTableWithOrder(tableNumber, newTableClientName.trim() || `Mesa ${tableNumber}`);
@@ -67,7 +76,7 @@ export const TablesView: React.FC = () => {
         <div className="flex items-center gap-1.5 p-1 bg-slate-200/80 rounded-xl text-xs font-semibold">
           {(['todas', 'livres', 'ocupadas', 'conta'] as const).map(value => (
             <button key={value} type="button" onClick={() => setFilter(value)} className={`px-3 py-1.5 rounded-lg ${filter === value ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600 hover:text-slate-900'}`}>
-              {value === 'todas' ? `Todas (${tables.length})` : value === 'livres' ? `Livres (${tables.filter(t => t.status === 'livre').length})` : value === 'ocupadas' ? `Ocupadas (${tables.filter(t => t.status === 'ocupada').length})` : `Pedindo Conta (${tables.filter(t => t.status === 'conta').length})`}
+              {value === 'todas' ? `Todas (${tables.length})` : value === 'livres' ? `Livres (${tables.filter(t => tableMatchesFilter(t, 'livres')).length})` : value === 'ocupadas' ? `Ocupadas (${tables.filter(t => tableMatchesFilter(t, 'ocupadas')).length})` : `Pedindo Conta (${tables.filter(t => tableMatchesFilter(t, 'conta')).length})`}
             </button>
           ))}
         </div>

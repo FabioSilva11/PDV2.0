@@ -1,10 +1,9 @@
 import React, { useState, useMemo, useRef } from 'react';
 import { money, normalizeSearch, uid } from '../../utils/business';
 import { useRestaurant } from '../../context/RestaurantContext';
-import { MenuItem, CategoryType, OrderType, CartItem, PaymentMethod, Order } from '../../types';
+import { MenuItem, CategoryType, OrderType, CartItem, Order } from '../../types';
 import { formatCurrency } from '../../utils/formatters';
 import { AccompanimentModal } from './AccompanimentModal';
-import { PaymentModal } from './PaymentModal';
 import { ReceiptModal } from './ReceiptModal';
 import { 
   Search, 
@@ -12,13 +11,10 @@ import {
   Trash2, 
   Plus, 
   Minus, 
-  Send, 
-  CreditCard, 
   Bike, 
   Store, 
   Users, 
   Utensils, 
-  FileText,
   Percent,
   Check
 } from 'lucide-react';
@@ -140,7 +136,6 @@ export const POSView: React.FC = () => {
   const [selectedCatalog, setSelectedCatalog] = useState<'restaurante' | 'lanche'>('restaurante');
   const [selectedCategory, setSelectedCategory] = useState<string>('Todos');
   const [searchQuery, setSearchQuery] = useState<string>('');
-  const [isPaymentOpen, setIsPaymentOpen] = useState(false);
 
   // Filtered menu
   const filteredMenu = useMemo(() => {
@@ -209,46 +204,7 @@ export const POSView: React.FC = () => {
     } catch (err) { submissionLocked.current = false; setSaleError(err instanceof Error ? err.message : 'Falha ao confirmar pedido.'); }
   };
 
-  const handlePaymentConfirm = (method: PaymentMethod, amountPaid?: number, change?: number): Order => {
-    // Mesma validação de endereço do fluxo sem pagamento imediato.
-    if (orderType === 'delivery' && deliveryAddress.trim().length < 5) {
-      throw new Error('Informe o endereço completo de entrega (rua e número, no mínimo).');
-    }
-    const deliveryAddressParts = deliveryAddress.trim().split(',');
-    const order = createOrder({
-      operacaoId: operationId.current,
-      tipo: orderType,
-      mesaNumero: orderType === 'mesa' && selectedTableNumber ? selectedTableNumber : undefined,
-      clienteId: selectedCustomerId || undefined,
-      nomeCliente: customerName || undefined,
-      telefoneCliente: customerPhone || undefined,
-      enderecoEntrega: orderType === 'delivery' ? {
-        logradouro: deliveryAddressParts[0]?.trim() || '',
-        numero: deliveryAddressParts[1]?.trim() || 'S/N',
-        bairro: deliveryAddressParts[2]?.trim() || ''
-      } : undefined,
-      taxaEntrega: orderType === 'delivery' ? deliveryFee : 0,
-      desconto: discount,
-      observacoesGerais: notes || undefined,
-      itens: cart,
-      status: 'novo',
-      statusPagamento: 'pendente',
-      valorTotalPago: 0,
-      saldoRestante: cartTotal,
-      pagamentos: [{
-        id: 'pay-' + Date.now(),
-        formaId: method,
-        formaNome: method.toUpperCase(),
-        valor: cartTotal,
-        valorRecebido: amountPaid,
-        troco: change,
-        dataHora: new Date().toISOString(),
-        registradoPor: currentUser?.nome || 'Operador'
-      }]
-    });
-    clearCart();
-    return order;
-  };
+
 
   return (
     <div className="max-w-7xl mx-auto px-3 sm:px-6 py-4">
@@ -742,7 +698,7 @@ export const POSView: React.FC = () => {
               </div>
 
               {/* Action Buttons */}
-              <div className="grid grid-cols-2 gap-2 pt-1">
+              <div className="pt-1">
                 {/* Confirmar pedido / gerar via impressa */}
                 <button
                   type="button"
@@ -754,19 +710,6 @@ export const POSView: React.FC = () => {
                 >
                   <Check className="w-3.5 h-3.5 text-sky-400" />
                   <span>Confirmar Pedido</span>
-                </button>
-
-                {/* Receive / Checkout Now */}
-                <button
-                  type="button"
-                  id="pos-pay-now-btn"
-                  disabled={cart.length === 0 || orderType === 'mesa'}
-                  onClick={() => setIsPaymentOpen(true)}
-                  className="px-3 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5"
-                  title={orderType === 'mesa' ? "A baixa da mesa é feita manualmente pela tela Mesas." : "Abrir pagamento"}
-                >
-                  <CreditCard className="w-4 h-4" />
-                  <span>Pagar (F2)</span>
                 </button>
               </div>
             </div>
@@ -784,16 +727,6 @@ export const POSView: React.FC = () => {
         onConfirm={handleAccompanimentConfirm}
       />
 
-      {/* Payment Modal */}
-      <PaymentModal
-        isOpen={isPaymentOpen}
-        total={cartTotal}
-        onClose={() => setIsPaymentOpen(false)}
-        onConfirm={handlePaymentConfirm}
-        onReceiptTrigger={(order) => setSelectedReceiptOrder(order)}
-      />
-
-      {/* Receipt Modal */}
       <ReceiptModal
         order={selectedReceiptOrder}
         isOpen={!!selectedReceiptOrder}
