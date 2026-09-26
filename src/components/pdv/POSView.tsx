@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { money, normalizeSearch, uid } from '../../utils/business';
 import { useRestaurant } from '../../context/RestaurantContext';
 import { MenuItem, CategoryType, OrderType, CartItem, Order } from '../../types';
@@ -32,6 +32,7 @@ export const POSView: React.FC = () => {
     orders,
     currentUser, customers,
     settings,
+    posHandoff, setPosHandoff,
   } = useRestaurant();
 
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -87,6 +88,17 @@ export const POSView: React.FC = () => {
   const categories = useMemo(() => {
     return Array.from(new Set(menu.map(m => m.categoria)));
   }, [menu]);
+
+  // Encaminhamento vindo do Mapa de Mesas ("Detalhes da Mesa"):
+  // "Novo lançamento" continua a conta escolhida; "Novo atendimento" abre um
+  // novo atendimento explicitamente. É consumido uma única vez.
+  useEffect(() => {
+    if (!posHandoff) return;
+    setOrderType('mesa');
+    setSelectedTableNumber(posHandoff.tableNumber);
+    setTargetAccountChoice(posHandoff.motivo === 'atendimento' ? 'nova' : (posHandoff.contaId || ''));
+    setPosHandoff(null);
+  }, [posHandoff, setPosHandoff]);
 
   const setCustomerInfo = (info: { name?: string; phone?: string; address?: string; fee?: number }) => {
     if (info.name !== undefined) setCustomerName(info.name);

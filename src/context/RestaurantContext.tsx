@@ -82,12 +82,30 @@ export interface CurrentUser {
   usuario?: string;
   isPrimaryAdmin?: boolean;
 }
+
+/**
+ * Encaminhamento Mapa de Mesas -> PDV.
+ *  - `motivo: 'lancamento'`: continuar uma conta EXISTENTE (nunca cria conta);
+ *  - `motivo: 'atendimento'`: abrir um NOVO atendimento (conta nova, explícito).
+ */
+export interface PosHandoff {
+  tableNumber: number;
+  contaId?: string;
+  motivo: 'lancamento' | 'atendimento';
+}
 import type { UserRole } from '../types';
 
 interface RestaurantContextType {
   // Navigation & Active State
   activeModule: AppModule;
   setActiveModule: (mod: AppModule) => void;
+  /**
+   * Encaminhamento do Mapa de Mesas para o PDV: o operador pediu "Novo
+   * lançamento" (continuar uma conta) ou "Novo atendimento" (conta nova) em
+   * uma mesa específica. O PDV consome uma única vez ao montar a seleção.
+   */
+  posHandoff: PosHandoff | null;
+  setPosHandoff: (handoff: PosHandoff | null) => void;
   currentUser: CurrentUser | null;
   hasPermission: (permission: PermissionKey) => boolean;
   users: UserAccount[]; saveUser: (user: UserAccount) => void;
@@ -406,6 +424,8 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   // Navigation & User — o usuário atual vem SEMPRE da sessão (login) ou do
   // assistente de instalação. Nunca é um usuário fixo no código.
   const [activeModule, setActiveModule] = useState<AppModule>('dashboard');
+  // Mapa de Mesas -> PDV: pedido explícito de "Novo lançamento"/"Novo atendimento".
+  const [posHandoff, setPosHandoff] = useState<PosHandoff | null>(null);
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
   const [users, setUsers] = useStoreField<UserAccount[]>(store, 'users', () => database.users || []);
@@ -1913,7 +1933,7 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     if (!account) {
       const due = openAccountsForTable(accountList(), tableNumber).filter(a => a.saldoRestante > 0);
       if (due.length > 1) {
-        throw new Error(`A Mesa ${tableNumber} tem ${due.length} contas abertas com saldo (${due.map(a => `Conta ${a.numero}`).join(' e ')}). Cobrou a conta escolhida em Contas & Checks.`);
+        throw new Error(`A Mesa ${tableNumber} tem ${due.length} contas abertas com saldo (${due.map(a => `Conta ${a.numero}`).join(' e ')}). Escolha a conta em "Detalhes da Mesa" ou cobre em Contas & Checks.`);
       }
       throw new Error('Esta mesa não possui uma conta ativa.');
     }
@@ -2094,6 +2114,8 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       value={guardActions({
         activeModule,
         setActiveModule,
+    posHandoff,
+    setPosHandoff,
         currentUser, hasPermission, users, saveUser, changeUserPassword,
         login, logout, authChecked, needsSetup, completeSetup,
         settings, saveSettings, menuCategories, saveMenuCategory, deleteMenuCategory, isCategoryAllowedForCatalog,
