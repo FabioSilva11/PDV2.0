@@ -1573,8 +1573,20 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     if (order.total !== recalculated.total) changes.push(`total: R$${order.total.toFixed(2)} → R$${recalculated.total.toFixed(2)}`);
     const auditDetail = changes.length > 0 ? changes.join('; ') : 'sem alterações relevantes';
 
-    setOrders(prev => prev.map(o => o.id === orderId ? recalculated : o));
-    syncTableTotals(recalculated);
+    // Se os itens foram alterados, criar um novo lote de impressão com os itens atuais
+    // para garantir que o espelho possa localizar os itens corretos.
+    // O lote anterior é mantido para auditoria/histórico.
+    let finalOrder = recalculated;
+    if (patch.itens !== undefined) {
+      const newBatch = dispatchItems(recalculated, recalculated.itens, 'pedido_adicional');
+      finalOrder = {
+        ...recalculated,
+        impressoes: [...(recalculated.impressoes || []), newBatch]
+      };
+    }
+
+    setOrders(prev => prev.map(o => o.id === orderId ? finalOrder : o));
+    syncTableTotals(finalOrder);
     recordAudit('editou pedido', 'pedido', orderId, auditDetail);
   };
 

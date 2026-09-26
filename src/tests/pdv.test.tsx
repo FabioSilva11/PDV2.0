@@ -1024,6 +1024,35 @@ describe('melhorias operacionais v2 — edicao, caixa zerado, destaque e produto
     const updated = result.current.orders.find(x => x.id === o.id)!;
     expect(updated.impressoes?.length).toBe(printBatchesBefore);
   });
+
+  // 31. CORREÇÃO: editar itens do pedido cria novo lote de impressão
+  // e permite gerar espelho sem erro "Não há itens vinculados a este lote de impressão"
+  it('31. EDIT editOrder com itens cria novo lote e permite gerar espelho', () => {
+    const { result } = boot();
+    const o = sale(result, { itens: [item({ cartItemId: 'original' })] });
+    expect(o.impressoes).toHaveLength(1);
+    const originalBatch = o.impressoes![0];
+    expect(originalBatch.itemIds).toContain('original');
+
+    // Editar os itens - isso deve criar um novo lote com os novos cartItemIds
+    act(() => result.current.editOrder(o.id, { itens: [item({ cartItemId: 'editado' })] }));
+    const updated = result.current.orders.find(x => x.id === o.id)!;
+    
+    // Deve ter 2 lotes: o original + o novo da edição
+    expect(updated.impressoes).toHaveLength(2);
+    const novoBatch = updated.impressoes![1];
+    expect(novoBatch.itemIds).toContain('editado');
+    expect(novoBatch.tipoOperacao).toBe('pedido_adicional');
+
+    // Gerar espelho deve funcionar sem erro
+    act(() => result.current.generateOrderMirror(o.id));
+    const final = result.current.orders.find(x => x.id === o.id)!;
+    expect(final.status).toBe('pronto');
+    // O lote usado para o espelho deve ser o novo (que tem os itemIds corretos)
+    const loteUsado = final.impressoes!.find(b => b.espelhoJobId);
+    expect(loteUsado).toBeDefined();
+    expect(loteUsado!.itemIds).toContain('editado');
+  });
 });
 
 describe('melhorias operacionais v3 — UI edicao completa e sincronizacao deterministica', () => {
