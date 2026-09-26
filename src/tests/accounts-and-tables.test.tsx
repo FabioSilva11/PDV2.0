@@ -173,9 +173,11 @@ describe('conta: pagamento isolado por conta', () => {
     act(() => result.current.openTableWithOrder(1, 'Antigo'));
     const antigo = sale(result, { tipo: 'mesa', mesaNumero: 1, itens: [item({ cartItemId: 'a1' })] });
     act(() => result.current.generateOrderMirror(antigo.id));
-    // Conta 1 ocupa a Mesa 1 agora.
+    // Conta 1 ocupa a Mesa 1 agora. Há 2 contas abertas na Mesa 1, então o
+    // lançamento informa a conta explicitamente (o PDV mostra o seletor).
     act(() => result.current.openTableWithOrder(1, 'Atual'));
-    const atual = sale(result, { tipo: 'mesa', mesaNumero: 1, itens: [item({ cartItemId: 'b1' })] });
+    const contaAtual = result.current.accounts.find(a => a.numero === 1)!;
+    const atual = sale(result, { tipo: 'mesa', mesaNumero: 1, contaId: contaAtual.id, itens: [item({ cartItemId: 'b1' })] });
     const table = tableOf(result, 1);
     expect(table.contaAtualId).toBe(atual.contaId);
     expect(table.contaAtualNumero).toBe(1);
@@ -295,7 +297,8 @@ describe('conta: liberação de mesa nunca consulta outra conta pelo número', (
     const antigo = sale(result, { tipo: 'mesa', mesaNumero: 3, itens: [item({ cartItemId: 'a' })] });
     act(() => result.current.freeTableManually(3));
     act(() => result.current.openTableWithOrder(3, 'Atual'));
-    const atual = sale(result, { tipo: 'mesa', mesaNumero: 3, itens: [item({ cartItemId: 'b' })] });
+    const contaAtual = result.current.accounts.find(a => a.numero === 1)!;
+    const atual = sale(result, { tipo: 'mesa', mesaNumero: 3, contaId: contaAtual.id, itens: [item({ cartItemId: 'b' })] });
     // Reabrir/cancelar o lançamento antigo não pode roubar a mesa.
     act(() => result.current.reopenOrder(antigo.id, 'QA'));
     expect(tableOf(result, 3).contaAtualId).toBe(atual.contaId);
@@ -536,5 +539,296 @@ describe('auditoria das operações de conta', () => {
     expect(acoes).toContain('pagou conta');
     expect(acoes).toContain('encerrou conta');
     expect(acoes.some(x => x.includes('liberou'))).toBe(true);
+  });
+});
+
+/**
+ * REGRESSÃO DO BUG REAL DO PDV (Conta 2/2.1 -> espelho -> mesa livre ->
+ * voltar à mesa produzia Conta 3/3.1 em vez de 2.2).
+ */
+describe('POS: continuar a conta liberada pelo espelho', () => {
+  it('BUG volta à mesa liberada e continua a conta: 2.1 -> 2.2, nunca 3.1', () => {
+    const { result } = boot();
+    act(() => result.current.openTableWithOrder(6, 'Cliente'));
+    const conta2 = result.current.accounts[0];
+    expect(conta2.numero).toBe(0); // banco começa na conta 0
+    const a = sale(result, { tipo: 'mesa', mesaNumero: 6 });
+    act(() => result.current.generateOrderMirror(a.id));
+    expect(tableOf(result, 6).status).toBe('livre');
+    expect(accountOf(result, conta2.id).status).toBe('aberta');
+    expect(accountOf(result, conta2.id).saldoRestante).toBe(20);
+
+    // O PDV seleciona a Mesa 6: a conta é localizada e oferecida como padrão.
+    const open = result.current.getOpenTableAccounts(6);
+    expect(open.map(a2 => a2.id)).toEqual([conta2.id]);
+    const preferred = result.current.getPreferredAccountForTable(6);
+    expect(preferred.kind).toBe('conta');
+    expect(result.current.getNextSequence(conta2.id)).toBe(2);
+
+    // Confirmar sem informar contaId = o próprio createOrder continua a conta.
+    const b = sale(result, { tipo: 'mesa', mesaNumero: 6, itens: [item({ cartItemId: 'b' })] });
+    expect(b.contaId).toBe(conta2.id);
+    expect(b.contaNumero).toBe(0);
+    expect(b.sequencia).toBe(2);
+    expect(b.codigoExibicao).toBe('0.2');
+    expect(result.current.accounts).toHaveLength(1);
+  });
+
+  it('BUG mesa 6 liberada: lançamento 2.2 reocupa a mesa com a MESMA conta', () => {
+    const { result } = boot();
+    act(() => result.current.openTableWithOrder(6));
+    const conta = result.current.accounts[0];
+    const a = sale(result, { tipo: 'mesa', mesaNumero: 6 });
+    act(() => result.current.generateOrderMirror(a.id));
+    expect(tableOf(result, 6).status).toBe('livre');
+
+    const b = sale(result, { tipo: 'mesa', mesaNumero: 6, itens: [item({ cartItemId: 'b' })] });
+    const table = tableOf(result, 6);
+    expect(table.status).toBe('ocupada');
+    expect(table.contaAtualId).toBe(conta.id);
+    expect(accountOf(result, conta.id).mesaAtualNumero).toBe(6);
+    expect(b.codigoExibicao).toBe('0.2');
+
+    // Novo espelho volta a liberar fisicamente, sem apagar nada.
+    act(() => result.current.generateOrderMirror(b.id));
+    expect(tableOf(result, 6).status).toBe('livre');
+    expect(accountOf(result, conta.id).status).toBe('aberta');
+    expect(accountOf(result, conta.id).saldoRestante).toBe(40);
+    expect(accountOf(result, conta.id).mesaOriginalNumero).toBe(6);
+    expect(accountOf(result, conta.id).mesaAtualNumero).toBeUndefined();
+  });
+
+  it('BUG três lançamentos seguidos: 0.1, 0.2 e 0.3 sem contas extras', () => {
+    const { result } = boot();
+    act(() => result.current.openTableWithOrder(6));
+    const conta = result.current.accounts[0];
+    const codigos: string[] = [];
+    for (const linha of ['a', 'b', 'c']) {
+      const o = sale(result, { tipo: 'mesa', mesaNumero: 6, itens: [item({ cartItemId: linha })] });
+      codigos.push(o.codigoExibicao!);
+      act(() => result.current.generateOrderMirror(o.id));
+    }
+    expect(codigos).toEqual(['0.1', '0.2', '0.3']);
+    expect(result.current.accounts).toHaveLength(1);
+    expect(result.current.accounts[0].id).toBe(conta.id);
+  });
+
+  it('NOVO ATENDIMENTO só quando o operador escolhe: 0.1 na conta 0 e 1.1 na conta 1', () => {
+    const { result } = boot();
+    act(() => result.current.openTableWithOrder(6));
+    const conta0 = result.current.accounts[0];
+    const a = sale(result, { tipo: 'mesa', mesaNumero: 6 });
+    act(() => result.current.generateOrderMirror(a.id));
+    // Escolha EXPLÍCITA: contaId de conta inexistente não; o PDV envia
+    // `undefined` e o createOrder resolve. Para abrir outra conta o operador
+    // usa o fluxo de novo atendimento (createAccount + contaId da nova conta).
+    const nova = result.current.createAccount({ tipo: 'mesa', mesaNumero: 6, nomeCliente: 'Outro cliente' });
+    expect(nova.numero).toBe(1);
+    const b = sale(result, { tipo: 'mesa', mesaNumero: 6, contaId: nova.id, itens: [item({ cartItemId: 'b' })] });
+    expect(b.contaNumero).toBe(1);
+    expect(b.sequencia).toBe(1);
+    expect(b.codigoExibicao).toBe('1.1');
+    expect(accountOf(result, conta0.id).saldoRestante).toBe(20);
+    expect(tableOf(result, 6).contaAtualId).toBe(nova.id);
+  });
+
+  it('ESCOLHER nova conta sem contaId explícito não reabre a conta antiga', () => {
+    const { result } = boot();
+    act(() => result.current.openTableWithOrder(6));
+    const a = sale(result, { tipo: 'mesa', mesaNumero: 6 });
+    act(() => result.current.generateOrderMirror(a.id));
+    //Simula o PDV: a conta nova ainda não existe, então createOrder continua
+    //a conta aberta (a criação da nova é o próximo passo explícito).
+    const b = sale(result, { tipo: 'mesa', mesaNumero: 6, itens: [item({ cartItemId: 'b' })] });
+    expect(b.contaId).toBe(a.contaId);
+    expect(result.current.accounts).toHaveLength(1);
+  });
+
+  it('POS localiza a conta pelo mesaOriginalNumero mesmo sem conta atual', () => {
+    const { result } = boot();
+    act(() => result.current.openTableWithOrder(6));
+    const conta = result.current.accounts[0];
+    const a = sale(result, { tipo: 'mesa', mesaNumero: 6 });
+    act(() => result.current.generateOrderMirror(a.id));
+    // Invariante: mesa livre, conta com histórico e sem mesa atual.
+    expect(tableOf(result, 6).contaAtualId).toBeUndefined();
+    expect(accountOf(result, conta.id).mesaAtualNumero).toBeUndefined();
+    expect(accountOf(result, conta.id).mesaOriginalNumero).toBe(6);
+    const resolution = result.current.getPreferredAccountForTable(6);
+    expect(resolution.kind).toBe('conta');
+    if (resolution.kind === 'conta') expect(resolution.account.id).toBe(conta.id);
+  });
+
+  it('PROTEÇÃO mesa ocupada por outra conta não aceita nova conta silenciosa', () => {
+    const { result } = boot();
+    act(() => result.current.openTableWithOrder(6));
+    const conta = result.current.accounts[0];
+    sale(result, { tipo: 'mesa', mesaNumero: 6 });
+    expect(() => result.current.createAccount({ tipo: 'mesa', mesaNumero: 6 })).toThrow(/já está ocupada pela Conta 0/);
+    expect(result.current.accounts).toHaveLength(1);
+    expect(tableOf(result, 6).contaAtualId).toBe(conta.id);
+  });
+
+  it('RESET trocar de mesa zera a escolha: Mesa 6 (Conta 0) -> Mesa 8 não usa a Conta 0', () => {
+    const { result } = boot();
+    act(() => result.current.openTableWithOrder(6));
+    const conta6 = result.current.accounts[0];
+    sale(result, { tipo: 'mesa', mesaNumero: 6, itens: [item({ cartItemId: 'a' })] });
+    // A escolha fica presa à conta da Mesa 6; ao trocar de mesa ela é inválida.
+    expect(result.current.getOpenTableAccounts(8)).toEqual([]);
+    expect(result.current.getPreferredAccountForTable(8).kind).toBe('nova');
+    const b = sale(result, { tipo: 'mesa', mesaNumero: 8, itens: [item({ cartItemId: 'b' })] });
+    expect(b.contaId).not.toBe(conta6.id);
+    expect(b.contaNumero).toBe(1);
+    expect(b.codigoExibicao).toBe('1.1');
+  });
+
+  it('PAGAR a conta antiga depois que a mesa foi ocupada pela nova não mexe na nova', () => {
+    const { result } = boot();
+    act(() => result.current.openTableWithOrder(6));
+    const antiga = result.current.accounts[0];
+    const a = sale(result, { tipo: 'mesa', mesaNumero: 6 });
+    act(() => result.current.generateOrderMirror(a.id));
+    const nova = result.current.createAccount({ tipo: 'mesa', mesaNumero: 6, nomeCliente: 'Novo' });
+    const b = sale(result, { tipo: 'mesa', mesaNumero: 6, contaId: nova.id, itens: [item({ cartItemId: 'b' })] });
+    act(() => result.current.payAccount(antiga.id, 'pix', 20));
+    expect(accountOf(result, antiga.id).status).toBe('paga');
+    const table = tableOf(result, 6);
+    expect(table.contaAtualId).toBe(nova.id);
+    expect(table.status).toBe('ocupada');
+    expect(table.valorAtual).toBe(20);
+    expect(accountOf(result, nova.id).status).toBe('aberta');
+    expect(accountOf(result, nova.id).saldoRestante).toBe(20);
+    expect(b.contaId).toBe(nova.id);
+  });
+
+  it('CONTAS & CHECKS conta quitada não aparece para continuar a mesa', () => {
+    const { result } = boot();
+    act(() => result.current.openTableWithOrder(6));
+    const conta = result.current.accounts[0];
+    const a = sale(result, { tipo: 'mesa', mesaNumero: 6 });
+    act(() => result.current.generateOrderMirror(a.id));
+    expect(result.current.getOpenTableAccounts(6).map(x => x.id)).toEqual([conta.id]);
+    act(() => result.current.payAccount(conta.id, 'pix', 20));
+    expect(result.current.getOpenTableAccounts(6)).toEqual([]);
+    expect(result.current.getPreferredAccountForTable(6).kind).toBe('nova');
+  });
+
+  it('CONTAS & CHECKS conta encerrada não aceita novo lançamento', () => {
+    const { result } = boot();
+    act(() => result.current.openTableWithOrder(6));
+    const conta = result.current.accounts[0];
+    const a = sale(result, { tipo: 'mesa', mesaNumero: 6 });
+    act(() => result.current.payAccount(conta.id, 'pix', 20));
+    act(() => result.current.closeAccount(conta.id));
+    expect(result.current.getOpenTableAccounts(6)).toEqual([]);
+    attempt(() => sale(result, { tipo: 'mesa', mesaNumero: 6, contaId: conta.id }));
+    expect(() => sale(result, { tipo: 'mesa', mesaNumero: 6, contaId: conta.id })).toThrow(/encerrada/);
+    expect(result.current.accounts).toHaveLength(1);
+    expect(result.current.accounts[0].status).toBe('encerrada');
+    expect(a.contaId).toBe(conta.id);
+  });
+
+  it('CONTAS & CHECKS dois lançamentos na mesma conta: 2 lançamentos, total e saldo somados', () => {
+    const { result } = boot();
+    act(() => result.current.openTableWithOrder(6));
+    const conta = result.current.accounts[0];
+    sale(result, { tipo: 'mesa', mesaNumero: 6, itens: [item({ cartItemId: 'a' })] });
+    act(() => result.current.generateOrderMirror(result.current.orders[0].id));
+    sale(result, { tipo: 'mesa', mesaNumero: 6, itens: [item({ cartItemId: 'b' })] });
+    const acc = accountOf(result, conta.id);
+    expect(result.current.getAccountOrders(conta.id).filter(o => o.status !== 'cancelado')).toHaveLength(2);
+    expect(acc.total).toBe(40);
+    expect(acc.saldoRestante).toBe(40);
+    expect(result.current.accounts).toHaveLength(1);
+  });
+
+  it('AMBIGUIDADE mais de uma conta aberta na mesa exige escolha do operador', () => {
+    const { result } = boot();
+    act(() => result.current.openTableWithOrder(6));
+    const a = sale(result, { tipo: 'mesa', mesaNumero: 6 });
+    act(() => result.current.generateOrderMirror(a.id));
+    act(() => result.current.freeTableManually(6));
+    // Novo atendimento explícito na mesma mesa: agora há 2 contas abertas.
+    act(() => result.current.createAccount({ tipo: 'mesa', mesaNumero: 6, nomeCliente: 'B' }));
+    sale(result, { tipo: 'mesa', mesaNumero: 6, contaId: result.current.accounts[1].id, itens: [item({ cartItemId: 'b' })] });
+    act(() => result.current.freeTableManually(6));
+    const resolution = result.current.getPreferredAccountForTable(6);
+    expect(resolution.kind).toBe('ambigua');
+    if (resolution.kind === 'ambigua') {
+      // Exibição por ordem de relevância: a mais recente vem primeiro.
+      expect(resolution.accounts.map(x => x.numero)).toEqual([1, 0]);
+    }
+    // Sem escolha explícita, o createOrder NÃO adivinha: exige o operador.
+    expect(() => sale(result, { tipo: 'mesa', mesaNumero: 6, itens: [item({ cartItemId: 'c' })] })).toThrow(/mais de uma conta aberta/);
+    // Escolhendo explicitamente, funciona.
+    const escolhida = result.current.accounts[0].id;
+    const c = sale(result, { tipo: 'mesa', mesaNumero: 6, contaId: escolhida, itens: [item({ cartItemId: 'c' })] });
+    expect(c.contaId).toBe(escolhida);
+    expect(c.contaId).toBe(a.contaId);
+    expect(c.sequencia).toBe(2);
+  });
+
+  it('AMBIGUIDADE conta atual da mesa não vence outra conta aberta do mesmo histórico', () => {
+    const { result } = boot();
+    act(() => result.current.openTableWithOrder(6));
+    const a = sale(result, { tipo: 'mesa', mesaNumero: 6 });
+    act(() => result.current.generateOrderMirror(a.id));
+    act(() => result.current.freeTableManually(6));
+    // A conta 0 fica ABERTA e liberada; a conta 1 ocupa a mesa agora.
+    act(() => result.current.createAccount({ tipo: 'mesa', mesaNumero: 6, nomeCliente: 'B' }));
+    const conta1 = result.current.accounts.find(a => a.numero === 1)!;
+    sale(result, { tipo: 'mesa', mesaNumero: 6, contaId: conta1.id, itens: [item({ cartItemId: 'b' })] });
+    const mesa = tableOf(result, 6);
+    expect(mesa.status).toBe('ocupada');
+    expect(mesa.contaAtualNumero).toBe(1);
+    // Mesmo com a mesa OCUPADA pela conta 1, existe outra conta aberta (0)
+    // ligada ao mesmo histórico: a escolha continua sendo do operador.
+    const resolution = result.current.getPreferredAccountForTable(6);
+    expect(resolution.kind).toBe('ambigua');
+    if (resolution.kind === 'ambigua') {
+      // Exibição por relevância: quem ocupa a mesa vem primeiro.
+      expect(resolution.accounts.map(x => x.numero)).toEqual([1, 0]);
+    }
+    expect(() => sale(result, { tipo: 'mesa', mesaNumero: 6, itens: [item({ cartItemId: 'c' })] })).toThrow(/mais de uma conta aberta/);
+    // Escolha explícita da conta liberada (0) segue funcionando e reabre a mesa.
+    const conta0 = result.current.accounts.find(a => a.numero === 0)!;
+    const c = sale(result, { tipo: 'mesa', mesaNumero: 6, contaId: conta0.id, itens: [item({ cartItemId: 'c' })] });
+    expect(c.contaNumero).toBe(0);
+    expect(c.sequencia).toBe(2);
+    expect(c.codigoExibicao).toBe('0.2');
+    expect(tableOf(result, 6).contaAtualNumero).toBe(0);
+  });
+
+  it('IDEMPOTÊNCIA a mesma operação não cria 0.2 e 0.3 duplicados', () => {    const { result } = boot();
+    act(() => result.current.openTableWithOrder(6));
+    const conta = result.current.accounts[0];
+    sale(result, { tipo: 'mesa', mesaNumero: 6 });
+    act(() => result.current.generateOrderMirror(result.current.orders[0].id));
+    const op = 'op-idempotente-1';
+    const first = sale(result, { tipo: 'mesa', mesaNumero: 6, operacaoId: op, itens: [item({ cartItemId: 'x' })] });
+    const repeat = sale(result, { tipo: 'mesa', mesaNumero: 6, operacaoId: op, itens: [item({ cartItemId: 'x' })] });
+    expect(repeat.id).toBe(first.id);
+    expect(result.current.getAccountOrders(conta.id)).toHaveLength(2);
+    expect(result.current.orders.filter(o => o.operacaoId === op)).toHaveLength(1);
+  });
+
+  it('ROLLBACK conta não sobra quando o lançamento falha', () => {
+    const { result } = boot();
+    // Nada é criado antes: a própria venda tentatively cria a conta.
+    // O pagamento com forma inválida estoura DEPOIS da criação do pedido.
+    expect(() => sale(result, {
+      tipo: 'mesa', mesaNumero: 6,
+      itens: [item({ cartItemId: 'z' })],
+      pagamentos: [{ formaId: 'inexistente' as any, valor: 20 } as any]
+    })).toThrow();
+    expect(result.current.accounts).toHaveLength(0);
+    expect(result.current.orders).toHaveLength(0);
+    expect(tableOf(result, 6).status).toBe('livre');
+    expect(tableOf(result, 6).contaAtualId).toBeUndefined();
+    // A mesa segue disponível: o próximo lançamento abre o atendimento.
+    const ok = sale(result, { tipo: 'mesa', mesaNumero: 6, itens: [item({ cartItemId: 'w' })] });
+    expect(ok.codigoExibicao).toBe('0.1');
+    expect(result.current.accounts).toHaveLength(1);
   });
 });

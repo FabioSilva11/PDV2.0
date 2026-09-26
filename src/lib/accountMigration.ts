@@ -110,6 +110,69 @@ export const isLastOperationalOrder = (orders: Order[], contaId: string, orderId
 export const isAccountOpen = (account: Account | undefined): account is Account =>
   !!account && account.status === 'aberta';
 
+/**
+ * Conta que pode receber um novo LANÇAMENTO.
+ * `encerrada` e `paga` ficam fora: a conta quitada tem saldo zerado e a
+ * encerrada é histórico.
+ */
+export const canAcceptNewOrder = (account: Account | undefined): account is Account =>
+  isAccountOpen(account);
+
+/**
+ * Contas abertas ligadas a uma mesa, da mais para a menos relevante.
+ *
+ * Relevância = ocupa a mesa agora (mesaAtual) > historicamente ligada
+ * (mesaOriginal) > maior número. A ordem serve para EXIBIÇÃO; nunca para
+ * escolher sozinho quando há mais de uma (ver `resolveTableAccount`).
+ */
+export const openAccountsForTable = (accounts: Account[], tableNumber?: number): Account[] => {
+  if (tableNumber === undefined) return [];
+  return accounts
+    .filter(a => canAcceptNewOrder(a) && (a.mesaAtualNumero === tableNumber || a.mesaOriginalNumero === tableNumber))
+    .sort((a, b) => {
+      const aAtual = a.mesaAtualNumero === tableNumber ? 1 : 0;
+      const bAtual = b.mesaAtualNumero === tableNumber ? 1 : 0;
+      if (aAtual !== bAtual) return bAtual - aAtual;
+      return b.numero - a.numero;
+    });
+};
+
+/** Resultado da escolha CENTRAL da conta de um lançamento de mesa. */
+export type TableAccountResolution =
+  /** Há uma conta válida e inequívoca: continuar nela. */
+  | { kind: 'conta'; account: Account }
+  /** Mais de uma conta aberta: o operador TEM de escolher (nunca por sorteio). */
+  | { kind: 'ambigua'; accounts: Account[]; tableNumber: number }
+  /** Nenhuma conta aberta: abrir novo atendimento. */
+  | { kind: 'nova'; tableNumber?: number };
+
+/**
+ * HIERARQUIA ÚNICA de escolha da conta (regra definitiva):
+ *   1. conta explicitamente escolhida pelo operador (tratado antes, no chamador);
+ *   2. havendo MAIS DE UMA conta aberta ligada à mesa, NADA é escolhido
+ *      automaticamente: o operador TEM de escolher;
+ *   3. conta atualmente associada à mesa (`contaAtualId`);
+ *   4. conta ABERTA ligada àquela mesa (inclusive liberada pelo espelho, via
+ *      `mesaOriginalNumero`) — escolhida sozinha apenas se for ÚNICA;
+ *   5. somente então: nova conta.
+ *
+ * A ambiguidade vem ANTES da conta atual de propósito: ocupar a mesa não dá
+ * direito preferencial silencioso quando existe outro atendimento aberto no
+ * mesmo histórico de mesa.
+ *
+ * `table.status` NUNCA decide: uma mesa pode estar `livre` e ainda assim ter
+ * conta aberta com saldo.
+ */
+export const resolveTableAccount = (accounts: Account[], table: Table | undefined): TableAccountResolution => {
+  if (!table) return { kind: 'nova' };
+  const related = openAccountsForTable(accounts, table.numero);
+  const current = table.contaAtualId ? accounts.find(a => a.id === table.contaAtualId) : undefined;
+  if (related.length > 1) return { kind: 'ambigua', accounts: related, tableNumber: table.numero };
+  if (canAcceptNewOrder(current)) return { kind: 'conta', account: current };
+  if (related.length === 1) return { kind: 'conta', account: related[0] };
+  return { kind: 'nova', tableNumber: table.numero };
+};
+
 export const accountStatusLabel: Record<AccountStatus, string> = {
   aberta: 'Aberta',
   paga: 'Paga',

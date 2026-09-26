@@ -18,9 +18,14 @@ export class LocalStore {
       result = work();
       if (this.state !== before) localStorage.setItem(this.key, JSON.stringify(this.state));
     } catch (error) {
+      // ROLLBACK: a operação inteira é descartada. Os assinantes são avisados
+      // para que a UI nunca exiba uma conta/pedido que não foi persistido.
       this.state = before;
+      this.depth--;
+      this.listeners.forEach(listener => listener());
       throw error;
-    } finally { this.depth--; }
+    }
+    this.depth--;
     if (this.state !== before) {
       this.listeners.forEach(listener => listener());
       this.onCommit?.(this.state);

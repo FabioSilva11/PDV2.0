@@ -10,7 +10,7 @@ const orderLabel = (order: Order) => order.codigoExibicao || order.codigoMesa ||
 
 export const TablesView: React.FC = () => {
   const {
-    tables, orders, accounts, getAccount, getAccountOrders, openTableWithOrder, requestTableBill,
+    tables, orders, accounts, getAccount, getAccountOrders, getPreferredAccountForTable, openTableWithOrder, requestTableBill,
     settleTableAccount, freeTableManually, transferTable, setActiveModule,
     selectedReceiptOrder, setSelectedReceiptOrder,
   } = useRestaurant();
@@ -32,16 +32,15 @@ export const TablesView: React.FC = () => {
   const currentAccountOf = (table: Table) => (table.contaAtualId ? getAccount(table.contaAtualId) : undefined);
 
   /**
-   * Lançamentos da conta que ocupa a mesa. Se a mesa estiver livre mas ainda
-   * houver uma conta ABERTA com saldo, ela é a conta "em aberto" da mesa —
-   * a mesa pode estar livre com conta pendente.
+   * Conta exibida na mesa: a mesma hierarquia do PDV (conta atual -> conta
+   * aberta ligada à mesa). Mesa livre pode exibir "Conta 2 em aberto": é
+   * informação secundária, a ocupação física continua LIVRE.
    */
   const accountOf = (table: Table) => {
-    const current = currentAccountOf(table);
-    if (current) return current;
-    return accounts
-      .filter(a => a.status === 'aberta' && a.saldoRestante > 0 && (a.mesaAtualNumero === table.numero || a.mesaOriginalNumero === table.numero))
-      .sort((a, b) => b.numero - a.numero)[0];
+    const resolution = getPreferredAccountForTable(table.numero);
+    if (resolution.kind === 'conta') return resolution.account;
+    if (resolution.kind === 'ambigua') return resolution.accounts[0];
+    return currentAccountOf(table);
   };
 
   const accountOrders = (accountId?: string) => (accountId ? getAccountOrders(accountId).filter(o => o.status !== 'cancelado') : []);
@@ -127,6 +126,7 @@ export const TablesView: React.FC = () => {
                 <div className="space-y-1">
                   <p className="text-xs text-stone-400 italic">Capacidade: {table.capacidade} pessoas</p>
                   {freeWithOpenAccount && account && <p className="text-[10px] text-amber-800 font-semibold">Conta {account.numero} em aberto • {formatCurrency(account.saldoRestante)}</p>}
+                  {freeWithOpenAccount && account && <p className="text-[10px] text-stone-400">Selecionar no PDV continua esta conta</p>}
                   {!account && last && <p className="text-[10px] text-stone-400">Última conta: {last.numero} • {formatCurrency(last.total)}</p>}
                 </div>
               ) : (

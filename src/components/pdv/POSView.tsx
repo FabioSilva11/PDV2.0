@@ -3,6 +3,7 @@ import { money, normalizeSearch, uid } from '../../utils/business';
 import { useRestaurant } from '../../context/RestaurantContext';
 import { MenuItem, CategoryType, OrderType, CartItem, Order } from '../../types';
 import { formatCurrency } from '../../utils/formatters';
+import { FIRST_ACCOUNT_NUMBER } from '../../lib/accountMigration';
 import { AccompanimentModal } from './AccompanimentModal';
 import { ReceiptModal } from './ReceiptModal';
 import { 
@@ -25,7 +26,8 @@ export const POSView: React.FC = () => {
     tables,
     accounts,
     getAccount,
-    createAccount,
+    getOpenTableAccounts,
+    getPreferredAccountForTable,
     createOrder,
     orders,
     currentUser, customers,
@@ -54,15 +56,33 @@ export const POSView: React.FC = () => {
   const [targetAccountChoice, setTargetAccountChoice] = useState<string>('');
 
   const selectedTable = selectedTableNumber !== null ? tables.find(t => t.numero === selectedTableNumber) : undefined;
-  const tableCurrentAccount = selectedTable?.contaAtualId ? getAccount(selectedTable.contaAtualId) : undefined;
-  const openTableAccounts = selectedTableNumber === null ? [] : accounts.filter(
-    a => a.status === 'aberta' && (a.mesaAtualNumero === selectedTableNumber || a.mesaOriginalNumero === selectedTableNumber)
-  );
-  // Quando há conta aberta na mesa, o padrão é continuar o mesmo atendimento.
-  const effectiveAccountChoice = targetAccountChoice || (tableCurrentAccount?.status === 'aberta' ? tableCurrentAccount.id : 'nova');
-  const nextSequencePreview = effectiveAccountChoice !== 'nova'
-    ? orders.filter(o => o.contaId === effectiveAccountChoice).reduce((max, o) => Math.max(max, o.sequencia ?? 0), 0) + 1
+  // HIERARQUIA DE CONTA (única, espelhada em getPreferredAccountForTable):
+  // escolha explícita do operador -> conta que ocupa a mesa -> ÚNICA conta
+  // aberta ligada à mesa (inclusive liberada pelo espelho) -> nova conta.
+  // `table.status` NÃO participa da decisão: mesa livre pode ter conta aberta.
+  const openTableAccounts = getOpenTableAccounts(selectedTableNumber ?? undefined);
+  const preferred = getPreferredAccountForTable(selectedTableNumber ?? undefined);
+  // Só existe uma conta obviously válida? Então ela é a selecionada por
+  // padrão. Havendo mais de uma, o operador precisa escolher.
+  const uniqueOpenAccountId = openTableAccounts.length === 1 ? openTableAccounts[0].id : '';
+  const targetAccountId = targetAccountChoice || uniqueOpenAccountId || (preferred.kind === 'conta' ? preferred.account.id : '');
+  const isNewAccountChoice = targetAccountChoice === 'nova';
+  const explicitAccount = isNewAccountChoice ? undefined : (targetAccountId ? getAccount(targetAccountId) : undefined);
+  // O preview usa a conta REALMENTE escolhida: se for abrir conta nova, mostramos
+  // o número que ela REALLY terá (ex.: 3.1) em vez do código de outra conta.
+  const nextAccountNumber = accounts.length
+    ? accounts.reduce((max, a) => Math.max(max, a.numero), FIRST_ACCOUNT_NUMBER) + 1
+    : FIRST_ACCOUNT_NUMBER;
+  const ambiguousAccounts = preferred.kind === 'ambigua' ? preferred.accounts : [];
+  const previewAccount = explicitAccount;
+  const nextSequencePreview = previewAccount
+    ? orders.filter(o => o.contaId === previewAccount.id).reduce((max, o) => Math.max(max, o.sequencia ?? 0), 0) + 1
     : 1;
+  const previewCode = previewAccount
+    ? `${previewAccount.numero}.${nextSequencePreview}`
+    : `${nextAccountNumber}.${nextSequencePreview}`;
+  const occupiedByOther = !!(selectedTable?.contaAtualId && selectedTable.contaAtualId !== explicitAccount?.id);
+  const occupiedAccount = occupiedByOther ? getAccount(selectedTable!.contaAtualId!) : undefined;
 
   const categories = useMemo(() => {
     return Array.from(new Set(menu.map(m => m.categoria)));
@@ -125,6 +145,9 @@ export const POSView: React.FC = () => {
     setDiscount(0);
     setNotes('');
     setSelectedTableNumber(null);
+    // A escolha de conta pertence à mesa: nunca sobreviver a uma troca de
+    // mesa nem ao fim da venda (evita "Mesa 8 -> ainda Conta 2").
+    setTargetAccountChoice('');
     setCustomerName('');
     setSelectedCustomerId('');
     setCustomerPhone('');
@@ -197,26 +220,17 @@ export const POSView: React.FC = () => {
       return;
     }
     const deliveryAddressParts = deliveryAddress.trim().split(',');
-    // Se o operador pediu explicitamente um novo atendimento, a conta é criada
-    // antes do lançamento para que ele saia com o número 1 da nova conta.
-    let contaId: string | undefined;
-    if (orderType === 'mesa' && selectedTableNumber !== null) {
-      if (effectiveAccountChoice === 'nova') {
-        contaId = createAccount({
-          tipo: 'mesa',
-          mesaNumero: selectedTableNumber,
-          nomeCliente: customerName || `Mesa ${selectedTableNumber}`,
-          pessoas: 2
-        }).id;
-      } else if (effectiveAccountChoice) {
-        contaId = effectiveAccountChoice;
-      }
-    }
+    // A conta NUNCA é criada aqui. O PDV apenas declara a INTENÇÃO:
+    //  - "Criar novo atendimento" -> novaConta: true (escolha explícita);
+    //  - "Continuar Conta X"       -> contaId explícita;
+    //  - sem escolha               -> undefined e createOrder aplica a
+    //    hierarquia (conta atual -> única conta aberta -> nova).
     const order = createOrder({
       operacaoId: operationId.current,
       tipo: orderType,
       mesaNumero: orderType === 'mesa' && selectedTableNumber ? selectedTableNumber : undefined,
-      contaId,
+      contaId: isNewAccountChoice ? undefined : (explicitAccount?.id || undefined),
+      novaConta: isNewAccountChoice,
       clienteId: selectedCustomerId || undefined,
       nomeCliente: customerName || undefined,
       telefoneCliente: customerPhone || undefined,
@@ -515,22 +529,42 @@ export const POSView: React.FC = () => {
                       </label>
                       <select
                         id="pos-select-account"
-                        value={effectiveAccountChoice}
+                        value={isNewAccountChoice ? 'nova' : (explicitAccount?.id || '')}
                         onChange={(e) => setTargetAccountChoice(e.target.value)}
                         className="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white font-semibold text-xs focus:ring-1 focus:ring-sky-500"
                       >
+                        {openTableAccounts.length === 0 && (
+                          <option value="nova">Criar novo atendimento (nova conta)</option>
+                        )}
                         {openTableAccounts.map(a => (
                           <option key={a.id} value={a.id}>
-                            Continuar na Conta {a.numero} • {a.status} • {a.saldoRestante.toFixed(2)}
+                            Continuar Conta {a.numero} • saldo R$ {a.saldoRestante.toFixed(2)} • {a.lancamentos ?? 0} lançamento{(a.lancamentos ?? 0) === 1 ? '' : 's'}
                           </option>
                         ))}
-                        <option value="nova">Criar novo atendimento (nova conta)</option>
+                        {openTableAccounts.length > 0 && (
+                          <option value="nova">Criar novo atendimento (nova conta)</option>
+                        )}
                       </select>
-                      <p className="mt-1 text-[10px] text-slate-500">
-                        {effectiveAccountChoice === 'nova'
-                          ? 'Será criada uma nova conta e este lançamento será o nº 1 dela.'
-                          : `Novo lançamento ${effectiveAccountChoice === tableCurrentAccount?.id ? tableCurrentAccount?.numero : (getAccount(effectiveAccountChoice)?.numero ?? '?')}.${nextSequencePreview} na conta escolhida.`}
+                      <p className="mt-1 text-[10px] text-slate-500" id="pos-account-hint">
+                        {isNewAccountChoice
+                          ? `Novo atendimento: este pedido será o lançamento ${previewCode} da nova Conta ${nextAccountNumber}.`
+                          : explicitAccount
+                            ? `Continuar Conta ${explicitAccount.numero}: novo lançamento ${previewCode} (${nextSequencePreview}º da conta).`
+                            : ambiguousAccounts.length > 1
+                              ? `Há mais de uma conta aberta nesta mesa (${ambiguousAccounts.map(a => `Conta ${a.numero}`).join(' e ')}). Escolha qual continua.`
+                              : 'Nenhuma conta aberta nesta mesa: este pedido abrirá um novo atendimento.'}
                       </p>
+                      {openTableAccounts.length > 1 && !targetAccountChoice && (
+                        <p className="mt-1 text-[10px] font-semibold text-amber-700">
+                          Há mais de uma conta aberta nesta mesa. Escolha qual continua.
+                        </p>
+                      )}
+                      {occupiedByOther && (
+                        <p className="mt-1 text-[10px] font-semibold text-amber-700">
+                          Mesa {selectedTable?.numero} ocupada pela {occupiedAccount ? `Conta ${occupiedAccount.numero}` : 'outra conta'}. Um novo atendimento
+                          {targetAccountChoice ? ' será criado sem ocupar a mesa' : ' não pode ocupar esta mesa'}.
+                        </p>
+                      )}
                     </div>
                   )}
                   <div>

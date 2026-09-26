@@ -170,6 +170,16 @@ export interface CreateAccountInput extends Partial<Omit<Account, 'tipo'>> {
   pessoas?: number;
 }
 
+/**
+ * Entrada de criação de LANÇAMENTO.
+ * `novaConta` é a marca de que o operador ESCOLHEU "Criar novo atendimento":
+ * é o único jeito de abrir uma conta nova — nunca uma consequência automática
+ * de a mesa ter sido liberada pelo espelho.
+ */
+export interface CreateOrderInput extends Partial<Order> {
+  novaConta?: boolean;
+}
+
 /** Critérios de busca de contas/checks (nº conta, lançamento, mesa, cliente, valor, status). */
 export interface AccountSearchFilters {
   texto?: string;

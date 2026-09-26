@@ -15,7 +15,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback, use
   ManualPaymentOption,
   CategoryType, Customer, Reservation, UserAccount, PermissionKey, AuditLog,
   RestaurantSettings, MenuCategory,
-  Account, AccountStatus, AccountSearchFilters, AccountSplitInput, AccountSplitResult, CreateAccountInput
+  Account, AccountStatus, AccountSearchFilters, AccountSplitInput, AccountSplitResult, CreateAccountInput, CreateOrderInput
 } from '../types';
 import {
   migrateOrdersToAccounts,
@@ -27,10 +27,14 @@ import {
   ordersAwaitingMirror,
   isLastOperationalOrder,
   isAccountOpen,
+  canAcceptNewOrder,
+  openAccountsForTable,
+  resolveTableAccount,
   computeAccountTotals,
   deriveAccountStatus,
   searchAccounts
 } from '../lib/accountMigration';
+import type { TableAccountResolution } from '../lib/accountMigration';
 import { 
   INITIAL_MENU, 
   INITIAL_TABLES, 
@@ -128,7 +132,7 @@ interface RestaurantContextType {
 
   // Orders Management
   orders: Order[];
-  createOrder: (orderData: Partial<Order>) => Order;
+  createOrder: (orderData: CreateOrderInput) => Order;
   updateOrderStatus: (orderId: string, status: OrderStatus) => void;
   cancelOrder: (orderId: string, motivo: string) => void;
   cancelOrderItem: (orderId: string, cartItemId: string, motivo: string) => void;
@@ -173,6 +177,14 @@ interface RestaurantContextType {
   mergeAccounts: (sourceAccountId: string, targetAccountId: string) => Account;
   /** Registra um novo lançamento na conta indicated (sem inferir pela mesa). */
   addOrderToAccount: (contaId: string, data: Partial<Order>) => Order;
+  /**
+   * HIERARQUIA CENTRAL de escolha da conta de uma mesa:
+   * conta atual -> conta aberta relacionada -> única conta aberta -> nova.
+   * `ambigua` significa "exibir as opções e exigir escolha do operador".
+   */
+  getPreferredAccountForTable: (tableNumber?: number) => TableAccountResolution;
+  /** Contas abertas ligadas à mesa (nunca inclui `paga` nem `encerrada`). */
+  getOpenTableAccounts: (tableNumber?: number) => Account[];
 
 
   // Manual Payments (No gateway, manual employee registration)
@@ -853,11 +865,35 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     syncAccountTotals(order.contaId);
   };
 
-  /** Ocupa fisicamente a mesa com a conta informada. */
-  const occupyTable = (table: Table, account: Account, pessoas?: number) => {
+  /**
+   * Ocupa fisicamente a mesa com a conta informada.
+   *
+   * Ao continuar um atendimento cuja mesa foi liberada pelo espelho, a conta é
+   * RE-LIGADA à mesa (`mesaAtual*`): a mesa volta a OCUPADA pela mesma conta,
+   * sem criar conta nova e sem perder o histórico de `mesaOriginal*`.
+   *
+   * `assumeVaga` é usado apenas quando o OPERADOR escolheu explicitamente a
+   * conta: nesse caso a mesa passa a seguir a conta escolhida e o ocupante
+   * anterior é somente LIBERADO fisicamente (continua aberto, com saldo e
+   * histórico). Sem essa flag, uma mesa com conta atual de OUTRA conta nunca é
+   * sequestrada — é o que impede conta antiga de roubar a mesa.
+   */
+  const occupyTable = (table: Table, account: Account, pessoas?: number, opts?: { assumeVaga?: boolean }) => {
+    const live = tableByNumber(table.numero) || table;
+    const temOutraConta = !!live.contaAtualId && live.contaAtualId !== account.id;
+    if (temOutraConta && !opts?.assumeVaga) return;
+    if (temOutraConta && opts?.assumeVaga) releaseTableOccupation(live.numero);
+    setAccounts(prev => prev.map(a => a.id === account.id
+      ? {
+        ...a,
+        mesaAtualId: live.id,
+        mesaAtualNumero: live.numero,
+        mesaSessaoId: a.mesaSessaoId || a.id,
+        mesaSessaoNumero: a.mesaSessaoNumero ?? a.numero
+      }
+      : a));
     setTables(prev => prev.map(t => {
-      if (t.id !== table.id) return t;
-      // Uma mesa com conta atual de OUTRA conta não é sequestrada.
+      if (t.id !== live.id) return t;
       if (t.contaAtualId && t.contaAtualId !== account.id) return t;
       return {
         ...t,
@@ -878,10 +914,17 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   };
 
   /**
-   * Libera apenas a OCUPAÇÃO física. Não paga, não encerra conta e não apaga
-   * pedidos. O histórico (ultimaConta*) continua na mesa.
+   * Libera apenas a OCUPAÇÃO FÍSICA da mesa. Não paga, não encerra conta e
+   * não apaga pedidos — o histórico (ultimaConta*) continua na mesa.
+   *
+   * A conta também é sincronizada: `mesaAtual*` é removido porque a mesa não
+   * está mais ocupada, mas `mesaOriginal*` e o `status` são PRESERVADOS
+   * (a conta continua aberta com saldo e segue disponível para
+   * "Continuar Conta X" quando o operador voltar a esta mesa).
    */
   const releaseTableOccupation = (tableNumber: number) => {
+    const table = tableByNumber(tableNumber);
+    const contaId = table?.contaAtualId;
     setTables(prev => prev.map(t => t.numero !== tableNumber ? t : {
       ...t,
       status: 'livre',
@@ -895,16 +938,33 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       valorAtual: 0,
       pessoasSentadas: undefined
     }));
+    // Sincroniza a conta liberada: some a mesa atual, some a origem NÃO some.
+    if (contaId) {
+      setAccounts(prev => prev.map(a => a.id === contaId && a.mesaAtualNumero === tableNumber
+        ? { ...a, mesaAtualId: undefined, mesaAtualNumero: undefined, mesaSessaoId: undefined, mesaSessaoNumero: undefined }
+        : a));
+    }
   };
 
   /**
    * Cria uma CONTA (novo atendimento financeiro). Só uma nova conta abre um
    * novo atendimento — o espelho NUNCA cria conta por conta própria.
+   *
+   * Se a mesa já estiver ocupada por OUTRA conta aberta, a criação é recusada
+   * com mensagem clara: duas contas abertas na mesma mesa só existem por
+   * escolha explícita do operador (nova conta de um cliente diferente em
+   * mesa livre).
    */
   const createAccount = (input: CreateAccountInput): Account => {
     const table = input.mesaNumero !== undefined ? tableByNumber(input.mesaNumero) : undefined;
     if (input.mesaNumero !== undefined && !table) throw new Error('Mesa inexistente.');
     if (input.id && accountById(input.id)) throw new Error('Já existe uma conta com este identificador.');
+    // OCUPAÇÃO: nunca sequestrar a mesa de outra conta aberta.
+    const occupant = accountById(table?.contaAtualId);
+    const occupiedByOther = !!table && !!table.contaAtualId && table.contaAtualId !== input.id && isAccountOpen(occupant);
+    if (occupiedByOther) {
+      throw new Error(`Esta mesa já está ocupada pela Conta ${occupant!.numero}. Continue essa conta ou libere/encerre a ocupação atual.`);
+    }
     const numero = input.numero ?? nextAccountNumber(accountList());
     const id = input.id || uid('acc');
     const tipo = input.tipo || (table ? 'mesa' : 'balcao');
@@ -936,14 +996,50 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     return account;
   };
 
+  /** Desfaz uma conta criada na mesma operação (rollback de estado). */
+  const discardAccount = (contaId: string) => {
+    setAccounts(prev => prev.filter(a => a.id !== contaId));
+    setTables(prev => prev.map(t => t.contaAtualId === contaId
+      ? {
+        ...t,
+        contaAtualId: undefined,
+        contaAtualNumero: undefined,
+        sessaoAtivaId: undefined,
+        sessaoNumero: undefined,
+        status: (t.status === 'conta' || t.status === 'fechando') ? t.status : 'livre',
+        valorAtual: 0
+      }
+      : t));
+    setOrders(prev => prev.filter(o => o.contaId !== contaId));
+  };
+
+  /**
+   * Escolha CENTRAL da conta de um lançamento de mesa. Mesma hierarquia do
+   * PDV: conta atual -> única conta aberta ligada à mesa -> nova.
+   * Em ambiguidade devolve `ambigua` para o chamador exigir escolha do
+   * operador — nunca escolhe por sorteio.
+   */
+  const getPreferredAccountForTable = (tableNumber?: number): TableAccountResolution =>
+    resolveTableAccount(accountList(), tableNumber !== undefined ? tableByNumber(tableNumber) : undefined);
+
+  /** Contas abertas que podem receber lançamento na mesa (nunca encerradas). */
+  const getOpenTableAccounts = (tableNumber?: number): Account[] =>
+    openAccountsForTable(accountList(), tableNumber);
+
+
   /**
    * Decide a conta de um novo lançamento, na ordem de precedência:
-   *  1. contaId explícito (o operador escolheu "Adicionar lançamento");
-   *  2. conta ABERTA que ocupa a mesa ("continuar o atendimento");
-   *  3. nova conta ("Criar atendimento").
-   * Nunca deriva do saldo nem do status da mesa.
+   *  1. contaId explícito (o operador escolheu "Continuar Conta X");
+   *  2. `novaConta: true` — escolha explícita de "Criar novo atendimento";
+   *  3. conta ABERTA que ocupa a mesa;
+   *  4. ÚNICA conta ABERTA ligada à mesa (inclusive liberada pelo espelho);
+   *  5. nova conta.
+   *
+   * Nunca deriva do `status` da mesa e nunca escolhe arbitrariamente: havendo
+   * mais de uma conta aberta, exige escolha do operador. Informa se a conta foi
+   * CRIADA aqui, para que o chamador possa desfazer em caso de erro.
    */
-  const resolveAccountForOrder = (data: Partial<Order>, table?: Table): Account => {
+  const resolveAccountForOrder = (data: CreateOrderInput, table?: Table): { account: Account; created: boolean } => {
     if (data.contaId) {
       const account = accountById(data.contaId);
       if (!account) throw new Error('A conta informada não existe.');
@@ -952,27 +1048,39 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       if (table && account.mesaAtualNumero !== undefined && account.mesaAtualNumero !== table.numero) {
         throw new Error(`A Conta ${account.numero} pertence à Mesa ${account.mesaAtualNumero}. Transfira a conta antes de lançar itens.`);
       }
-      return account;
+      return { account, created: false };
+    }
+    // Escolha EXPLÍCITA de novo atendimento: não reaproveita conta aberta da
+    // mesa. A criação continua sendo feita AQUI (nunca na tela do PDV).
+    if (data.novaConta) {
+      return {
+        account: createAccount({
+          tipo: data.tipo || (table ? 'mesa' : 'balcao'),
+          nomeCliente: data.nomeCliente,
+          telefoneCliente: data.telefoneCliente,
+          mesaNumero: table?.numero
+        }),
+        created: true
+      };
     }
     if (table) {
-      const current = accountById(table.contaAtualId);
-      if (isAccountOpen(current)) return current;
-      // Mesa livre COM conta aberta e saldo (o espelho do último lançamento
-      // liberou a mesa, mas o cliente continua na mesa): o novo lançamento
-      // continua o mesmo atendimento. Sem saldo, é um novo cliente.
-      const pending = accountList()
-        .filter(a => a.status === 'aberta' && a.saldoRestante > 0
-          && (a.mesaAtualNumero === table.numero || a.mesaOriginalNumero === table.numero))
-        .sort((a, b) => b.numero - a.numero)[0];
-      if (pending) return pending;
+      const resolution = resolveTableAccount(accountList(), table);
+      if (resolution.kind === 'conta') return { account: resolution.account, created: false };
+      if (resolution.kind === 'ambigua') {
+        throw new Error(`A Mesa ${resolution.tableNumber} tem mais de uma conta aberta (${resolution.accounts.map(a => `Conta ${a.numero}`).join(' e ')}). Escolha qual conta continua antes de confirmar.`);
+      }
     }
-    return createAccount({
-      tipo: data.tipo || (table ? 'mesa' : 'balcao'),
-      nomeCliente: data.nomeCliente,
-      telefoneCliente: data.telefoneCliente,
-      mesaNumero: table?.numero
-    });
+    return {
+      account: createAccount({
+        tipo: data.tipo || (table ? 'mesa' : 'balcao'),
+        nomeCliente: data.nomeCliente,
+        telefoneCliente: data.telefoneCliente,
+        mesaNumero: table?.numero
+      }),
+      created: true
+    };
   };
+
 
   const activePrinters = () => store.state.printers.filter((p: PrinterDevice) => p.ativa && p.status === 'online');
   const buildOrderPrintContent = (order: Order, title: string, items = order.itens) => {
@@ -1156,7 +1264,7 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
    * sequência é SEMPRE `max(sequencia) + 1` da conta — ela nunca reinicia por
    * causa de mesa liberada e nunca usa `Date.now()`.
    */
-  const createOrder = (data: Partial<Order>): Order => {
+  const createOrder = (data: CreateOrderInput): Order => {
     if (data.operacaoId) {
       const existing = orderList().find((o: Order) => o.operacaoId === data.operacaoId);
       if (existing) return existing;
@@ -1166,13 +1274,39 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     const values = totals(data.itens, data.desconto, data.taxaServico, data.taxaEntrega);
     const table = data.tipo === 'mesa' ? tableByNumber(data.mesaNumero) : undefined;
     if (data.tipo === 'mesa' && !table) throw new Error('Mesa inexistente.');
-    // 1) conta explícita -> 2) conta aberta da mesa -> 3) nova conta
-    const account = resolveAccountForOrder(data, table);
+    // 1) conta explícita -> 2) conta atual da mesa -> 3) única conta aberta
+    // ligada à mesa -> 4) nova conta. `createOrder` é quem decide: o PDV não
+    // cria conta antecipadamente nem duplica esta regra.
+    const { account, created } = resolveAccountForOrder(data, table);
+    try {
+      return buildOrderInAccount(data, table, account, values);
+    } catch (err) {
+      // TRANSACIONALIDADE (frontend): se a conta foi criada nesta operação e o
+      // lançamento não saiu, nada sobra — nem conta, nem ocupação, nem pedido.
+      if (created) discardAccount(account.id);
+      throw err;
+    }
+  };
+
+  /**
+   * Grava o LANÇAMENTO na conta já resolvida e ocupa a mesa.
+   * Separado de `createOrder` para que a resolução da conta e a gravação
+   * possam ser envolvidas por rollback.
+   */
+  const buildOrderInAccount = (
+    data: CreateOrderInput,
+    table: Table | undefined,
+    account: Account,
+    values: ReturnType<typeof totals>
+  ): Order => {
     const items = snapshotItems(data.itens);
     const sequencia = getNextSequence(account.id);
     const codigoExibicao = buildDisplayCode(account.numero, sequencia);
+    // `novaConta` é flag de ENTRADA (intenção do operador), não faz parte do
+    // lançamento persistido.
+    const { novaConta: _intencaoNovaConta, ...entrada } = data;
     const order: Order = {
-      ...data,
+      ...entrada,
       ...values,
       id: uid('ord'),
       operacaoId: data.operacaoId || uid('op'),
@@ -1201,9 +1335,11 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     };
     setOrders(prev => [order, ...prev]);
     if (order.clienteId) setCustomers(prev => prev.map(c => c.id === order.clienteId ? { ...c, ultimoPedidoEm: order.criadoEm, totalComprado: money((c.totalComprado || 0) + order.total) } : c));
-    // A mesa é ocupada por ESTA conta. Se outra conta já ocupa a mesa, ela não
-    // é sequestrada (a nova conta fica sem mesa até ser transferida).
-    if (table) occupyTable(table, account);
+    // A mesa é ocupada por ESTA conta. Sem conta explicitamente escolhida, outra
+    // conta que já ocupa a mesa NÃO é sequestrada (a nova fica sem mesa até ser
+    // transferida). Escolhendo a conta na mão, a mesa segue a escolha e o
+    // ocupante anterior é apenas liberado fisicamente.
+    if (table) occupyTable(table, account, undefined, { assumeVaga: !!data.contaId });
     syncAccountTotals(account.id);
     // Processar pagamentos incluídos no pedido (ex: venda balcão paga na hora).
     // addManualPaymentToOrder atualiza o store de forma síncrona via setOrders;
@@ -1475,16 +1611,15 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   /**
    * Conta que pode ser cobrada a partir de uma mesa: a conta que ocupa a mesa
-   * ou, se ela já estiver livre, a conta ABERTA mais recente daquela mesa com
-   * saldo. Nunca inventa vínculo por número de mesa quando existe outra conta.
+   * ou, se ela já estiver livre, a ÚNICA conta ABERTA ligada àquela mesa com
+   * saldo. Ambiguidade não é resolvida por sorteio — a cobrança avisa o
+   * operador para escolher na Central de Contas & Checks.
    */
   const settleableAccountOf = (table: Table): Account | undefined => {
     const current = accountById(table.contaAtualId);
-    if (current && current.saldoRestante > 0) return current;
-    if (current && !current.saldoRestante) return current;
-    return accountList()
-      .filter(a => a.status !== 'encerrada' && a.saldoRestante > 0 && (a.mesaAtualNumero === table.numero || a.mesaOriginalNumero === table.numero))
-      .sort((a, b) => b.numero - a.numero)[0];
+    if (current && current.status !== 'encerrada') return current;
+    const due = openAccountsForTable(accountList(), table.numero).filter(a => a.saldoRestante > 0);
+    return due.length === 1 ? due[0] : undefined;
   };
 
   /**
@@ -1730,6 +1865,9 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const openTableWithOrder = (tableNumber: number, customerName?: string, pessoas: number = 2) => {
     const table = tableByNumber(tableNumber);
     if (!table) throw new Error('Mesa inexistente.');
+    // "Abrir mesa" é o gesto EXPLÍCITO de novo atendimento. Ele nunca
+    // sequestra uma mesa ocupada: se a conta que ocupa a mesa está aberta, o
+    // operador precisa continuar aquele atendimento.
     if (table.contaAtualId) {
       const current = accountById(table.contaAtualId);
       if (current && current.status === 'aberta') {
@@ -1744,16 +1882,15 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     });
   };
 
-  /** Novo lançamento na conta que ocupa a mesa. */
+  /** Novo lançamento na conta que ocupa a mesa (ou na única conta aberta dela). */
   const addItemsToTable = (number: number, items: CartItem[]) => {
     const table = tableByNumber(number);
     if (!table || !items.length) return;
-    const current = accountById(table.contaAtualId);
-    // Continua a conta aberta da mesa; se não houver, cria o atendimento.
+    // `contaId` fica undefined de propósito: createOrder aplica a hierarquia
+    // (conta atual -> única conta aberta -> nova) e nunca duplica regra.
     createOrder({
       tipo: 'mesa',
       mesaNumero: number,
-      contaId: isAccountOpen(current) ? current.id : undefined,
       nomeCliente: table.clienteNome,
       itens: items
     });
@@ -1768,12 +1905,18 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     recordAudit('solicitou conta', 'mesa', table.id, `Mesa ${tableNumber} • Conta ${table.contaAtualNumero}`);
   };
 
-  /** Baixa manual da conta que ocupa a mesa (ou a última conta aberta dela). */
+  /** Baixa manual da conta que ocupa a mesa (ou a única conta aberta dela). */
   const settleTableAccount = (tableNumber: number, method?: PaymentMethodId, amountPaid?: number, change?: number): Order | null => {
     const table = tableByNumber(tableNumber);
     if (!table) throw new Error('Mesa inexistente.');
     const account = settleableAccountOf(table);
-    if (!account) throw new Error('Esta mesa não possui uma conta ativa.');
+    if (!account) {
+      const due = openAccountsForTable(accountList(), tableNumber).filter(a => a.saldoRestante > 0);
+      if (due.length > 1) {
+        throw new Error(`A Mesa ${tableNumber} tem ${due.length} contas abertas com saldo (${due.map(a => `Conta ${a.numero}`).join(' e ')}). Cobrou a conta escolhida em Contas & Checks.`);
+      }
+      throw new Error('Esta mesa não possui uma conta ativa.');
+    }
     const own = ordersOfAccount(account.id).filter(o => o.status !== 'cancelado');
     if (!own.length) throw new Error('Esta conta ainda não possui lançamentos.');
     if (account.saldoRestante <= 0) {
@@ -1999,6 +2142,8 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         getAccountOrders,
         getNextSequence,
         addOrderToAccount,
+        getPreferredAccountForTable,
+        getOpenTableAccounts,
         createAccount,
         payAccount,
         closeAccount,

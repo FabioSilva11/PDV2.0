@@ -20,6 +20,18 @@ const STATUS_LABEL: Record<AccountStatus, string> = {
 
 const orderLabel = (codigo?: string, numero?: number) => codigo || (numero !== undefined ? `#${numero}` : '—');
 
+/**
+ * Rótulo da relação conta × mesa.
+ * occupied: a conta está ocupando a mesa agora.
+ * liberada: o espelho liberou a mesa, mas o histórico (mesaOriginal) segue —
+ *           o operador ainda pode "Continuar Conta X" nesta mesa.
+ */
+const accountTableLabel = (account: Account): string => {
+  if (account.mesaAtualNumero !== undefined) return `Mesa ${account.mesaAtualNumero}`;
+  if (account.mesaOriginalNumero !== undefined) return `Mesa ${account.mesaOriginalNumero} • liberada`;
+  return 'Sem mesa';
+};
+
 export const AccountsView: React.FC = () => {
   const {
     accounts, tables, getAccount, getAccountOrders, searchAccounts, payAccount, closeAccount,
@@ -135,8 +147,7 @@ export const AccountsView: React.FC = () => {
                 <div>
                   <div className="text-lg font-black font-serif text-slate-900">Conta {account.numero}</div>
                   <div className="text-[11px] text-slate-500">
-                    {account.nomeCliente || 'Sem nome'} • {account.mesaAtualNumero !== undefined ? `Mesa ${account.mesaAtualNumero}` : 'Sem mesa'}
-                    {account.mesaOriginalNumero !== undefined && account.mesaOriginalNumero !== account.mesaAtualNumero ? ` (aberta na ${account.mesaOriginalNumero})` : ''}
+                    {account.nomeCliente || 'Sem nome'} • {accountTableLabel(account)}
                   </div>
                 </div>
                 <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${STATUS_STYLE[account.status]}`}>{STATUS_LABEL[account.status]}</span>
@@ -159,7 +170,7 @@ export const AccountsView: React.FC = () => {
               <div>
                 <h3 className="font-bold text-base font-serif">Conta {selectedAccount.numero}</h3>
                 <div className="text-xs text-slate-400">
-                  {selectedAccount.nomeCliente || 'Sem nome'} • {selectedAccount.mesaAtualNumero !== undefined ? `Mesa ${selectedAccount.mesaAtualNumero}` : 'Sem mesa'} • {STATUS_LABEL[selectedAccount.status]}
+                  {selectedAccount.nomeCliente || 'Sem nome'} • {accountTableLabel(selectedAccount)} • {STATUS_LABEL[selectedAccount.status]}
                 </div>
               </div>
               <button type="button" onClick={() => setSelectedAccountId(null)} className="p-1 rounded-lg text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>
@@ -192,7 +203,7 @@ export const AccountsView: React.FC = () => {
                 </div>
               </div>
 
-              {selectedAccount.mesaAtualNumero !== undefined && (
+              {selectedAccount.status !== 'encerrada' && (selectedAccount.mesaAtualNumero !== undefined || selectedAccount.mesaOriginalNumero !== undefined) && (
                 <div className="bg-white p-3 rounded-xl border border-slate-200 space-y-2">
                   <div className="text-[10px] font-bold uppercase tracking-wider text-slate-600 flex items-center gap-1.5"><MoveRight className="w-3.5 h-3.5" />Transferir conta</div>
                   <div className="flex items-center gap-2">

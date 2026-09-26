@@ -151,7 +151,10 @@ describe('mesas com histórico de lançamentos por conta', () => {
     const first = sale(result, { tipo: 'mesa', mesaNumero: 4, itens: [item({ cartItemId: 'first' })] });
     act(() => result.current.freeTableManually(4));
     act(() => result.current.openTableWithOrder(4));
-    const second = sale(result, { tipo: 'mesa', mesaNumero: 4, itens: [item({ cartItemId: 'second' })] });
+    // A Mesa 4 tem 2 contas abertas (a 0 liberada e a 1 ocupando): o operador
+    // escolhe a conta, o PDV nunca adivinha.
+    const conta1 = result.current.accounts.find(a => a.numero === 1)!;
+    const second = sale(result, { tipo: 'mesa', mesaNumero: 4, contaId: conta1.id, itens: [item({ cartItemId: 'second' })] });
     expect(first.contaNumero).toBe(0);
     expect(second.contaNumero).toBe(1);
     expect(second.contaId).not.toBe(first.contaId);
