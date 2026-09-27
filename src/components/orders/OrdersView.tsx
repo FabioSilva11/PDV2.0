@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { useRestaurant } from '../../context/RestaurantContext';
 import { formatCurrency } from '../../utils/formatters';
+import { getPendingFinancialOrders } from '../../lib/turno';
 import { OrderStatus, OrderType } from '../../types';
 import { 
   Receipt, 
@@ -26,7 +27,9 @@ export const OrdersView: React.FC = () => {
     openPaymentModal, 
     setSelectedReceiptOrder, 
     setActiveModule,
-    generateOrderMirror
+    generateOrderMirror,
+    turnoAtualId,
+    cashRegister
   } = useRestaurant();
 
   const [searchTerm, setSearchTerm] = useState('');
@@ -34,8 +37,29 @@ export const OrdersView: React.FC = () => {
   const [channelFilter, setChannelFilter] = useState<string>('todos');
   const [periodFilter, setPeriodFilter] = useState<string>('hoje');
 
+  // ---------------------------------------------------------------------
+  // FILA OPERACIONAL DO TURNO ATUAL (regras 8/10):
+  //  - somente pedidos do turno aberto no caixa (turnoId);
+  //  - pagos (saldo 0) e cancelados corretamente SAEM da fila operacional —
+  //    continuam disponíveis no histórico (filtro "Todo o histórico");
+  //  - com o caixa FECHADO a Central não opera: nenhuma venda é iniciável
+  //    (a regra central vive em createOrder, no contexto).
+  // ---------------------------------------------------------------------
+  const caixaAberto = !!cashRegister?.aberto;
+  const pendingOrders = useMemo(
+    () => getPendingFinancialOrders(orders),
+    [orders]
+  );
+  const operationalOrders = useMemo(() => {
+    if (!caixaAberto) return [];
+    return pendingOrders.filter(order => order.turnoId !== undefined && order.turnoId === turnoAtualId);
+  }, [pendingOrders, caixaAberto, turnoAtualId]);
+
   const filteredOrders = useMemo(() => {
-    return orders.filter(order => {
+    // "Hoje" = fila operacional do turno atual. "Todo o histórico" = TODOS os
+    // pedidos, de todos os turnos (nunca apagados; regra 7).
+    const base = periodFilter === 'hoje' ? operationalOrders : orders;
+    return base.filter(order => {
       // Search
       const searchLower = searchTerm.toLowerCase();
       const matchSearch = 
@@ -60,7 +84,7 @@ export const OrdersView: React.FC = () => {
 
       return true;
     });
-  }, [orders, searchTerm, statusFilter, channelFilter, periodFilter]);
+  }, [operationalOrders, orders, searchTerm, statusFilter, channelFilter, periodFilter]);
 
   const getStatusBadge = (st: OrderStatus) => {
     const map: Record<OrderStatus, { label: string; color: string }> = {
@@ -97,6 +121,15 @@ export const OrdersView: React.FC = () => {
           Novo Pedido (PDV)
         </button>
       </div>
+
+      {/* Fila do turno / caixa fechado */}
+      {!caixaAberto && (
+        <div className="p-4 bg-amber-50 border border-amber-300 rounded-2xl text-xs text-amber-900 flex items-center gap-2">
+          <AlertCircle className="w-4 h-4 shrink-0 text-amber-600" />
+          <span className="font-bold">Abra o caixa antes de vender.</span>
+          <span className="font-normal">A fila operacional está suspensa até a abertura do caixa; o histórico permanece consultável em "Todo o histórico".</span>
+        </div>
+      )}
 
       {/* Filter and Search Bar */}
       <div className="p-4 bg-white rounded-2xl border border-slate-200 shadow-xs space-y-3">

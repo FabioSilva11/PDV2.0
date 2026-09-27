@@ -228,9 +228,9 @@ for (const order of Array.isArray(snapshot?.orders) ? snapshot.orders : []) {
               `INSERT INTO orders
                (id, numero, tipo, status, status_pagamento, conta_id, conta_numero, sequencia,
                 sequencia_global, codigo_exibicao, mesa_numero, mesa_original_numero, codigo_mesa,
-                cliente_nome, cliente_telefone, total, desconto, taxa_entrega,
+                turno_id, cliente_nome, cliente_telefone, total, desconto, taxa_entrega,
                 valor_total_pago, saldo_restante, criado_em, raw_data)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
               ON DUPLICATE KEY UPDATE
                 status = VALUES(status),
                 status_pagamento = VALUES(status_pagamento),
@@ -241,6 +241,7 @@ for (const order of Array.isArray(snapshot?.orders) ? snapshot.orders : []) {
                 codigo_exibicao = VALUES(codigo_exibicao),
                 mesa_numero = VALUES(mesa_numero),
                 mesa_original_numero = VALUES(mesa_original_numero),
+                turno_id = VALUES(turno_id),
                 total = VALUES(total),
                 desconto = VALUES(desconto),
                 taxa_entrega = VALUES(taxa_entrega),
@@ -264,6 +265,7 @@ for (const order of Array.isArray(snapshot?.orders) ? snapshot.orders : []) {
               order.mesaNumero ?? null,
               order.mesaOriginalNumero ?? null,
               order.codigoMesa || null,
+              order.turnoId || null,
                 order.nomeCliente || null,
                 order.telefoneCliente || null,
                 total,
@@ -307,6 +309,64 @@ for (const order of Array.isArray(snapshot?.orders) ? snapshot.orders : []) {
                 ]
               );
             }
+          }
+          // Espelhar TURNOS OPERACIONAIS do caixa (abertura/fechamento do turno).
+          const turnos = [
+            ...(Array.isArray(snapshot?.cashRegister?.turnoAtual) ? [] : snapshot?.cashRegister?.turnoAtual ? [snapshot.cashRegister.turnoAtual] : []),
+            ...(Array.isArray(snapshot?.cashRegister?.turnosHistorico) ? snapshot.cashRegister.turnosHistorico : [])
+          ];
+          for (const turno of turnos) {
+            if (!turno?.id) continue;
+            await conn.query(
+              `INSERT INTO turnos_operacionais
+               (id, caixa_id, status, operador_abertura, aberto_em, operador_fechamento, fechado_em, saldo_inicial, saldo_final, raw_data)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON DUPLICATE KEY UPDATE
+                 status = VALUES(status),
+                 operador_fechamento = VALUES(operador_fechamento),
+                 fechado_em = VALUES(fechado_em),
+                 saldo_final = VALUES(saldo_final),
+                 raw_data = VALUES(raw_data)`,
+              [
+                turno.id,
+                turno.caixaId || null,
+                turno.status || 'aberto',
+                turno.operadorAbertura || null,
+                turno.abertoEm ? new Date(turno.abertoEm) : new Date(),
+                turno.operadorFechamento || null,
+                turno.fechadoEm ? new Date(turno.fechadoEm) : null,
+                Number(turno.saldoInicial) || 0,
+                turno.saldoFinal !== undefined && turno.saldoFinal !== null ? Number(turno.saldoFinal) : null,
+                JSON.stringify(turno)
+              ]
+            );
+          }
+          // Espelhar transações de caixa com o turno de origem.
+          for (const tx of Array.isArray(snapshot?.cashRegister?.transacoes) ? snapshot.cashRegister.transacoes : []) {
+            if (!tx?.id) continue;
+            await conn.query(
+              `INSERT INTO cash_transactions
+               (id, caixa_id, turno_id, tipo, valor, motivo, forma_pagamento, operador, pedido_id, horario)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON DUPLICATE KEY UPDATE
+                 turno_id = VALUES(turno_id),
+                 tipo = VALUES(tipo),
+                 valor = VALUES(valor),
+                 motivo = VALUES(motivo),
+                 forma_pagamento = VALUES(forma_pagamento)`,
+              [
+                tx.id,
+                snapshot?.cashRegister?.id || null,
+                tx.turnoId || null,
+                tx.tipo || 'venda_manual',
+                Number(tx.valor) || 0,
+                tx.motivo || '',
+                tx.formaPagamento || null,
+                tx.operador || null,
+                tx.pedidoId || null,
+                tx.horario ? new Date(tx.horario) : new Date()
+              ]
+            );
           }
           // Espelhar configuração do estabelecimento em tabela estruturada.
           if (snapshot?.settings?.id) {

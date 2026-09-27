@@ -190,6 +190,8 @@ export interface Account {
   contaFilhaId?: string;
   observacoes?: string;
   criadaPor?: string;
+  /** Turno operacional ao qual esta conta pertence (quando aberta). */
+  turnoId?: TurnoId;
   /** @deprecated legado: use contaId. */
   mesaSessaoId?: string;
   /** @deprecated legado: use numero. */
@@ -334,6 +336,8 @@ export interface Order {
   mesaPedidoSequencia?: number;
   /** @deprecated legado: use codigoExibicao. */
   codigoMesa?: string;
+  /** Turno operacional ao qual este lançamento pertence. */
+  turnoId?: TurnoId;
   garcomNome?: string;
   canal: string; // 'Salão', 'Balcão', 'WhatsApp', 'iFood', 'Telefone'
   criadoEm: string;
@@ -406,6 +410,8 @@ export interface Table {
   sessaoAtivaId?: string;
   /** @deprecated legado: use contaAtualNumero. */
   sessaoNumero?: number;
+  /** Turno operacional ao qual esta ocupação pertence. */
+  turnoId?: TurnoId;
   valorAtual: number;
   pessoasSentadas?: number;
   // Posicionamento no editor visual
@@ -418,14 +424,32 @@ export interface Table {
 // ------------------------------------------
 // CAIXA OPERACIONAL (REGISTRO MANUAL)
 // ------------------------------------------
-export type CashMovementType = 
+/** Identificador único de turno operacional do caixa. */
+export type TurnoId = string;
+
+/** Status do turno operacional. */
+export type TurnoStatus = 'aberto' | 'fechado' | 'conferencia';
+
+/**
+ * Tipos de movimentação ATIVOS: só eles podem ser criados pela interface e
+ * pelo contexto. Suprimento e sangria foram removidos do fluxo operacional.
+ */
+export type ActiveCashMovementType =
   | 'abertura'
-  | 'suprimento'
-  | 'sangria'
+  | 'venda'
   | 'entrada_manual'
   | 'saida_manual'
   | 'venda_manual'
   | 'fechamento';
+
+/**
+ * Tipos LEGADOS preservados apenas para LEITURA de dados históricos
+ * (auditoria/relatórios). Novas transações nunca recebem esses tipos.
+ */
+export type LegacyCashMovementType = 'suprimento' | 'sangria';
+
+/** União legível: registros antigos de suprimento/sangria continuam carregáveis. */
+export type CashMovementType = ActiveCashMovementType | LegacyCashMovementType;
 
 export interface CashTransaction {
   id: string;
@@ -436,17 +460,47 @@ export interface CashTransaction {
   horario: string;
   pedidoId?: string;
   operador: string;
+  /** Turno operacional ao qual esta transação pertence. */
+  turnoId?: TurnoId;
+}
+
+export interface PendenciaFechamento {
+  tipo: 'pedido_saldo' | 'conta_saldo' | 'inconsistencia_financeira' | 'pagamento_parcial';
+  descricao: string;
+  valor: number;
+  entidadesIds: string[];
+  severidade: 'aviso' | 'bloqueio';
+}
+
+export interface TurnoOperacional {
+  id: TurnoId;
+  caixaId: string;
+  status: TurnoStatus;
+  operadorAbertura: string;
+  abertoEm: string;
+  fechadoEm?: string;
+  operadorFechamento?: string;
+  saldoInicial: number;
+  saldoFinal?: number;
+  transacoesIds: string[];
+  pendenciasFechamento?: PendenciaFechamento[];
 }
 
 export interface CashRegister {
   id: string;
+  /** Turno operacional atualmente ativo (se aberto). */
+  turnoAtual?: TurnoOperacional;
+  /** Histórico de turnos fechados (para auditoria). */
+  turnosHistorico: TurnoOperacional[];
+  /** Indica se há um turno aberto (compatibilidade). */
   aberto: boolean;
-  operadorAbertura?: string;
-  abertoEm?: string;
-  fechadoEm?: string;
+  /** Saldo inicial do turno atual (compatibilidade). */
   saldoInicial: number;
-  saldoAtualGaveta: number; // Dinheiro físico esperado
+  /** Saldo atual em gaveta do turno atual (compatibilidade). */
+  saldoAtualGaveta: number;
+  /** Histórico de transações do turno atual (compatibilidade). */
   transacoes: CashTransaction[];
+  /** Dados do fechamento cego do último turno. */
   fechamentoCego?: {
     dinheiroInformado: number;
     pixInformado: number;
@@ -507,6 +561,8 @@ export interface PrintJob {
   id: string;
   pedidoId?: string;
   grupoImpressaoId?: string;
+  /** Turno operacional ao qual este job pertence (fila isolada por turno). */
+  turnoId?: TurnoId;
   tipo: 'pedido' | 'espelho' | 'comprovante' | 'teste';
   impressoraId: string;
   impressoraNome: string;

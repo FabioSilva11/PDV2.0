@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useRestaurant } from '../../context/RestaurantContext';
 import { Table } from '../../types';
 import { formatDateTime } from '../../utils/formatters';
-import { Users, Clock } from 'lucide-react';
+import { Users, Clock, Lock } from 'lucide-react';
 
 /**
  * MAPA DE MESAS — apenas visualização da ocupação física.
@@ -12,7 +12,7 @@ import { Users, Clock } from 'lucide-react';
  * informação financeira.
  */
 export const TablesView: React.FC = () => {
-  const { tables } = useRestaurant();
+  const { tables, cashRegister, turnoAtualId } = useRestaurant();
 
   const [filter, setFilter] = useState<'todas' | 'livres' | 'ocupadas' | 'conta'>('todas');
 
@@ -27,11 +27,22 @@ export const TablesView: React.FC = () => {
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-6">
+      {/* Mapa segue o turno do caixa: fechado = sem novos atendimentos */}
+      {!cashRegister?.aberto && (
+        <div className="p-4 bg-amber-50 border border-amber-300 rounded-2xl text-xs text-amber-900 flex items-center gap-2">
+          <Lock className="w-4 h-4 shrink-0 text-amber-600" />
+          <span>
+            <strong>Caixa fechado</strong> — não é possível iniciar atendimentos, criar lançamentos ou ocupar mesas para novas vendas. Abra o caixa para operar o salão.
+          </span>
+        </div>
+      )}
+
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div>
           <h2 className="text-xl font-bold font-serif text-slate-900 flex items-center gap-2"><Users className="w-6 h-6 text-blue-600" />Mapa de Mesas & Salão</h2>
           <p className="text-xs text-slate-500">
-            Mapa operacional: a mesa é apenas a <strong>ocupação física</strong>.
+            Mapa operacional: a mesa é apenas a <strong>ocupação física</strong>
+            {cashRegister?.aberto ? ` do turno ${turnoAtualId ?? 'atual'}` : ''}.
           </p>
         </div>
         <div className="flex items-center gap-1.5 p-1 bg-slate-200/80 rounded-xl text-xs font-semibold">

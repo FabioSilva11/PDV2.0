@@ -4,7 +4,7 @@ import { paymentSummary, cashPayments } from '../utils/reports';
 import type { CashRegister, Order } from '../types';
 
 const order = (payments: any[], status = 'finalizado'): Order => ({ id: 'o', numero: 1, tipo: 'balcao', canal: 'Balcão', criadoEm: '2026-01-01', itens: [], subtotal: 20, desconto: 0, taxaServico: 0, taxaEntrega: 0, total: 20, status: status as Order['status'], statusPagamento: 'pago', pagamentos: payments, valorTotalPago: 20, saldoRestante: 0 });
-const cash = (transactions: CashRegister['transacoes']): CashRegister => ({ id: 'c', aberto: true, saldoInicial: 0, saldoAtualGaveta: 0, transacoes: transactions });
+const cash = (transactions: CashRegister['transacoes']): CashRegister => ({ id: 'c', aberto: true, turnosHistorico: [], saldoInicial: 0, saldoAtualGaveta: 0, transacoes: transactions });
 
 describe('relatórios e sincronização', () => {
   it('REL só soma recebimentos não estornados e ignora pedidos cancelados', () => {
@@ -16,5 +16,5 @@ describe('relatórios e sincronização', () => {
     const merged = mergeSnapshots({ orders: [] }, { orders: [{ id: 'local' }] }, { orders: [{ id: 'remote' }] });
     expect(merged.orders.map((item: any) => item.id).sort()).toEqual(['local', 'remote']);
   });
-  it('SYNC recusa alteração concorrente do mesmo valor', () => expect(() => mergeSnapshots({ cashRegister: { saldoAtualGaveta: 200 } }, { cashRegister: { saldoAtualGaveta: 220 } }, { cashRegister: { saldoAtualGaveta: 230 } })).toThrow(SyncConflict));
+  it('SYNC recusa alteração concorrente do mesmo valor', () => expect(() => mergeSnapshots({ cashRegister: { saldoAtualGaveta: 200, turnosHistorico: [] } }, { cashRegister: { saldoAtualGaveta: 220, turnosHistorico: [] } }, { cashRegister: { saldoAtualGaveta: 230, turnosHistorico: [] } })).toThrow(SyncConflict));
 });

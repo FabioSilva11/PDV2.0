@@ -36,6 +36,20 @@ export function isCategoryAllowedForCatalog(category: MenuCategory | undefined, 
   return !!category && category.catalogos.includes(catalogo);
 }
 
+/**
+ * O item aparece no catálogo selecionado? Regra do cardápio Mestre do Guaraná:
+ *  - categoria COMPARTILHADA (ex.: 'Sucos de Frutas', 'Porções Extras', 'Bebidas')
+ *    → o item aparece nos DOIS catálogos, mesmo que o cadastro antigo esteja
+ *    preso a um único catálogo (corrige o dual-catálogo dos sucos);
+ *  - categoria exclusiva → vale o catálogo salvo no próprio item.
+ */
+export function itemMatchesCatalog(item: MenuItem | undefined | null, catalogo: MenuCatalog): boolean {
+  if (!item) return false;
+  const categoria = getMenuCategoryByLegacyName(item.categoria);
+  if (categoria && categoria.catalogos.length > 1) return true;
+  return (item.catalogo || 'restaurante') === catalogo;
+}
+
 export function getCategoriesForCatalog(catalogo: MenuCatalog): MenuCategory[] {
   return DEFAULT_MENU_CATEGORIES.filter(c => c.catalogos.includes(catalogo) && c.ativo).sort((a, b) => a.ordem - b.ordem);
 }

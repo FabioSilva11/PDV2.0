@@ -6,6 +6,7 @@ import { formatCurrency } from '../../utils/formatters';
 import { FIRST_ACCOUNT_NUMBER, nextGlobalLaunchSequence, buildLaunchDisplayCode } from '../../lib/accountMigration';
 import { AccompanimentModal } from './AccompanimentModal';
 import { ReceiptModal } from './ReceiptModal';
+import { itemMatchesCatalog } from '../../data/menuCategories';
 import { 
   Search, 
   ShoppingBag, 
@@ -193,7 +194,7 @@ export const POSView: React.FC = () => {
   // Filtered menu
   const filteredMenu = useMemo(() => {
     return menu.filter(item => {
-      const matchCatalog = (item.catalogo || 'restaurante') === selectedCatalog;
+      const matchCatalog = itemMatchesCatalog(item, selectedCatalog);
       const matchCat = selectedCategory === 'Todos' || item.categoria === selectedCategory;
       const matchSearch = normalizeSearch(item.nome).includes(normalizeSearch(searchQuery)) ||
         (item.descricao && normalizeSearch(item.descricao).includes(normalizeSearch(searchQuery)));
@@ -326,10 +327,10 @@ export const POSView: React.FC = () => {
                     : 'bg-slate-100 text-slate-600 hover:bg-slate-200 hover:text-blue-700'
                 }`}
               >
-                Todos ({menu.filter(m => (m.catalogo || 'restaurante') === selectedCatalog).length})
+                Todos ({menu.filter(m => itemMatchesCatalog(m, selectedCatalog)).length})
               </button>
               {categories.map((cat) => {
-                const count = menu.filter(m => (m.catalogo || 'restaurante') === selectedCatalog && m.categoria === cat).length;
+                const count = menu.filter(m => itemMatchesCatalog(m, selectedCatalog) && m.categoria === cat).length;
                 return (
                   <button
                     key={cat}

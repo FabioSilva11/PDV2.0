@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useRestaurant } from '../../context/RestaurantContext';
 import { MenuItem, CategoryType } from '../../types';
 import { formatCurrency } from '../../utils/formatters';
+import { itemMatchesCatalog } from '../../data/menuCategories';
 import { 
   UtensilsCrossed, 
   Plus, 
@@ -57,7 +58,7 @@ export const MenuManagementView: React.FC = () => {
   const [formError, setFormError] = useState('');
 
   const filteredItems = menu.filter(item => {
-    const matchCatalog = (item.catalogo || 'restaurante') === selectedCatalog;
+    const matchCatalog = itemMatchesCatalog(item, selectedCatalog);
     const matchCat = selectedCategory === 'Todos' || item.categoria === selectedCategory;
     const matchSearch = item.nome.toLowerCase().includes(searchQuery.toLowerCase()) ||
       (item.descricao && item.descricao.toLowerCase().includes(searchQuery.toLowerCase()));
@@ -242,10 +243,10 @@ export const MenuManagementView: React.FC = () => {
                 : 'bg-slate-100 text-slate-600 hover:bg-slate-200 hover:text-blue-700'
             }`}
           >
-            Todos ({menu.filter(m => (m.catalogo || 'restaurante') === selectedCatalog).length})
+            Todos ({menu.filter(m => itemMatchesCatalog(m, selectedCatalog)).length})
           </button>
           {categories.map((cat) => {
-            const count = menu.filter(m => (m.catalogo || 'restaurante') === selectedCatalog && m.categoria === cat).length;
+            const count = menu.filter(m => itemMatchesCatalog(m, selectedCatalog) && m.categoria === cat).length;
             return (
               <button
                 key={cat}

@@ -22,6 +22,7 @@ import {
   CashRegister
 } from '../types';
 import { INITIAL_MENU_ITEMS } from './initialMenu';
+import { MESTRE_GUARANA_MENU } from './mestreGuarana';
 
 export const INITIAL_MANUAL_PAYMENTS: ManualPaymentOption[] = [
   { id: 'dinheiro', nome: 'Dinheiro em Espécie', ativo: true, permiteTroco: true },
@@ -258,7 +259,17 @@ const groupedJuices: MenuItem[] = Array.from(new Map(juiceItems.map(item => [ite
     { id: `${item.id}-400`, nome: '400 ml', preco: 10, custoEstimado: 0, disponivel: true, quantidade: 400, unidade: 'ml' }
   ]
 }));
-export const INITIAL_MENU: MenuItem[] = [...nonJuiceItems, ...groupedJuices];
+
+// =============================================================
+// CARDÁPIO "MESTRE DO GUARANÁ" (seed adicional)
+// Lanches -> catálogo LANCHE ('Lanches & Burgers'); guaranás/sucos/vitaminas
+// -> 'Sucos de Frutas' (categoria ativa em RESTAURANTE e LANCHE).
+// IDs prefixados 'mg-' garantem mesclagem sem colisão com o seed legado.
+// =============================================================
+const existingLegacyIds = new Set([...nonJuiceItems, ...groupedJuices].map(i => i.id));
+const mestreGuaranaItens = MESTRE_GUARANA_MENU.filter(item => !existingLegacyIds.has(item.id));
+
+export const INITIAL_MENU: MenuItem[] = [...nonJuiceItems, ...groupedJuices, ...mestreGuaranaItens];
 
 export const INITIAL_TABLES: Table[] = [
   { id: 'tbl-1', numero: 1, capacidade: 4, status: 'ocupada', garcomResponsavel: 'Lucas Silva', clienteNome: 'Dr. Roberto', abertaEm: '2026-09-10T11:45:00', valorAtual: 148.00, pessoasSentadas: 3, posX: 30, posY: 40, formato: 'quadrada', setor: 'Salão Principal' },
@@ -294,13 +305,12 @@ export const INITIAL_ALERTS: SystemAlert[] = [
 export const INITIAL_CASH_REGISTER: CashRegister = {
   id: 'csh-today-01',
   aberto: true,
-  operadorAbertura: 'Ana Paula Ferreira',
-  abertoEm: '2026-09-10T09:30:00',
+  turnosHistorico: [],
   saldoInicial: 200.00,
-  saldoAtualGaveta: 350.00, // Saldo inicial (200) + Suprimento (100) + Venda Dinheiro (50)
+  saldoAtualGaveta: 350.00, // Saldo inicial (200) + Entrada manual (100) + Venda Dinheiro (50)
   transacoes: [
-    { id: 'tx-1', tipo: 'abertura', valor: 200.00, motivo: 'Fundo de troco inicial do turno', horario: '2026-09-10T09:30:00', operador: 'Ana Paula Ferreira' },
-    { id: 'tx-2', tipo: 'suprimento', valor: 100.00, motivo: 'Reforço de moedas e notas miúdas', horario: '2026-09-10T10:05:00', operador: 'Ana Paula Ferreira' },
+    { id: 'tx-1', tipo: 'abertura', valor: 200.00, motivo: 'Fundo de troco inicial do turno', horario: '2026-09-10T09:30:00', operador: 'Ana Paula Ferreira', turnoId: 'turno-1' },
+    { id: 'tx-2', tipo: 'entrada_manual', valor: 100.00, motivo: 'Reforço de moedas e notas miúdas', horario: '2026-09-10T10:05:00', operador: 'Ana Paula Ferreira' },
     { id: 'tx-3', tipo: 'venda_manual', valor: 50.00, motivo: 'Recebimento em dinheiro Pedido #1000', formaPagamento: 'dinheiro', horario: '2026-09-10T11:40:10', pedidoId: 'ord-1000', operador: 'Ana Paula Ferreira' }
   ]
 };

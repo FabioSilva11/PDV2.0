@@ -1,45 +1,60 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useRestaurant } from '../../context/RestaurantContext';
-import { formatCurrency, formatFullDate, formatDateTime } from '../../utils/formatters';
+import { formatCurrency, formatDateTime } from '../../utils/formatters';
 import { cashPayments } from '../../utils/reports';
-import { 
-  CircleDollarSign, 
-  Wallet, 
-  ArrowDownRight, 
-  ArrowUpRight, 
-  Lock, 
-  Unlock, 
-  Plus, 
-  Minus, 
-  FileText, 
-  CheckCircle2, 
+import {
+  CircleDollarSign,
+  Wallet,
+  Lock,
+  Unlock,
+  FileText,
+  CheckCircle2,
   AlertCircle,
+  AlertTriangle,
   CreditCard,
   QrCode,
   Banknote,
-  Printer
+  ClipboardCheck,
+  ArrowRight,
+  Receipt
 } from 'lucide-react';
+import type { PendenciaFechamento } from '../../types';
 
+/**
+ * FLUXO & CONTROLE DE CAIXA — referência do TURNO operacional.
+ *
+ * Fluxo do fechamento (regra 15/40): VALIDAR → CONFIRMAR → FECHAR.
+ *  1. "Fechar Caixa" abre a CONFERÊNCIA (somente leitura);
+ *  2. pendências/inconsistências são listadas com ações para localizá-las
+ *     ("Ver Central de Pedidos" / "Ver Contas") e o fechamento é BLOQUEADO;
+ *  3. tudo conferido => "Conferência concluída" libera o fechamento efetivo.
+ *
+ * Suprimento (entrada) e sangria (retirada) foram REMOVIDOS do fluxo
+ * operacional: não existem botões, modais nem métricas novas. Registros
+ * antigos desses tipos seguem visíveis no histórico (auditoria).
+ */
 export const CashierView: React.FC = () => {
-  const { 
-    cashRegister, 
-    openCashRegister, 
-    closeCashRegister, 
+  const {
+    cashRegister,
+    openCashRegister,
+    closeCashRegister,
     addCashMovement,
-    orders 
+    orders,
+    validarPendenciasFechamento,
+    conferenciaFechamento,
+    turnoAtualId,
+    setActiveModule
   } = useRestaurant();
 
-  const addCashTransaction = (tipo: 'suprimento' | 'sangria', valor: number, motivo: string) => {
-    addCashMovement(tipo, valor, motivo);
-  };
-
   const [openAmount, setOpenAmount] = useState<string>('0.00');
-  const [modalType, setModalType] = useState<'suprimento' | 'sangria' | 'fechar' | null>(null);
+  const [modalType, setModalType] = useState<'entrada_manual' | 'saida_manual' | 'fechar' | null>(null);
   const [txAmount, setTxAmount] = useState<string>('');
   const [txReason, setTxReason] = useState<string>('');
   const [closedSummary, setClosedSummary] = useState<boolean>(false);
 
   const transacoes = cashRegister?.transacoes || [];
+  const conferencia = useMemo(() => conferenciaFechamento(), [conferenciaFechamento]);
+  const pendencias: PendenciaFechamento[] = validarPendenciasFechamento();
 
   // Calculate totals by payment method for this shift
   const totalPix = cashPayments(cashRegister, ['pix']);
@@ -47,12 +62,12 @@ export const CashierView: React.FC = () => {
   const totalCashSales = cashPayments(cashRegister, ['dinheiro']);
   const totalSalesAll = totalPix + totalCard + totalCashSales;
 
-  const totalSangrias = transacoes
-    .filter(t => t.tipo === 'sangria')
+  const totalSaidasManuais = transacoes
+    .filter(t => t.tipo === 'saida_manual')
     .reduce((acc, t) => acc + t.valor, 0);
 
-  const totalSuprimentos = transacoes
-    .filter(t => t.tipo === 'suprimento')
+  const totalEntradasManuais = transacoes
+    .filter(t => t.tipo === 'entrada_manual')
     .reduce((acc, t) => acc + t.valor, 0);
 
   const handleOpenCash = (e: React.FormEvent) => {
@@ -67,17 +82,21 @@ export const CashierView: React.FC = () => {
     const val = parseFloat(txAmount) || 0;
     if (val <= 0 || !txReason.trim()) return;
 
-    addCashTransaction(modalType, val, txReason.trim());
+    addCashMovement(modalType, val, txReason.trim());
     setModalType(null);
     setTxAmount('');
     setTxReason('');
   };
 
   const handleCloseRegisterSubmit = () => {
+    // A conferência já foi aprovada na UI; o contexto revalida como última barreira.
     closeCashRegister();
     setModalType(null);
     setClosedSummary(true);
   };
+
+  const tipoLabel = (tipo: string) =>
+    tipo === 'entrada_manual' ? 'Entrada manual' : tipo === 'saida_manual' ? 'Saída manual' : tipo;
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-6">
@@ -89,7 +108,8 @@ export const CashierView: React.FC = () => {
             <span>Fluxo & Controle de Caixa</span>
           </h2>
           <p className="text-xs text-stone-500">
-            Acompanhe o saldo em gaveta, entradas, sangrias e conciliação por forma de pagamento
+            O caixa controla o turno operacional — abertura inicia o turno, fechamento encerra após conferência
+            {turnoAtualId ? ` • Turno ${turnoAtualId}` : ''}
           </p>
         </div>
 
@@ -99,22 +119,20 @@ export const CashierView: React.FC = () => {
             <>
               <button
                 type="button"
-                id="cashier-suprimento-btn"
-                onClick={() => { setModalType('suprimento'); setTxAmount(''); setTxReason(''); }}
+                id="cashier-entrada-manual-btn"
+                onClick={() => { setModalType('entrada_manual'); setTxAmount(''); setTxReason(''); }}
                 className="px-3 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-xl text-xs font-bold transition-colors flex items-center gap-1.5"
               >
-                <Plus className="w-3.5 h-3.5" />
-                <span>Suprimento (Entrada)</span>
+                <span>Entrada Manual (Turno)</span>
               </button>
 
               <button
                 type="button"
-                id="cashier-sangria-btn"
-                onClick={() => { setModalType('sangria'); setTxAmount(''); setTxReason(''); }}
+                id="cashier-saida-manual-btn"
+                onClick={() => { setModalType('saida_manual'); setTxAmount(''); setTxReason(''); }}
                 className="px-3 py-2 bg-rose-50 hover:bg-rose-100 text-rose-800 border border-rose-300 rounded-xl text-xs font-bold transition-colors flex items-center gap-1.5"
               >
-                <Minus className="w-3.5 h-3.5" />
-                <span>Sangria (Retirada)</span>
+                <span>Saída Manual (Turno)</span>
               </button>
 
               <button
@@ -147,7 +165,7 @@ export const CashierView: React.FC = () => {
               Abertura de Caixa
             </h3>
             <p className="text-xs text-stone-500 mt-1 max-w-sm mx-auto">
-              Informe o valor de troco inicial disponível na gaveta para iniciar as operações do dia.
+              Confirmar a abertura INICIA UM NOVO TURNO operacional, isolado do anterior. O histórico é preservado.
             </p>
           </div>
 
@@ -269,6 +287,27 @@ export const CashierView: React.FC = () => {
         </div>
       )}
 
+      {/* Alerta permanente de pendências enquanto o turno estiver aberto */}
+      {cashRegister.aberto && pendencias.length > 0 && (
+        <div className="p-4 bg-amber-50 border border-amber-300 rounded-2xl flex items-start justify-between gap-3">
+          <div className="flex items-start gap-2 text-amber-900">
+            <AlertTriangle className="w-5 h-5 shrink-0 mt-0.5 text-amber-600" />
+            <div className="text-xs space-y-1">
+              <p className="font-bold">Existem pedidos/contas pendentes neste turno ({pendencias.length}).</p>
+              <p>As pendências precisam ser resolvidas antes da conferência de fechamento.</p>
+            </div>
+          </div>
+          <button
+            type="button"
+            id="cashier-ver-pendencias-central-btn"
+            onClick={() => setActiveModule('pedidos')}
+            className="shrink-0 px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold flex items-center gap-1"
+          >
+            Ver Central de Pedidos <ArrowRight className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
       {/* Transactions Ledger */}
       <div className="bg-white rounded-2xl border border-stone-200 shadow-xs overflow-hidden">
         <div className="p-5 border-b border-stone-200 flex items-center justify-between">
@@ -277,7 +316,7 @@ export const CashierView: React.FC = () => {
               Histórico de Movimentações do Caixa
             </h3>
             <p className="text-xs text-stone-500">
-              Registro cronológico de vendas, suprimentos e sangrias
+              Registro cronológico das movimentações e recebimentos do caixa.
             </p>
           </div>
           <span className="text-xs font-mono font-semibold text-stone-500">
@@ -298,21 +337,24 @@ export const CashierView: React.FC = () => {
             </thead>
             <tbody className="divide-y divide-stone-100">
               {transacoes.map((tx) => {
-                const isPositive = tx.tipo === 'venda' || tx.tipo === 'suprimento' || tx.tipo === 'abertura';
+                // Tipos legados (suprimento/sangria) continuam legíveis para auditoria.
+                const isLegacy = tx.tipo === 'suprimento' || tx.tipo === 'sangria';
+                const isPositive = tx.tipo === 'venda' || tx.tipo === 'abertura' || tx.tipo === 'suprimento' || tx.tipo === 'entrada_manual' || tx.tipo === 'venda_manual';
                 return (
-                  <tr key={tx.id} className="hover:bg-stone-50/60 transition-colors">
+                  <tr key={tx.id} className={`hover:bg-stone-50/60 transition-colors ${isLegacy ? 'opacity-70' : ''}`}>
                     <td className="py-3 px-4 font-mono text-stone-500">
                       {formatDateTime(tx.horario)}
                     </td>
                     <td className="py-3 px-4">
                       <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
-                        tx.tipo === 'venda' ? 'bg-emerald-100 text-emerald-800' :
+                        tx.tipo === 'venda' || tx.tipo === 'venda_manual' ? 'bg-emerald-100 text-emerald-800' :
                         tx.tipo === 'abertura' ? 'bg-sky-100 text-sky-800' :
-                        tx.tipo === 'suprimento' ? 'bg-teal-100 text-teal-800' :
-                        tx.tipo === 'sangria' ? 'bg-rose-100 text-rose-800' :
+                        tx.tipo === 'entrada_manual' ? 'bg-teal-100 text-teal-800' :
+                        tx.tipo === 'saida_manual' || tx.tipo === 'sangria' ? 'bg-rose-100 text-rose-800' :
+                        tx.tipo === 'fechamento' ? 'bg-stone-300 text-stone-800' :
                         'bg-stone-200 text-stone-800'
                       }`}>
-                        {tx.tipo}
+                        {tipoLabel(tx.tipo)}{isLegacy ? ' (legado)' : ''}
                       </span>
                     </td>
                     <td className="py-3 px-4 font-medium text-stone-900">
@@ -322,9 +364,9 @@ export const CashierView: React.FC = () => {
                       {tx.formaPagamento || '-'}
                     </td>
                     <td className={`py-3 px-4 text-right font-mono font-bold text-sm ${
-                      tx.tipo === 'sangria' ? 'text-rose-600' : 'text-stone-900'
+                      tx.tipo === 'sangria' || tx.tipo === 'saida_manual' ? 'text-rose-600' : 'text-stone-900'
                     }`}>
-                      {tx.tipo === 'sangria' ? `- ${formatCurrency(tx.valor)}` : formatCurrency(tx.valor)}
+                      {(tx.tipo === 'sangria' || tx.tipo === 'saida_manual') ? `- ${formatCurrency(tx.valor)}` : formatCurrency(tx.valor)}
                     </td>
                   </tr>
                 );
@@ -342,13 +384,13 @@ export const CashierView: React.FC = () => {
         </div>
       </div>
 
-      {/* Modal for Suprimento / Sangria */}
-      {(modalType === 'suprimento' || modalType === 'sangria') && (
+      {/* Modal for Entrada/Saída manual do turno */}
+      {(modalType === 'entrada_manual' || modalType === 'saida_manual') && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in">
           <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full border border-stone-200 overflow-hidden">
             <div className="px-6 py-4 bg-stone-900 text-white flex items-center justify-between">
               <h3 className="font-bold text-base font-serif">
-                {modalType === 'suprimento' ? 'Suprimento de Caixa (Entrada)' : 'Sangria de Caixa (Retirada)'}
+                {modalType === 'entrada_manual' ? 'Entrada Manual de Caixa (Turno)' : 'Saída Manual de Caixa (Turno)'}
               </h3>
               <button onClick={() => setModalType(null)} className="text-stone-400 hover:text-white">
                 ✕
@@ -386,7 +428,7 @@ export const CashierView: React.FC = () => {
                   id="tx-reason-input"
                   value={txReason}
                   onChange={(e) => setTxReason(e.target.value)}
-                  placeholder={modalType === 'suprimento' ? 'Ex: Troco adicional de moedas' : 'Ex: Pagamento fornecedor de bebidas'}
+                  placeholder={modalType === 'entrada_manual' ? 'Ex: Aporte de troco do turno' : 'Ex: Despesa operacional do turno'}
                   required
                   className="w-full px-3.5 py-2.5 rounded-xl border border-stone-300 text-sm"
                 />
@@ -404,10 +446,10 @@ export const CashierView: React.FC = () => {
                   type="submit"
                   id="tx-confirm-btn"
                   className={`px-5 py-2.5 text-white font-bold text-xs rounded-xl shadow-sm ${
-                    modalType === 'suprimento' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-rose-600 hover:bg-rose-700'
+                    modalType === 'entrada_manual' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-rose-600 hover:bg-rose-700'
                   }`}
                 >
-                  Confirmar {modalType === 'suprimento' ? 'Entrada' : 'Retirada'}
+                  Confirmar {modalType === 'entrada_manual' ? 'Entrada' : 'Saída'}
                 </button>
               </div>
             </form>
@@ -415,12 +457,13 @@ export const CashierView: React.FC = () => {
         </div>
       )}
 
-      {/* Modal for Fechamento de Caixa */}
+      {/* Modal de CONFERÊNCIA & Fechamento (VALIDAR → CONFIRMAR → FECHAR) */}
       {modalType === 'fechar' && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full border border-stone-200 overflow-hidden">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full border border-stone-200 overflow-hidden max-h-[90vh] overflow-y-auto">
             <div className="px-6 py-4 bg-stone-900 text-white flex items-center justify-between">
-              <h3 className="font-bold text-base font-serif">
+              <h3 className="font-bold text-base font-serif flex items-center gap-2">
+                <ClipboardCheck className="w-5 h-5 text-sky-400" />
                 Conferência & Fechamento de Caixa
               </h3>
               <button onClick={() => setModalType(null)} className="text-stone-400 hover:text-white">
@@ -429,9 +472,72 @@ export const CashierView: React.FC = () => {
             </div>
 
             <div className="p-6 space-y-4">
-              <div className="p-3 bg-sky-50 border border-sky-200 rounded-xl text-xs text-sky-900">
-                Confira os valores antes de encerrar o turno. As movimentações serão consolidadas.
-              </div>
+              {/* BLOQUEIO: inconsistências financeiras */}
+              {conferencia.temInconsistencia && (
+                <div className="p-3 bg-rose-50 border border-rose-300 rounded-xl text-xs text-rose-900 space-y-2">
+                  <p className="font-bold flex items-center gap-1.5">
+                    <AlertTriangle className="w-4 h-4" />
+                    Existem inconsistências financeiras — o fechamento está BLOQUEADO.
+                  </p>
+                  <ul className="space-y-1 list-disc list-inside">
+                    {conferencia.inconsistencias.map((p, i) => (
+                      <li key={i}>{p.descricao}</li>
+                    ))}
+                  </ul>
+                  <p className="text-[11px]">Corrija ou estorne pelos fluxos corretos antes de fechar o caixa.</p>
+                </div>
+              )}
+
+              {/* BLOQUEIO: pendências reais */}
+              {!conferencia.temInconsistencia && !conferencia.limpo && (
+                <div className="p-3 bg-amber-50 border border-amber-300 rounded-xl text-xs text-amber-900 space-y-2">
+                  <p className="font-bold flex items-center gap-1.5">
+                    <AlertCircle className="w-4 h-4" />
+                    FECHAMENTO NÃO CONFERIDO — existem pedidos/contas pendentes.
+                  </p>
+                  <p className="font-semibold">
+                    {conferencia.pedidosPendentes.length} lançamento(s) pendente(s) • {conferencia.contasPendentes.length} conta(s) aberta(s) • Total pendente: {formatCurrency(conferencia.totalPendente)}
+                  </p>
+                  <ul className="space-y-1 font-mono text-[11px]">
+                    {conferencia.itens.filter(p => p.tipo !== 'inconsistencia_financeira').map((p, i) => (
+                      <li key={i}>{p.descricao}</li>
+                    ))}
+                  </ul>
+                  <div className="flex flex-wrap gap-2 pt-1">
+                    <button
+                      type="button"
+                      id="conferencia-ver-central-btn"
+                      onClick={() => { setModalType(null); setActiveModule('pedidos'); }}
+                      className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-[11px] font-bold flex items-center gap-1"
+                    >
+                      <Receipt className="w-3.5 h-3.5" /> Ver Central de Pedidos
+                    </button>
+                    <button
+                      type="button"
+                      id="conferencia-ver-contas-btn"
+                      onClick={() => { setModalType(null); setActiveModule('contas'); }}
+                      className="px-3 py-1.5 bg-stone-800 hover:bg-stone-900 text-white rounded-lg text-[11px] font-bold flex items-center gap-1"
+                    >
+                      <FileText className="w-3.5 h-3.5" /> Ver Contas
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* TUDO CONFERIDO */}
+              {conferencia.limpo && (
+                <div className="p-3 bg-emerald-50 border border-emerald-300 rounded-xl text-xs text-emerald-900">
+                  <p className="font-bold flex items-center gap-1.5">
+                    <CheckCircle2 className="w-4 h-4" />
+                    Conferência concluída. Nenhum pedido ou conta pendente.
+                  </p>
+                  <div className="mt-2 space-y-1 font-mono">
+                    <p>Pedidos pendentes: 0</p>
+                    <p>Contas pendentes: 0</p>
+                    <p>Saldo pendente: R$ 0,00</p>
+                  </div>
+                </div>
+              )}
 
               <div className="bg-stone-50 p-4 rounded-xl border border-stone-200 space-y-2 text-xs">
                 <div className="flex justify-between text-stone-600">
@@ -450,16 +556,16 @@ export const CashierView: React.FC = () => {
                   <span>Vendas em Cartão:</span>
                   <span className="font-mono font-semibold">{formatCurrency(totalCard)}</span>
                 </div>
-                {totalSuprimentos > 0 && (
+                {totalEntradasManuais > 0 && (
                   <div className="flex justify-between text-emerald-700">
-                    <span>Suprimentos (Entradas extras):</span>
-                    <span className="font-mono font-semibold">+ {formatCurrency(totalSuprimentos)}</span>
+                    <span>Entradas manuais do turno:</span>
+                    <span className="font-mono font-semibold">+ {formatCurrency(totalEntradasManuais)}</span>
                   </div>
                 )}
-                {totalSangrias > 0 && (
+                {totalSaidasManuais > 0 && (
                   <div className="flex justify-between text-rose-700">
-                    <span>Sangrias (Retiradas):</span>
-                    <span className="font-mono font-semibold">- {formatCurrency(totalSangrias)}</span>
+                    <span>Saídas manuais do turno:</span>
+                    <span className="font-mono font-semibold">- {formatCurrency(totalSaidasManuais)}</span>
                   </div>
                 )}
                 <div className="pt-2 border-t border-stone-300 flex justify-between font-bold text-sm text-stone-900">
@@ -482,13 +588,23 @@ export const CashierView: React.FC = () => {
                   type="button"
                   id="confirm-close-cashier-final-btn"
                   onClick={handleCloseRegisterSubmit}
-                  className="px-5 py-2.5 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs rounded-xl shadow-md"
+                  disabled={!conferencia.limpo}
+                  title={conferencia.limpo ? 'Fechar o caixa' : 'Resolva as pendências/inconsistências antes de fechar'}
+                  className="px-5 py-2.5 bg-rose-600 hover:bg-rose-700 disabled:bg-stone-300 disabled:cursor-not-allowed text-white font-bold text-xs rounded-xl shadow-md"
                 >
-                  Confirmar e Encerrar Caixa
+                  {conferencia.limpo ? 'Confirmar e Encerrar Caixa' : 'Fechamento Bloqueado'}
                 </button>
               </div>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Resumo pós-fechamento */}
+      {closedSummary && !cashRegister.aberto && (
+        <div className="p-4 bg-emerald-50 border border-emerald-300 rounded-2xl text-xs text-emerald-900 flex items-center justify-between">
+          <span className="font-bold">Caixa encerrado após conferência. Histórico e auditoria preservados.</span>
+          <button type="button" onClick={() => setClosedSummary(false)} className="underline">OK</button>
         </div>
       )}
     </div>

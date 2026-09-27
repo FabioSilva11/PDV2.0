@@ -84,7 +84,11 @@ export const nextOrderSequence = (orders: Order[], contaId: string): number => {
   return Math.max(...sequences) + 1;
 };
 
-/** Soma dos lançamentos válidos (cancelled não entra). */
+/**
+ * Soma dos lançamentos válidos. Cancelados NUNCA entram: o cancelamento
+ * remove a venda da conta — seu saldo residual não é dinheiro devido e o
+ * pedido cancelado corretamente não bloqueia o fechamento (regras 18/37).
+ */
 export const computeAccountTotals = (orders: Order[], contaId: string) => {
   const own = orders.filter(o => o.contaId === contaId && o.status !== 'cancelado');
   const total = money(own.reduce((sum, o) => sum + (Number(o.total) || 0), 0));

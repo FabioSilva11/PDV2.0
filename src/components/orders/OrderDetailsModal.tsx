@@ -3,6 +3,7 @@ import { useRestaurant } from '../../context/RestaurantContext';
 import { formatCurrency } from '../../utils/formatters';
 import { Order, OrderStatus, CartItem, MenuItem, MenuCatalog } from '../../types';
 import { AccompanimentModal } from '../pdv/AccompanimentModal';
+import { itemMatchesCatalog } from '../../data/menuCategories';
 import { 
   X, 
   Printer, 
@@ -88,7 +89,7 @@ export const OrderDetailsModal: React.FC = () => {
   const editCatalogCategories = useMemo(() => {
     return Array.from(new Set(
       menu
-        .filter(m => (m.catalogo || 'restaurante') === editCatalog && m.disponivel !== false)
+        .filter(m => itemMatchesCatalog(m, editCatalog) && m.disponivel !== false)
         .map(m => m.categoria)
     ));
   }, [menu, editCatalog]);
@@ -96,7 +97,7 @@ export const OrderDetailsModal: React.FC = () => {
   const filteredEditMenu = useMemo(() => {
     return menu.filter(item => {
       if (item.disponivel === false) return false;
-      const matchCatalog = (item.catalogo || 'restaurante') === editCatalog;
+      const matchCatalog = itemMatchesCatalog(item, editCatalog);
       const matchCat = editCategory === 'Todos' || item.categoria === editCategory;
       const matchSearch = !editSearch.trim() || 
         item.nome.toLowerCase().includes(editSearch.toLowerCase()) ||
@@ -641,10 +642,10 @@ export const OrderDetailsModal: React.FC = () => {
                         : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-100'
                     }`}
                   >
-                    Todos ({menu.filter(m => (m.catalogo || 'restaurante') === editCatalog && m.disponivel !== false).length})
+                    Todos ({menu.filter(m => itemMatchesCatalog(m, editCatalog) && m.disponivel !== false).length})
                   </button>
                   {editCatalogCategories.map((cat) => {
-                    const count = menu.filter(m => (m.catalogo || 'restaurante') === editCatalog && m.categoria === cat && m.disponivel !== false).length;
+                    const count = menu.filter(m => itemMatchesCatalog(m, editCatalog) && m.categoria === cat && m.disponivel !== false).length;
                     return (
                       <button
                         key={cat}

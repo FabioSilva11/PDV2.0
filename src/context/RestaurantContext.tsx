@@ -16,7 +16,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback, use
   CategoryType, Customer, Reservation, UserAccount, PermissionKey, AuditLog,
   RestaurantSettings, MenuCategory,
   Account, AccountStatus, AccountSearchFilters, AccountSplitInput, AccountSplitResult, CreateAccountInput, CreateOrderInput,
-  CartItemStatus, CartItemHistoryEntry
+  CartItemStatus, CartItemHistoryEntry, ActiveCashMovementType, PendenciaFechamento, TurnoOperacional
 } from '../types';
 import {
   migrateOrdersToAccounts,
@@ -38,6 +38,7 @@ import {
   searchAccounts
 } from '../lib/accountMigration';
 import type { TableAccountResolution } from '../lib/accountMigration';
+import { isCategoryAllowedForCatalog as isCategoryAllowedForCatalogLib } from '../data/menuCategories';
 import { 
   INITIAL_MENU, 
   INITIAL_TABLES, 
@@ -45,6 +46,14 @@ import {
   INITIAL_MANUAL_PAYMENTS
 } from '../data/seedData';
 import { LocalStore, useStoreField } from '../lib/localStore';
+import {
+  getPendingFinancialOrders,
+  getPendingFinancialAccounts,
+  validarPendenciasFechamento,
+  nextTurnoId,
+  liberarOcupacaoOperacional
+} from '../lib/turno';
+import type { ConferenciaFechamento } from '../lib/turno';
 import { uid, money, amount, subtotal as calculateSubtotal, totals, reconcile } from '../utils/business';
 import { formatCurrency as formatBRL } from '../utils/formatters';
 import { sounds } from '../utils/audio';
@@ -64,6 +73,7 @@ import {
   DEFAULT_RESTAURANT_SETTINGS,
   normalizeRestaurantSettings
 } from '../config/defaultSettings';
+import { MESTRE_GUARANA_MENU } from '../data/mestreGuarana';
 import { AUDIT_LOG_MAX_ENTRIES, STORAGE_KEYS } from '../config/appConfig';
 import { hashPassword, verifyPassword, createSession, loadSession, clearSession } from '../lib/auth';
 
@@ -239,9 +249,19 @@ interface RestaurantContextType {
 
   // Cash Register (Manual Flow)
   cashRegister: CashRegister;
+  /** Turno operacional atual (id do caixa aberto) ou undefined se fechado. */
+  turnoAtualId: import('../types').TurnoId | undefined;
+  /** Pedidos financeiramente pendentes (mesma regra da Central e do fechamento). */
+  getPendingFinancialOrders: () => Order[];
+  /** Contas abertas com saldo (mesma regra da Central e do fechamento). */
+  getPendingFinancialAccounts: () => Account[];
+  /** CONFERÊNCIA DE FECHAMENTO: somente leitura. Chamada ANTES de fechar. */
+  validarPendenciasFechamento: () => import('../types').PendenciaFechamento[];
+  /** Resultado completo da conferência para a UI do fechamento. */
+  conferenciaFechamento: () => import('../lib/turno').ConferenciaFechamento;
   openCashRegister: (initialAmount: number) => void;
   closeCashRegister: (blindCloseData?: CashRegister['fechamentoCego']) => void;
-  addCashMovement: (tipo: 'suprimento' | 'sangria' | 'entrada_manual' | 'saida_manual', valor: number, motivo: string) => void;
+  addCashMovement: (tipo: import('../types').ActiveCashMovementType, valor: number, motivo: string) => void;
 
   // Printers & Print Queue
   printers: PrinterDevice[];
@@ -358,6 +378,37 @@ const normalizePrintJob = (job: any): PrintJob => ({
   tentativas: Number(job.tentativas || 0)
 });
 
+/**
+ * Enriquecimento ÚNICO e NÃO-DESTRUTIVO do cardápio (seed "Mestre do
+ * Guaraná"): bancos JÁ EXISTENTES mantêm o menu persistido como fonte — os
+ * itens novos só são ACRESCENTADOS quando ainda não existem (por id ou por
+ * nome+categoria). Edições e exclusões do operador NUNCA são revertidas:
+ * o item é adicionado uma única vez (flag no snapshot) e depois o cardápio
+ * fica totalmente sob controle do usuário.
+ */
+const MENU_SEED_MG_FLAG = 'menuSeedMestreGuaranaApplied';
+/**
+ * Versão do seed Mestre do Guaraná. Ao subir a versão, o merge roda mais uma
+ * vez nos bancos existentes — sempre idempotente (só adiciona o que falta).
+ * v1: lanches + guaranás/sucos/vitaminas. v2: porções, bebidas diversas e itens diversos.
+ */
+const MENU_SEED_MG_VERSION = 'v2';
+const mergeMenuCatalog = (menu: MenuItem[] | undefined, snapshot: RestaurantDatabaseSnapshot): MenuItem[] => {
+  const atual = menu || [];
+  if ((snapshot as any)?.[MENU_SEED_MG_FLAG] === MENU_SEED_MG_VERSION) return atual;
+  const chaves = new Set(atual.map(i => `${i.id}|${normalizeMenuItem(i).nome.toLowerCase()}|${i.categoria}`));
+  const faltantes = MESTRE_GUARANA_MENU.filter(item => {
+    const cat = item.categoria;
+    return !chaves.has(`${item.id}|${item.nome.toLowerCase()}|${cat}`);
+  });
+  if (!faltantes.length) {
+    (snapshot as any)[MENU_SEED_MG_FLAG] = MENU_SEED_MG_VERSION;
+    return atual;
+  }
+  (snapshot as any)[MENU_SEED_MG_FLAG] = MENU_SEED_MG_VERSION;
+  return [...faltantes, ...atual];
+};
+
 const loadRestaurantDatabase = (): RestaurantDatabaseSnapshot => {
   const parse = <T,>(raw: string | null): T | undefined => {
     if (!raw) return undefined;
@@ -371,7 +422,7 @@ const loadRestaurantDatabase = (): RestaurantDatabaseSnapshot => {
   const savedDatabase = parse<RestaurantDatabaseSnapshot>(localStorage.getItem(DATABASE_STORAGE_KEY));
   if (savedDatabase) {
     return applyAccountModel({ ...savedDatabase,
-      menu: (savedDatabase.menu || INITIAL_MENU).map(normalizeMenuItem),
+      menu: mergeMenuCatalog((savedDatabase.menu || INITIAL_MENU).map(normalizeMenuItem), savedDatabase),
       orders: (savedDatabase.orders || []).map(normalizeOrder),
       printers: (savedDatabase.printers || []).map(normalizePrinter),
       printQueue: (savedDatabase.printQueue || []).map(normalizePrintJob) });
@@ -421,6 +472,7 @@ const asArray = <T,>(value: T[] | Record<string, T> | undefined, fallback: T[]):
 const EMPTY_CASH_REGISTER: CashRegister = {
   id: 'csh-current',
   aberto: false,
+  turnosHistorico: [],
   saldoInicial: 0,
   saldoAtualGaveta: 0,
   transacoes: []
@@ -462,9 +514,9 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   });
   const [isAlertsDrawerOpen, setIsAlertsDrawerOpen] = useState(false);
 
-  // Menu
+  // Menu — já passa pelo mergeMenuCatalog no load (local e remoto).
   const [menu, setMenu] = useStoreField<MenuItem[]>(store, 'menu', () => {
-    return (database.menu || INITIAL_MENU).map(normalizeMenuItem);
+    return mergeMenuCatalog((database.menu || INITIAL_MENU).map(normalizeMenuItem), database);
   });
 
   // =============================================================
@@ -501,7 +553,8 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     recordAudit('excluiu categoria', 'menu_category', id);
   }, [setMenuCategories, hasPermission, recordAudit, store]);
   const isCategoryAllowedForCatalog = useCallback((category: MenuCategory | undefined, catalogo: MenuCatalog) => {
-    return !!category && category.catalogos.includes(catalogo);
+    // Delega para a regra central (inclui o dual-catálogo 'Sucos de Frutas'/'Porções Extras').
+    return isCategoryAllowedForCatalogLib(category, catalogo);
   }, []);
 
   // Orders
@@ -557,38 +610,171 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     return database.cashRegister || EMPTY_CASH_REGISTER;
   });
 
-  // Cash Register
-  const openCashRegister = useCallback((initialAmount: number) => {
-    const valor = amount(initialAmount, 'Abertura', true);
-    if (valor < 0) throw new Error('Valor inicial inválido.');
-    if (store.state.cashRegister.aberto) return;
-    setCashRegister(prev => ({ ...prev, aberto: true, operadorAbertura: currentUser.nome, abertoEm: new Date().toISOString(), fechadoEm: undefined, saldoInicial: valor, saldoAtualGaveta: valor, transacoes: [...prev.transacoes, { id: uid('tx-open'), tipo: 'abertura', valor, motivo: 'Abertura de caixa', horario: new Date().toISOString(), operador: currentUser.nome }] }));
-    recordAudit('abriu caixa','caixa',store.state.cashRegister.id,`Fundo R$ ${valor.toFixed(2)}`);
-  }, [setCashRegister, currentUser, store, recordAudit]);
-
-  const closeCashRegister = useCallback((blindCloseData?: CashRegister['fechamentoCego']) => {
-    if (!hasPermission('caixa')) throw new Error('Sem permissão para fechar o caixa.');
-    if (!store.state.cashRegister.aberto) return;
-    setCashRegister(prev => ({ ...prev, aberto: false, fechadoEm: new Date().toISOString(), fechamentoCego: blindCloseData ? { ...blindCloseData, conferidoPor: blindCloseData.conferidoPor || currentUser.nome } : prev.fechamentoCego, transacoes: [...prev.transacoes, { id: uid('tx-close'), tipo: 'fechamento', valor: prev.saldoAtualGaveta, motivo: 'Fechamento de caixa', horario: new Date().toISOString(), operador: currentUser.nome }] }));
-    recordAudit('fechou caixa','caixa',store.state.cashRegister.id);
-  }, [setCashRegister, currentUser, store, hasPermission, recordAudit]);
-
-  const addCashMovement = useCallback((tipo: 'suprimento' | 'sangria' | 'entrada_manual' | 'saida_manual', valor: number, motivo: string) => {
-    if (!store.state.cashRegister.aberto) throw new Error('Abra o caixa antes de registrar movimentações.');
-    const v = amount(valor, 'Movimentação', false);
-    if (v <= 0) throw new Error('Informe um valor maior que zero.');
-    if (!motivo.trim()) throw new Error('Informe o motivo.');
-    const entrada = tipo === 'suprimento' || tipo === 'entrada_manual';
-    if (!entrada && store.state.cashRegister.saldoAtualGaveta < v) throw new Error('Saldo de caixa insuficiente.');
-    setCashRegister(prev => ({ ...prev, saldoAtualGaveta: money(prev.saldoAtualGaveta + (entrada ? v : -v)), transacoes: [{ id: uid('tx'), tipo, valor: v, motivo, horario: new Date().toISOString(), operador: currentUser.nome }, ...prev.transacoes] }));
-    recordAudit('movimentou caixa','caixa',store.state.cashRegister.id,`${tipo} • R$ ${v.toFixed(2)} • ${motivo}`);
-  }, [setCashRegister, currentUser, store, recordAudit]);
-
-  // Printers
+  // Printers & fila de impressão (declarados antes do caixa: a fila é
+  // isolada por turno e a abertura do turno reseta a fila operacional).
   const [printers, setPrinters] = useStoreField<PrinterDevice[]>(store, 'printers', () => {
     return database.printers?.length ? database.printers : INITIAL_PRINTERS;
   });
   const [printQueue, setPrintQueue] = useStoreField<PrintJob[]>(store, 'printQueue', () => database.printQueue || []);
+
+  // =====================================================================
+  // TURNO OPERACIONAL — o caixa é a REFERÊNCIA do turno.
+  //
+  // ABRIR CAIXA  = iniciar turno (turnoId único, estado operacional limpo).
+  // FECHAR CAIXA = encerrar turno SOMENTE DEPOIS da conferência obrigatória
+  //                (validar -> confirmar -> fechar; nunca fechar e conferir
+  //                depois).
+  // =====================================================================
+  const getTurnoAtual = (): TurnoOperacional | undefined => {
+    const caixa = store.state.cashRegister as CashRegister | undefined;
+    if (!caixa?.aberto) return undefined;
+    return caixa.turnoAtual;
+  };
+
+  const turnoAtualId = getTurnoAtual()?.id;
+
+  /** Seletores CENTRAIS de pendência (mesma regra para Central e fechamento). */
+  const pendingFinancialOrders = (): Order[] => getPendingFinancialOrders(orderList());
+  const pendingFinancialAccounts = (): Account[] => getPendingFinancialAccounts(accountList());
+
+  /** CONFERÊNCIA (somente leitura): pedidos, contas e inconsistências. */
+  const validarPendenciasFechamentoList = (): PendenciaFechamento[] =>
+    validarPendenciasFechamento(orderList(), accountList(), tableList()).itens;
+
+  const conferenciaFechamentoList = (): ConferenciaFechamento =>
+    validarPendenciasFechamento(orderList(), accountList(), tableList());
+
+  /**
+   * LIMPEZA OPERACIONAL DE NOVO TURNO (regra 6/13) — nunca apaga histórico.
+   *
+   * Reseta: ocupação das mesas do turno anterior (conta/pedido/sessão/cliente/
+   * valor), fila operacional de impressão, seleções/modais de pagamento.
+   * Pedidos, contas, pagamentos, auditoria, clientes, cardápio, configurações
+   * e impressoras são PRESERVADOS — a Central filtra pelo turno atual.
+   */
+  const resetOperacaoTurno = () => {
+    setTables(prev => liberarOcupacaoOperacional(prev));
+    // Fila OPERACIONAL de impressão do turno anterior sai do estado ativo;
+    // o histórico de impressão dos pedidos (order.impressoes) permanece.
+    setPrintQueue([]);
+    setSelectedOrderForModal(null);
+    setSelectedReceiptOrder(null);
+    setIsPaymentModalOpen(false);
+    setOrderForPaymentModal(null);
+    setPosHandoff(null);
+  };
+
+  /**
+   * ABERTURA DO CAIXA = INÍCIO DO TURNO (regras 3/4/5/27/30).
+   * Proteções: valor inválido, dupla abertura e pendências HERDADAS do turno
+   * anterior (regra 14 — conta com saldo no momento da abertura é
+   * inconsistência de fechamento e impede o turno limpo).
+   */
+  const openCashRegister = useCallback((initialAmount: number) => {
+    if (!currentUser) throw new Error('Faça login para abrir o caixa.');
+    const valor = amount(initialAmount, 'Abertura', true);
+    if (valor < 0) throw new Error('Valor inicial inválido.');
+    if (store.state.cashRegister.aberto) return; // PROTEÇÃO: dupla abertura.
+
+    // REGRA 14: não herdar contas/pedidos pendentes do turno anterior.
+    // (Somente transações do turno aberto geram pendência; caixa fechado com
+    // saldo residual é inconsistência que o fechamento teria pego.)
+    const heranca = validarPendenciasFechamento(orderList(), accountList(), tableList());
+    if (heranca.itens.length) {
+      throw new Error(
+        `Existem pendências do turno anterior (${heranca.itens.length}). Resolva-as ou faça a conferência de fechamento antes de abrir um novo turno.`
+      );
+    }
+
+    const agora = new Date().toISOString();
+    const id = nextTurnoId([...(store.state.cashRegister?.turnosHistorico || [])]);
+    const turno: TurnoOperacional = {
+      id,
+      caixaId: store.state.cashRegister?.id || 'csh-current',
+      status: 'aberto',
+      operadorAbertura: currentUser.nome,
+      abertoEm: agora,
+      saldoInicial: valor,
+      transacoesIds: []
+    };
+    // LIMPA estado operacional do turno anterior ANTES de abrir (histórico intacto).
+    resetOperacaoTurno();
+    setCashRegister(prev => ({
+      ...prev,
+      aberto: true,
+      turnoAtual: turno,
+      turnosHistorico: prev.turnoAtual
+        ? [prev.turnoAtual, ...prev.turnosHistorico]
+        : prev.turnosHistorico,
+      saldoInicial: valor,
+      saldoAtualGaveta: valor,
+      transacoes: [...(prev.transacoes || []), { id: uid('tx-open'), tipo: 'abertura' as const, valor, motivo: `Abertura de caixa — turno ${id}`, horario: agora, operador: currentUser.nome, turnoId: id }]
+    }));
+    recordAudit('abriu caixa', 'caixa', id, `Turno ${id} • fundo R$ ${valor.toFixed(2)}`);
+  }, [setCashRegister, setTables, setPrintQueue, setPosHandoff, currentUser, store, recordAudit]);
+
+  /**
+   * FECHAMENTO DEFINITIVO (regras 15/26): recebe a conferência JÁ APROVADA.
+   * A validação acontece ANTES (na UI e em validarPendenciasFechamento);
+   * aqui apenas registramos e fechamos. Protegido contra duplo fechamento.
+   */
+  const closeCashRegister = useCallback((blindCloseData?: CashRegister['fechamentoCego']) => {
+    if (!hasPermission('caixa')) throw new Error('Sem permissão para fechar o caixa.');
+    if (!store.state.cashRegister.aberto) return; // PROTEÇÃO: duplo fechamento.
+
+    // ÚLTIMA BARREIRA: se qualquer pendência/inconsistência surgir entre a
+    // conferência da UI e este clique, o fechamento é BLOQUEADO aqui.
+    const conferencia = validarPendenciasFechamento(orderList(), accountList(), tableList());
+    if (conferencia.temInconsistencia) {
+      throw new Error('Existem inconsistências financeiras. Corrija-as antes de fechar o caixa.');
+    }
+    if (conferencia.itens.length) {
+      throw new Error('Existem pedidos/contas pendentes. Faça a conferência antes de fechar o caixa.');
+    }
+
+    const agora = new Date().toISOString();
+    setCashRegister(prev => {
+      if (!prev.aberto) return prev; // concorrência UI x estado.
+      const turno = prev.turnoAtual;
+      const turnoFechado: TurnoOperacional | undefined = turno ? {
+        ...turno,
+        status: 'fechado',
+        fechadoEm: agora,
+        operadorFechamento: currentUser?.nome,
+        saldoFinal: prev.saldoAtualGaveta,
+        pendenciasFechamento: []
+      } : undefined;
+      return {
+        ...prev,
+        aberto: false,
+        turnoAtual: undefined,
+        turnosHistorico: turnoFechado ? [turnoFechado, ...prev.turnosHistorico] : prev.turnosHistorico,
+        fechadoEm: agora,
+        fechamentoCego: blindCloseData ? { ...blindCloseData, conferidoPor: blindCloseData.conferidoPor || currentUser?.nome } : prev.fechamentoCego,
+        transacoes: [...prev.transacoes, { id: uid('tx-close'), tipo: 'fechamento' as const, valor: prev.saldoAtualGaveta, motivo: `Fechamento de caixa — turno ${turno?.id || ''}`.trim(), horario: agora, operador: currentUser?.nome || 'sistema', turnoId: turno?.id }]
+      };
+    });
+    recordAudit('fechou caixa', 'caixa', store.state.cashRegister.turnoAtual?.id || store.state.cashRegister.id, 'Conferência concluída. Nenhum pedido ou conta pendente.');
+  }, [setCashRegister, currentUser, store, hasPermission, recordAudit]);
+
+  /**
+   * Movimentações manuais (APENAS entrada_manual/saida_manual).
+   * Suprimento/sangria não são mais criáveis pela interface (regras 31/32);
+   * registros antigos desses tipos continuam legíveis (regra 33).
+   */
+  const addCashMovement = useCallback((tipo: ActiveCashMovementType, valor: number, motivo: string) => {
+    if (!store.state.cashRegister.aberto) throw new Error('Abra o caixa antes de registrar movimentações.');
+    const legacy = tipo as string;
+    if (legacy === 'suprimento' || legacy === 'sangria') throw new Error('Suprimento e sangria não são mais operações do caixa.');
+    const v = amount(valor, 'Movimentação', false);
+    if (v <= 0) throw new Error('Informe um valor maior que zero.');
+    if (!motivo.trim()) throw new Error('Informe o motivo.');
+    const entrada = tipo === 'entrada_manual';
+    if (!entrada && store.state.cashRegister.saldoAtualGaveta < v) throw new Error('Saldo de caixa insuficiente.');
+    const turnoId = store.state.cashRegister.turnoAtual?.id;
+    setCashRegister(prev => ({ ...prev, saldoAtualGaveta: money(prev.saldoAtualGaveta + (entrada ? v : -v)), transacoes: [{ id: uid('tx'), tipo, valor: v, motivo, horario: new Date().toISOString(), operador: currentUser.nome, turnoId }, ...prev.transacoes] }));
+    recordAudit('movimentou caixa','caixa',turnoId || store.state.cashRegister.id,`${tipo} • R$ ${v.toFixed(2)} • ${motivo}`);
+  }, [setCashRegister, currentUser, store, recordAudit]);
 
   // Sound
   const [soundEnabled, setSoundEnabled] = useState(true);
@@ -616,7 +802,7 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         setSettings(normalizeRestaurantSettings(remote.settings || database.settings));
         setMenuCategories(asArray(remote.menuCategories, DEFAULT_MENU_CATEGORIES));
         setAlerts(remote.operationalDemoResetApplied ? asArray(remote.alerts, []) : []);
-        setMenu(asArray(remote.menu, database.menu || INITIAL_MENU).map(normalizeMenuItem));
+        setMenu(mergeMenuCatalog(asArray(remote.menu, database.menu || INITIAL_MENU).map(normalizeMenuItem), remote as RestaurantDatabaseSnapshot));
         const remoteSnapshot = applyAccountModel({
           ...remote,
           orders: remote.operationalDemoResetApplied ? asArray(remote.orders, []) : [],
@@ -1183,6 +1369,7 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       routedItems.forEach(item => unmatched.delete(item.cartItemId));
       const job: PrintJob = {
         id: uid(`print-${tipo}`), pedidoId: order.id, grupoImpressaoId: groupId, tipo,
+        turnoId: (store.state.cashRegister as CashRegister | undefined)?.turnoAtual?.id,
         impressoraId: printer.id, impressoraNome: printer.nome,
         pedidoNumero: order.numero, titulo: `${tipo === 'pedido' ? 'PEDIDO' : tipo === 'espelho' ? 'ESPELHO' : 'COMPROVANTE'} #${order.numero}`,
         conteudoTexto: buildOrderPrintContent(order, tipo === 'pedido' ? 'VIA DO PEDIDO' : tipo === 'espelho' ? 'ESPELHO DO PEDIDO' : 'COMPROVANTE', routedItems),
@@ -1387,7 +1574,8 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       statusPagamento: values.total === 0 ? 'pago' : 'pendente',
       pagamentos: [],
       valorTotalPago: 0,
-      saldoRestante: values.total
+      saldoRestante: values.total,
+      turnoId: (store.state.cashRegister as CashRegister | undefined)?.turnoAtual?.id
     };
     setOrders(prev => [order, ...prev]);
     if (order.clienteId) setCustomers(prev => prev.map(c => c.id === order.clienteId ? { ...c, ultimoPedidoEm: order.criadoEm, totalComprado: money((c.totalComprado || 0) + order.total) } : c));
@@ -1439,10 +1627,14 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     if (!motivo.trim()) throw new Error('Informe o motivo do cancelamento.');
     if (order.valorTotalPago > 0) throw new Error('Estorne os pagamentos antes de cancelar.');
     setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: 'cancelado', cancelamento: { motivo, usuario: currentUser.nome, dataHora: new Date().toISOString() } } : o));
+    // A CONTA é sempre recalculada após cancelar: o lançamento cancelado sai
+    // da soma (regra 18 — cancelado não é saldo devido), seja mesa ou balcão.
+    if (order.contaId) {
+      syncAccountTotals(order.contaId);
+    }
     // A mesa só é liberada se ESTA conta a ocupava e não sobrou nenhum
     // lançamento válido com saldo. Cancelar nunca toca em conta alheia.
     if (order.tipo === 'mesa' && order.contaId) {
-      syncAccountTotals(order.contaId);
       const account = accountById(order.contaId);
       const table = tableByNumber(order.mesaNumero);
       const own = ordersOfAccount(order.contaId).filter(o => o.status !== 'cancelado');
@@ -1925,7 +2117,7 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     const next = reconcile({ ...order, pagamentos: [...order.pagamentos, payment] });
     // Payment does not mark food as delivered or remove it from the kitchen.
     setOrders(prev => prev.map(o => o.id === orderId ? next : o));
-    setCashRegister(prev => ({ ...prev, saldoAtualGaveta: money(prev.saldoAtualGaveta + (formaId === 'dinheiro' ? valor : 0)), transacoes: [{ id: uid('tx'), tipo: 'venda_manual', valor, motivo: 'Recebimento pedido #' + order.numero, formaPagamento: formaId, horario: new Date().toISOString(), pedidoId: orderId, operador: currentUser.nome }, ...prev.transacoes] }));
+    setCashRegister(prev => ({ ...prev, saldoAtualGaveta: money(prev.saldoAtualGaveta + (formaId === 'dinheiro' ? valor : 0)), transacoes: [{ id: uid('tx'), tipo: 'venda_manual' as const, valor, motivo: 'Recebimento pedido #' + order.numero, formaPagamento: formaId, horario: new Date().toISOString(), pedidoId: orderId, operador: currentUser.nome, turnoId: prev.turnoAtual?.id }, ...prev.transacoes] }));
     syncTableTotals(next);
     return true;
   };
@@ -1939,7 +2131,7 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     if (payment.formaId === 'dinheiro' && store.state.cashRegister.saldoAtualGaveta < payment.valor) throw new Error('Saldo de caixa insuficiente para estorno.');
     const next = reconcile({ ...order, pagamentos: order.pagamentos.map(p => p.id === paymentId ? { ...p, estornado: true, motivoEstorno: motivo, estornadoPor: currentUser.nome, estornadoEm: new Date().toISOString() } : p) });
     setOrders(prev => prev.map(o => o.id === orderId ? next : o));
-    setCashRegister(prev => ({ ...prev, saldoAtualGaveta: money(prev.saldoAtualGaveta - (payment.formaId === 'dinheiro' ? payment.valor : 0)), transacoes: [{ id: uid('tx-rev'), tipo: 'saida_manual', valor: payment.valor, formaPagamento: payment.formaId, motivo: 'Estorno: ' + motivo, horario: new Date().toISOString(), pedidoId: orderId, operador: currentUser.nome }, ...prev.transacoes] }));
+    setCashRegister(prev => ({ ...prev, saldoAtualGaveta: money(prev.saldoAtualGaveta - (payment.formaId === 'dinheiro' ? payment.valor : 0)), transacoes: [{ id: uid('tx-rev'), tipo: 'saida_manual' as const, valor: payment.valor, formaPagamento: payment.formaId, motivo: 'Estorno: ' + motivo, horario: new Date().toISOString(), pedidoId: orderId, operador: currentUser.nome, turnoId: prev.turnoAtual?.id }, ...prev.transacoes] }));
     syncTableTotals(next);
   };
 
@@ -2538,6 +2730,11 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
 
         cashRegister,
+        turnoAtualId,
+        getPendingFinancialOrders: pendingFinancialOrders,
+        getPendingFinancialAccounts: pendingFinancialAccounts,
+        validarPendenciasFechamento: validarPendenciasFechamentoList,
+        conferenciaFechamento: conferenciaFechamentoList,
         openCashRegister,
         closeCashRegister,
         addCashMovement,

@@ -96,6 +96,7 @@ CREATE TABLE IF NOT EXISTS `orders` (
   `mesa_numero` INT NULL,
   `mesa_original_numero` INT NULL,
   `codigo_mesa` VARCHAR(32) NULL,
+  `turno_id` VARCHAR(64) NULL,
   `cliente_nome` VARCHAR(255) NULL,
   `cliente_telefone` VARCHAR(64) NULL,
   `total` DECIMAL(10,2) NOT NULL DEFAULT 0.00,
@@ -127,6 +128,8 @@ ALTER TABLE `orders` ADD COLUMN IF NOT EXISTS `sequencia` INT NULL AFTER `conta_
 ALTER TABLE `orders` ADD COLUMN IF NOT EXISTS `sequencia_global` INT NULL AFTER `sequencia`;
 ALTER TABLE `orders` ADD COLUMN IF NOT EXISTS `codigo_exibicao` VARCHAR(32) NULL AFTER `sequencia_global`;
 ALTER TABLE `orders` ADD COLUMN IF NOT EXISTS `mesa_original_numero` INT NULL AFTER `mesa_numero`;
+ALTER TABLE `orders` ADD COLUMN IF NOT EXISTS `turno_id` VARCHAR(64) NULL AFTER `codigo_mesa`;
+ALTER TABLE `orders` ADD INDEX IF NOT EXISTS `idx_turno` (`turno_id`);
 ALTER TABLE `orders` ADD INDEX IF NOT EXISTS `idx_conta` (`conta_id`);
 ALTER TABLE `orders` ADD INDEX IF NOT EXISTS `idx_conta_numero` (`conta_numero`);
 ALTER TABLE `orders` ADD INDEX IF NOT EXISTS `idx_mesa_numero` (`mesa_numero`);
@@ -148,9 +151,13 @@ CREATE TABLE IF NOT EXISTS `menu_items` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 6. Movimentações de Caixa
+--    `tipo` legado: suprimento/sangria permanecem legíveis (histórico), mas
+--    não são mais criados pelo fluxo operacional (tipos ativos: abertura,
+--    venda, entrada_manual, saida_manual, venda_manual, fechamento).
 CREATE TABLE IF NOT EXISTS `cash_transactions` (
   `id` VARCHAR(64) NOT NULL PRIMARY KEY,
   `caixa_id` VARCHAR(64) NULL,
+  `turno_id` VARCHAR(64) NULL,
   `tipo` VARCHAR(32) NOT NULL,
   `valor` DECIMAL(10,2) NOT NULL,
   `motivo` TEXT NOT NULL,
@@ -159,7 +166,28 @@ CREATE TABLE IF NOT EXISTS `cash_transactions` (
   `pedido_id` VARCHAR(64) NULL,
   `horario` DATETIME NOT NULL,
   INDEX `idx_caixa_tipo` (`caixa_id`, `tipo`),
+  INDEX `idx_turno` (`turno_id`),
   INDEX `idx_horario` (`horario`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 6.1 Upgrade idempotente: instalações existentes ganham a coluna de turno.
+ALTER TABLE `cash_transactions` ADD COLUMN IF NOT EXISTS `turno_id` VARCHAR(64) NULL AFTER `caixa_id`;
+ALTER TABLE `cash_transactions` ADD INDEX IF NOT EXISTS `idx_turno` (`turno_id`);
+
+-- 6.2 Turnos operacionais (histórico de aberturas/fechamentos do caixa).
+CREATE TABLE IF NOT EXISTS `turnos_operacionais` (
+  `id` VARCHAR(64) NOT NULL PRIMARY KEY,
+  `caixa_id` VARCHAR(64) NULL,
+  `status` VARCHAR(16) NOT NULL DEFAULT 'aberto',
+  `operador_abertura` VARCHAR(128) NULL,
+  `aberto_em` DATETIME NOT NULL,
+  `operador_fechamento` VARCHAR(128) NULL,
+  `fechado_em` DATETIME NULL,
+  `saldo_inicial` DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+  `saldo_final` DECIMAL(10,2) NULL,
+  `raw_data` LONGTEXT NULL,
+  INDEX `idx_turnos_status` (`status`),
+  INDEX `idx_turnos_aberto_em` (`aberto_em`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 7. Clientes

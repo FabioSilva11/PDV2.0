@@ -71,7 +71,7 @@ describe('venda e matematica', () => {
   it('VEN desconto acima do subtotal deve ser rejeitado', () => { const { result } = boot(); act(() => attempt(() => result.current.createOrder({ itens: [item()], desconto: 21 }))); expect(result.current.orders).toHaveLength(0); });
   it('PRO preço do carrinho preservado após alteração', () => { const { result } = boot(); const cart = item(); act(() => result.current.updateItemPrice(product.id, 25)); expect(sale(result, { itens: [cart] }).total).toBe(20); });
   it('PRO excluir produto preserva histórico', () => { const { result } = boot(); sale(result); act(() => result.current.deleteMenuItem(product.id)); expect(result.current.orders[0].itens[0].nome).toBe(product.nome); });
-  it.each([-1, NaN, Infinity])('PRO preço inválido %s rejeitado', preco => { const { result } = boot(); act(() => attempt(() => result.current.updateItemPrice(product.id, preco))); expect(result.current.menu[0].preco).toBe(20); });
+  it.each([-1, NaN, Infinity])('PRO preço inválido %s rejeitado', preco => { const { result } = boot(); act(() => attempt(() => result.current.updateItemPrice(product.id, preco))); expect(result.current.menu.find(m => m.id === product.id)!.preco).toBe(20); });
   it('LAN adicionais pagos e gratuitos', () => { const { result } = boot(); expect(sale(result, { itens: [item({ quantidade: 2, adicionais: [{ grupoId: 'g', addonId: 'a', nome: 'Queijo', preco: 3 }, { grupoId: 'g', addonId: 'b', nome: 'Molho', preco: 0 }] })] }).total).toBe(46); });
   it('LAN remover item preserva valor de adicionais restantes', () => { const { result } = boot(); const o = sale(result, { itens: [item({ adicionais: [{ grupoId: 'g', addonId: 'a', nome: 'Queijo', preco: 3 }] }), item({ cartItemId: 'remove' })] }); act(() => result.current.cancelOrderItem(o.id, 'remove', 'QA')); expect(result.current.orders[0].total).toBe(23); });
   it('SEG observação longa com emojis preservada', () => { const { result } = boot(); const observacao = 'Sem cebola 🍔 <script>QA</script> '.repeat(500); expect(sale(result, { itens: [item({ observacao })] }).itens[0].observacao).toBe(observacao); });
@@ -93,10 +93,20 @@ describe('pagamento e caixa', () => {
   it('CHAOS pagamento repetido 10 vezes', () => { const { result } = boot(); const o = sale(result); act(() => { for (let i = 0; i < 10; i++) attempt(() => result.current.addManualPaymentToOrder(o.id, 'dinheiro', 20, 20)); }); expect(result.current.orders[0].pagamentos).toHaveLength(1); expect(result.current.cashRegister.saldoAtualGaveta).toBe(220); });
   it('PAG estorno único devolve caixa', () => { const { result } = boot(); const o = sale(result); act(() => result.current.addManualPaymentToOrder(o.id, 'dinheiro', 20, 20)); const p = result.current.orders[0].pagamentos[0]; act(() => result.current.reverseOrderPayment(o.id, p.id, 'QA')); expect(result.current.cashRegister.saldoAtualGaveta).toBe(200); expect(result.current.orders[0].saldoRestante).toBe(20); });
   it('CHAOS estorno repetido não retira dinheiro duas vezes', () => { const { result } = boot(); const o = sale(result); act(() => result.current.addManualPaymentToOrder(o.id, 'dinheiro', 20, 20)); const p = result.current.orders[0].pagamentos[0]; act(() => result.current.reverseOrderPayment(o.id, p.id, 'QA')); act(() => result.current.reverseOrderPayment(o.id, p.id, 'QA')); expect(result.current.cashRegister.saldoAtualGaveta).toBe(200); });
-  it('CAI caixa fechado rejeita recebimento', () => { const { result } = boot(); const o = sale(result); act(() => result.current.closeCashRegister()); act(() => attempt(() => result.current.addManualPaymentToOrder(o.id, 'pix', 20))); expect(result.current.orders[0].pagamentos).toHaveLength(0); });
-  it('CAI suprimento e sangria', () => { const { result } = boot(); act(() => result.current.addCashMovement('suprimento', 50, 'QA')); act(() => result.current.addCashMovement('sangria', 30, 'QA')); expect(result.current.cashRegister.saldoAtualGaveta).toBe(220); });
-  it('CAI sangria negativa rejeitada', () => { const { result } = boot(); act(() => attempt(() => result.current.addCashMovement('sangria', -50, 'QA'))); expect(result.current.cashRegister.saldoAtualGaveta).toBe(200); });
-  it('CAI reabrir caixa aberto não apaga movimentações', () => { const { result } = boot(); act(() => result.current.addCashMovement('suprimento', 50, 'QA')); act(() => attempt(() => result.current.openCashRegister(200))); expect(result.current.cashRegister.saldoAtualGaveta).toBe(250); });
+  it('CAI caixa fechado rejeita recebimento', () => { const { result } = boot(); const o = sale(result); act(() => result.current.addManualPaymentToOrder(o.id, 'pix', 20)); act(() => result.current.closeCashRegister()); act(() => attempt(() => result.current.addManualPaymentToOrder(o.id, 'pix', 20))); expect(result.current.orders[0].pagamentos).toHaveLength(1); });
+  it('CAI suprimento e sangria legados permanecem no histórico', () => {
+    // Regra 33: registros antigos de suprimento/sangria continuam legíveis.
+    localStorage.setItem(key, JSON.stringify(seedDatabase({
+      cashRegister: { aberto: true, saldoInicial: 200, saldoAtualGaveta: 250, transacoes: [
+        { id: 'tx-leg-1', tipo: 'suprimento', valor: 50, motivo: 'histórico', horario: new Date().toISOString(), operador: 'QA' }
+      ] }
+    })));
+    const { result } = boot();
+    expect(result.current.cashRegister.transacoes.some(t => t.tipo === 'suprimento')).toBe(true);
+    expect(result.current.cashRegister.saldoAtualGaveta).toBe(250);
+  });
+  it('CAI saída manual negativa rejeitada', () => { const { result } = boot(); act(() => attempt(() => result.current.addCashMovement('saida_manual', -50, 'QA'))); expect(result.current.cashRegister.saldoAtualGaveta).toBe(200); });
+  it('CAI reabrir caixa aberto não apaga movimentações', () => { const { result } = boot(); act(() => result.current.addCashMovement('entrada_manual', 50, 'QA')); act(() => attempt(() => result.current.openCashRegister(200))); expect(result.current.cashRegister.saldoAtualGaveta).toBe(250); });
 });
 
 describe('mesas cozinha recuperacao e estresse', () => {
@@ -105,7 +115,7 @@ describe('mesas cozinha recuperacao e estresse', () => {
   it('COZ pedido cria fila de impressão', () => { const { result } = boot(); const o = sale(result); expect(result.current.printQueue.some(j => j.pedidoNumero === o.numero)).toBe(true); });
   it('REC remontagem offline preserva venda caixa', () => { const first = boot(); const o = sale(first.result); act(() => first.result.current.addManualPaymentToOrder(o.id, 'dinheiro', 20, 20)); first.unmount(); const { result } = boot(); expect(result.current.orders[0].id).toBe(o.id); expect(result.current.orders[0].statusPagamento).toBe('pago'); expect(result.current.cashRegister.saldoAtualGaveta).toBe(220); });
   it('CHAOS estresse 500 pedidos no mesmo lote têm IDs e números únicos', () => { const { result } = boot(); act(() => { for (let i = 0; i < 500; i++) result.current.createOrder({ itens: [item()] }); }); expect(result.current.orders).toHaveLength(500); expect(new Set(result.current.orders.map(o => o.id)).size).toBe(500); expect(new Set(result.current.orders.map(o => o.numero)).size).toBe(500); });
-  it('DIA jornada sintética reconcilia caixa após estorno e sangria', () => { const { result } = boot(); const a = sale(result); act(() => result.current.addManualPaymentToOrder(a.id, 'dinheiro', 20, 50)); const b = sale(result); act(() => result.current.addManualPaymentToOrder(b.id, 'pix', 20)); const c = sale(result); act(() => result.current.addManualPaymentToOrder(c.id, 'dinheiro', 20, 20)); act(() => result.current.reverseOrderPayment(c.id, result.current.orders[0].pagamentos[0].id, 'QA')); act(() => result.current.cancelOrder(c.id, 'QA')); act(() => result.current.addCashMovement('sangria', 10, 'QA')); act(() => result.current.closeCashRegister()); expect(result.current.cashRegister.saldoAtualGaveta).toBe(210); expect(result.current.orders.filter(o => o.statusPagamento === 'pago').reduce((s, o) => s + o.total, 0)).toBe(40); });
+  it('DIA jornada sintética reconcilia caixa após estorno e saída manual', () => { const { result } = boot(); const a = sale(result); act(() => result.current.addManualPaymentToOrder(a.id, 'dinheiro', 20, 50)); const b = sale(result); act(() => result.current.addManualPaymentToOrder(b.id, 'pix', 20)); const c = sale(result); act(() => result.current.addManualPaymentToOrder(c.id, 'dinheiro', 20, 20)); act(() => result.current.reverseOrderPayment(c.id, result.current.orders[0].pagamentos[0].id, 'QA')); act(() => result.current.cancelOrder(c.id, 'QA')); act(() => result.current.addCashMovement('saida_manual', 10, 'QA')); act(() => result.current.closeCashRegister()); expect(result.current.cashRegister.saldoAtualGaveta).toBe(210); expect(result.current.orders.filter(o => o.statusPagamento === 'pago').reduce((s, o) => s + o.total, 0)).toBe(40); });
   it('LEG pedido antigo sem pagamentos/itens é normalizado e ainda aceita edição', () => {
     localStorage.setItem(key, JSON.stringify({ ...seedDatabase(),
       orders: [{ id: 'legacy-1', operacaoId: 'op-1', numero: 1000, tipo: 'balcao', status: 'pendente', criadoEm: new Date().toISOString(), itens: [item()], subtotal: 20, desconto: 0, taxaServico: 0, taxaEntrega: 0, total: 20, statusPagamento: 'pendente', saldoRestante: 20, valorTotalPago: 0 }] }));
@@ -1125,10 +1135,11 @@ describe('melhorias operacionais v3 — UI edicao completa e sincronizacao deter
     expect(sucoPill).not.toBeNull();
     expect(container.querySelector('#edit-cat-pill-sobremesas')).toBeNull();
 
-    // Alternar para Lanche
+    // Alternar para Lanche. 'Sucos de Frutas' é dual-catálogo: a pílula
+    // continua disponível nos dois catálogos (regra do cardápio Mestre do Guaraná).
     fireEvent.click(getByText('Lanche'));
     expect(container.querySelector('#edit-cat-pill-sobremesas')).not.toBeNull();
-    expect(container.querySelector('#edit-cat-pill-sucos-de-frutas')).toBeNull();
+    expect(container.querySelector('#edit-cat-pill-sucos-de-frutas')).not.toBeNull();
   });
 
   it('3. UI edicao: busca por texto filtra dentro do catalogo ativo', () => {
