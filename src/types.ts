@@ -292,6 +292,15 @@ export interface PrintBatch {
   espelhoJobId?: string;
   espelhoJobIds?: string[];
   espelhoGeradoEm?: string;
+  /**
+   * TRUE somente após o operador confirmar explicitamente a impressão do
+   * espelho no diálogo. Jobs pendentes/falhos nunca elevam este flag.
+   * É o único critério que autoriza marcar o pedido como "pronto" e liberar
+   * pagamento.
+   */
+  mirrorConfirmed?: boolean;
+  /** Carimbo de quando o operador confirmou o espelho. */
+  mirrorConfirmedAt?: string;
   tipoOperacao: 'pedido_inicial' | 'pedido_adicional' | 'reprint';
   /** IDs dos itens cobertos por esta dupla de vias (pedido + espelho). */
   itemIds?: string[];

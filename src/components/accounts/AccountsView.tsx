@@ -36,6 +36,7 @@ export const AccountsView: React.FC = () => {
   const {
     accounts, tables, getAccount, getAccountOrders, searchAccounts, payAccount, closeAccount,
     transferAccount, mergeAccounts, setActiveModule, selectedReceiptOrder, setSelectedReceiptOrder,
+    canStartPayment,
   } = useRestaurant();
 
   const [texto, setTexto] = useState('');
@@ -78,6 +79,12 @@ export const AccountsView: React.FC = () => {
 
   const handleSettleConfirm = (method: PaymentMethod, amountPaid?: number, change?: number) => {
     if (!selectedAccount) throw new Error('Nenhuma conta selecionada.');
+    // Verifica espelho em todos os lançamentos com saldo
+    const lancamentosComSaldo = getAccountOrders(selectedAccount.id).filter(
+      o => o.status !== 'cancelado' && o.saldoRestante > 0,
+    );
+    const mirrorBlock = lancamentosComSaldo.map(o => canStartPayment(o)).find(Boolean);
+    if (mirrorBlock) throw new Error(mirrorBlock);
     const valor = paymentTargetAmount ?? amountPaid;
     payAccount(
       selectedAccount.id,
@@ -246,18 +253,37 @@ export const AccountsView: React.FC = () => {
               )}
             </div>
 
-            <div className="px-6 py-4 bg-slate-50 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-2.5">
-              <button type="button" id="account-open-pdv-btn" onClick={() => { setSelectedAccountId(null); setActiveModule('pdv'); }} className="w-full sm:w-auto px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs rounded-xl flex items-center justify-center gap-1.5"><PlusCircle className="w-3.5 h-3.5 text-blue-600" />Novo Lançamento</button>
-              <button type="button" id="account-view-tables-btn" onClick={() => { setSelectedAccountId(null); setActiveModule('mesas'); }} className="w-full sm:w-auto px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs rounded-xl flex items-center justify-center gap-1.5"><Users className="w-3.5 h-3.5 text-blue-600" />Ver Mesas</button>
-              <button
-                type="button"
-                id="account-settle-btn"
-                disabled={selectedAccount.saldoRestante <= 0 || selectedAccount.status === 'encerrada'}
-                onClick={() => { setPaymentTargetAmount(undefined); setIsPaymentOpen(true); }}
-                className="w-full sm:w-auto px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white font-bold text-xs rounded-xl shadow-xs flex items-center justify-center gap-2"
-              >
-                <FileText className="w-4 h-4" />Baixar Conta • {formatCurrency(selectedAccount.saldoRestante)}
-              </button>
+            <div className="px-6 py-4 bg-slate-50 border-t border-slate-200 flex flex-col gap-2.5">
+              {/* Aviso de espelho pendente */}
+              {(() => {
+                const lancamentosComSaldo = getAccountOrders(selectedAccount.id).filter(
+                  o => o.status !== 'cancelado' && o.saldoRestante > 0,
+                );
+                const mirrorBlock = lancamentosComSaldo.map(o => canStartPayment(o)).find(Boolean);
+                return mirrorBlock ? (
+                  <div
+                    id="account-mirror-warning"
+                    role="alert"
+                    className="flex items-center gap-2 px-3 py-2 bg-amber-50 border border-amber-300 rounded-xl text-xs text-amber-900 font-semibold"
+                  >
+                    <CircleAlert className="w-4 h-4 shrink-0 text-amber-600" />
+                    {mirrorBlock}
+                  </div>
+                ) : null;
+              })()}
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-2.5">
+                <button type="button" id="account-open-pdv-btn" onClick={() => { setSelectedAccountId(null); setActiveModule('pdv'); }} className="w-full sm:w-auto px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs rounded-xl flex items-center justify-center gap-1.5"><PlusCircle className="w-3.5 h-3.5 text-blue-600" />Novo Lançamento</button>
+                <button type="button" id="account-view-tables-btn" onClick={() => { setSelectedAccountId(null); setActiveModule('mesas'); }} className="w-full sm:w-auto px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs rounded-xl flex items-center justify-center gap-1.5"><Users className="w-3.5 h-3.5 text-blue-600" />Ver Mesas</button>
+                <button
+                  type="button"
+                  id="account-settle-btn"
+                  disabled={selectedAccount.saldoRestante <= 0 || selectedAccount.status === 'encerrada'}
+                  onClick={() => { setPaymentTargetAmount(undefined); setIsPaymentOpen(true); }}
+                  className="w-full sm:w-auto px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white font-bold text-xs rounded-xl shadow-xs flex items-center justify-center gap-2"
+                >
+                  <FileText className="w-4 h-4" />Baixar Conta • {formatCurrency(selectedAccount.saldoRestante)}
+                </button>
+              </div>
             </div>
           </div>
         </div>

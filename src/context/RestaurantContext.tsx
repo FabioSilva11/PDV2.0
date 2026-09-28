@@ -176,6 +176,13 @@ interface RestaurantContextType {
   updateOrderItemQuantity: (orderId: string, cartItemId: string, novaQuantidade: number) => void;
   applyOrderDiscount: (orderId: string, desconto: number, motivo: string) => void;
   generateOrderMirror: (orderId: string) => void;
+  /** ETAPA 2: confirma a impressão do espelho e marca o pedido como 'pronto'. */
+  confirmOrderMirror: (orderId: string) => void;
+  /** Verifica se é possível iniciar pagamento. Null = permitido, string = motivo do bloqueio. */
+  canStartPayment: (order: Order) => string | null;
+  /** ID do pedido com diálogo de espelho aberto. */
+  selectedMirrorOrderId: string | null;
+  setSelectedMirrorOrderId: (id: string | null) => void;
   rerouteOrderPrintBatch: (orderId: string, grupoId?: string) => void;
   setOrderPriority: (orderId: string, prioridade: 'normal' | 'urgente') => void;
   reopenOrder: (id: string, motivo: string) => void;
@@ -569,6 +576,8 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const [accounts, setAccounts] = useStoreField<Account[]>(store, 'accounts', () => database.accounts || []);
   const [selectedOrderForModal, setSelectedOrderForModal] = useState<Order | null>(null);
   const [selectedReceiptOrder, setSelectedReceiptOrder] = useState<Order | null>(null);
+  /** ID do pedido cujo diálogo de ESPELHO está aberto (null = fechado). */
+  const [selectedMirrorOrderId, setSelectedMirrorOrderId] = useState<string | null>(null);
 
   // Manual Payments
   const [paymentOptions, setPaymentOptions] = useStoreField<ManualPaymentOption[]>(store, 'paymentOptions', () => {
@@ -607,7 +616,14 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   // Cash Register — inicia FECHADO e zerado. Nenhum valor operacional fixo.
   const [cashRegister, setCashRegister] = useStoreField<CashRegister>(store, 'cashRegister', () => {
-    return database.cashRegister || EMPTY_CASH_REGISTER;
+    const raw = database.cashRegister || EMPTY_CASH_REGISTER;
+    // Garante que campos array nunca sejam undefined em dados antigos do localStorage
+    return {
+      ...EMPTY_CASH_REGISTER,
+      ...raw,
+      turnosHistorico: Array.isArray(raw.turnosHistorico) ? raw.turnosHistorico : [],
+      transacoes: Array.isArray(raw.transacoes) ? raw.transacoes : [],
+    };
   });
 
   // Printers & fila de impressão (declarados antes do caixa: a fila é
@@ -704,8 +720,8 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       aberto: true,
       turnoAtual: turno,
       turnosHistorico: prev.turnoAtual
-        ? [prev.turnoAtual, ...prev.turnosHistorico]
-        : prev.turnosHistorico,
+        ? [prev.turnoAtual, ...(prev.turnosHistorico || [])]
+        : (prev.turnosHistorico || []),
       saldoInicial: valor,
       saldoAtualGaveta: valor,
       transacoes: [...(prev.transacoes || []), { id: uid('tx-open'), tipo: 'abertura' as const, valor, motivo: `Abertura de caixa — turno ${id}`, horario: agora, operador: currentUser.nome, turnoId: id }]
@@ -748,10 +764,10 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         ...prev,
         aberto: false,
         turnoAtual: undefined,
-        turnosHistorico: turnoFechado ? [turnoFechado, ...prev.turnosHistorico] : prev.turnosHistorico,
+        turnosHistorico: turnoFechado ? [turnoFechado, ...(prev.turnosHistorico || [])] : (prev.turnosHistorico || []),
         fechadoEm: agora,
         fechamentoCego: blindCloseData ? { ...blindCloseData, conferidoPor: blindCloseData.conferidoPor || currentUser?.nome } : prev.fechamentoCego,
-        transacoes: [...prev.transacoes, { id: uid('tx-close'), tipo: 'fechamento' as const, valor: prev.saldoAtualGaveta, motivo: `Fechamento de caixa — turno ${turno?.id || ''}`.trim(), horario: agora, operador: currentUser?.nome || 'sistema', turnoId: turno?.id }]
+        transacoes: [...(prev.transacoes || []), { id: uid('tx-close'), tipo: 'fechamento' as const, valor: prev.saldoAtualGaveta, motivo: `Fechamento de caixa — turno ${turno?.id || ''}`.trim(), horario: agora, operador: currentUser?.nome || 'sistema', turnoId: turno?.id }]
       };
     });
     recordAudit('fechou caixa', 'caixa', store.state.cashRegister.turnoAtual?.id || store.state.cashRegister.id, 'Conferência concluída. Nenhum pedido ou conta pendente.');
@@ -814,7 +830,13 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         setPaymentOptions(asArray(remote.paymentOptions, database.paymentOptions || INITIAL_MANUAL_PAYMENTS));
         const remoteTables = remoteSnapshot.tables.length ? remoteSnapshot.tables : (remote.operationalDemoResetApplied ? asArray(remote.tables, INITIAL_TABLES) : clearDemoTableOccupancy(asArray(remote.tables, INITIAL_TABLES)));
         setTables(remoteTables);
-        setCashRegister(remote.cashRegister || database.cashRegister || EMPTY_CASH_REGISTER);
+        const rawCr = remote.cashRegister || database.cashRegister || EMPTY_CASH_REGISTER;
+        setCashRegister({
+          ...EMPTY_CASH_REGISTER,
+          ...rawCr,
+          turnosHistorico: Array.isArray(rawCr.turnosHistorico) ? rawCr.turnosHistorico : [],
+          transacoes: Array.isArray(rawCr.transacoes) ? rawCr.transacoes : [],
+        });
         setPrinters(asArray(remote.printers, database.printers || INITIAL_PRINTERS).map(normalizePrinter));
         setPrintQueue(asArray(remote.printQueue, []).map(normalizePrintJob));
         setUsers(asArray(remote.users, users)); setCustomers(asArray(remote.customers, [])); setReservations(asArray(remote.reservations, [])); setAuditLogs(asArray(remote.auditLogs, []));
@@ -1298,27 +1320,83 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
 
   const activePrinters = () => store.state.printers.filter((p: PrinterDevice) => p.ativa && p.status === 'online');
+
+  /**
+   * Conteúdo texto enviado à impressora.
+   *
+   * VIA DO PEDIDO (cozinha) → simples: só o necessário para a produção.
+   *   Sem valores financeiros, sem pagamentos — apenas identificação e itens.
+   *
+   * ESPELHO → rico: tudo que o operador precisa conferir antes de confirmar
+   *   a produção. Inclui conta, lançamento, mesa, cliente, garçom, itens
+   *   completos (adicionais / remoções / obs), totais e pagamentos/saldo.
+   */
   const buildOrderPrintContent = (order: Order, title: string, items = order.itens) => {
     const s = store.state.settings as RestaurantSettings;
     const headerName = (s?.nomeFantasia || s?.nomeCurto || 'ESTABELECIMENTO').toUpperCase();
+    const isEspelho = title.toUpperCase().includes('ESPELHO');
+
+    // Bloco de itens (compartilhado pelos dois documentos)
+    const itemLines = items.flatMap(item => [
+      `${item.quantidade}x ${item.nome}${item.variacaoNome ? ` (${item.variacaoNome})` : ''}`,
+      ...(item.adicionais || []).map(addon => `  + ${addon.nome}${addon.preco > 0 ? ` (+R$ ${addon.preco.toFixed(2)})` : ''}`),
+      ...(item.remocoes || []).map(removal => `  SEM: ${removal}`),
+      ...(item.observacao ? [`  OBS: ${item.observacao}`] : [])
+    ]);
+
+    if (!isEspelho) {
+      // ── VIA DO PEDIDO (cozinha): mínimo necessário para produção ──
+      const lines = [
+        headerName,
+        title,
+        `PEDIDO #${order.numero}${order.codigoExibicao ? ` • ${order.codigoExibicao}` : ''}`,
+        order.mesaNumero ? `MESA: ${order.mesaNumero}` : `TIPO: ${order.tipo.toUpperCase()}`,
+        order.garcomNome ? `GARCOM: ${order.garcomNome}` : '',
+        order.prioridade === 'urgente' ? '*** URGENTE ***' : '',
+        '--------------------------------',
+        ...itemLines,
+        '--------------------------------',
+        order.observacoesGerais ? `OBS GERAL: ${order.observacoesGerais}` : '',
+      ];
+      return lines.filter(Boolean).join('\n');
+    }
+
+    // ── ESPELHO: documento rico com todos os dados ──
+    const pagamentosAtivos = (order.pagamentos || []).filter(p => !p.estornado);
     const lines = [
-      headerName, title, `PEDIDO #${order.numero}${order.codigoExibicao ? ` • ${order.codigoExibicao}` : ''}`, `TIPO: ${order.tipo.toUpperCase()}`,
-      order.contaNumero !== undefined ? `CONTA: ${order.contaNumero} • LANÇAMENTO: ${order.sequencia ?? 1}` : '',
-      order.mesaNumero ? `MESA: ${order.mesaNumero}` : '', order.nomeCliente ? `CLIENTE: ${order.nomeCliente}` : '',
+      headerName,
+      title,
+      '================================',
+      `PEDIDO: #${order.numero}${order.codigoExibicao ? ` • ${order.codigoExibicao}` : ''}`,
+      `TIPO: ${order.tipo.toUpperCase()}`,
+      order.contaNumero !== undefined
+        ? `CONTA: ${order.contaNumero} • LANCAMENTO: ${order.codigoExibicao || order.sequencia ?? 1}`
+        : '',
+      order.mesaNumero ? `MESA: ${order.mesaNumero}` : '',
+      order.nomeCliente ? `CLIENTE: ${order.nomeCliente}` : '',
       order.telefoneCliente ? `TELEFONE: ${order.telefoneCliente}` : '',
-      order.tipo === 'delivery' && order.enderecoEntrega ? `ENDEREÇO: ${order.enderecoEntrega.logradouro}, ${order.enderecoEntrega.numero} - ${order.enderecoEntrega.bairro}` : '',
+      order.garcomNome ? `GARCOM/ATENDENTE: ${order.garcomNome}` : '',
+      order.tipo === 'delivery' && order.enderecoEntrega
+        ? `ENDERECO: ${order.enderecoEntrega.logradouro}, ${order.enderecoEntrega.numero} - ${order.enderecoEntrega.bairro}`
+        : '',
+      order.prioridade === 'urgente' ? '*** URGENTE ***' : '',
       '--------------------------------',
-      ...items.flatMap(item => [
-        `${item.quantidade}x ${item.nome}${item.variacaoNome ? ` (${item.variacaoNome})` : ''}`,
-        ...(item.adicionais || []).map(addon => `  + ${addon.nome}`),
-        ...(item.remocoes || []).map(removal => `  SEM: ${removal}`),
-        ...(item.observacao ? [`  OBS: ${item.observacao}`] : [])
-      ]),
+      'ITENS:',
+      ...itemLines,
+      order.observacoesGerais ? `OBS GERAL: ${order.observacoesGerais}` : '',
       '--------------------------------',
-      `SUBTOTAL: R$ ${order.subtotal.toFixed(2)}`,
-      order.desconto > 0 ? `DESCONTO: -R$ ${order.desconto.toFixed(2)}` : '',
-      order.taxaEntrega > 0 ? `TAXA ENTREGA: R$ ${order.taxaEntrega.toFixed(2)}` : '',
-      `TOTAL: R$ ${order.total.toFixed(2)}`, '--------------------------------'
+      `SUBTOTAL:    R$ ${order.subtotal.toFixed(2)}`,
+      order.desconto > 0 ? `DESCONTO:   -R$ ${order.desconto.toFixed(2)}` : '',
+      order.taxaServico > 0 ? `TAXA SERV:   R$ ${order.taxaServico.toFixed(2)}` : '',
+      order.taxaEntrega > 0 ? `TAXA ENTREGA:R$ ${order.taxaEntrega.toFixed(2)}` : '',
+      `TOTAL:       R$ ${order.total.toFixed(2)}`,
+      '--------------------------------',
+      'PAGAMENTOS:',
+      ...(pagamentosAtivos.length
+        ? pagamentosAtivos.map(p => `  ${p.formaNome}: R$ ${p.valor.toFixed(2)}`)
+        : ['  Nenhum pagamento registrado']),
+      `SALDO:       R$ ${order.saldoRestante.toFixed(2)}`,
+      '================================',
     ];
     return lines.filter(Boolean).join('\n');
   };
@@ -1433,61 +1511,159 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     if (!result.ok) throw new Error('O roteamento continua incompleto. Verifique as regras e as impressoras.');
   };
 
+  /**
+   * ETAPA 1 do espelho: roteia os jobs de impressão e abre o diálogo de
+   * prévia. NÃO altera o status do pedido. NÃO marca itens como 'ready'.
+   * Apenas prepara a fila de impressão e armazena o espelhoJobId no batch.
+   * Idempotente: se já existe espelhoJobId no lote mais recente, reabre o
+   * diálogo com os mesmos dados sem duplicar jobs.
+   */
   const generateOrderMirror = (orderId: string) => {
     const order = store.state.orders.find((o: Order) => o.id === orderId) as Order | undefined;
     if (!order || order.status === 'cancelado') throw new Error('Pedido inválido para gerar espelho.');
-    const batches = order.impressoes || [];
-    const batch = [...batches].reverse().find(item => !item.espelhoJobId && !(item.espelhoJobIds || []).length);
-    if (!batch) return;
     if (order.status !== 'novo') throw new Error('O espelho só pode ser gerado para um pedido aguardando preparo.');
+    const batches = order.impressoes || [];
+
+    // Busca lote: primeiro o mais recente ainda aguardando espelho; se todos
+    // já tiverem espelho, usa o mais recente (para reabertura do diálogo).
+    const pendingBatch = [...batches].reverse().find(b => !b.mirrorConfirmed && (!b.espelhoJobId && !(b.espelhoJobIds || []).length));
+    const lastBatch = [...batches].reverse().find(b => !b.mirrorConfirmed);
+    const batch = pendingBatch || lastBatch;
+    if (!batch) {
+      // Todos os lotes já confirmados — apenas abre o diálogo para revisão
+      setSelectedMirrorOrderId(orderId);
+      return;
+    }
+
     const pedidoJobs = (batch.pedidoJobIds || [batch.pedidoJobId]).filter(Boolean).map(id => store.state.printQueue.find((job: PrintJob) => job.id === id)).filter(Boolean) as PrintJob[];
-    if (!pedidoJobs.length || pedidoJobs.some(job => job.status === 'falha')) throw new Error('A via PEDIDO não foi impressa em todos os destinos. Corrija o roteamento e reimprima antes de gerar o espelho.');
-    
-    // Usar snapshot do lote se disponível (imutável), senão filtrar itens atuais
-    // Filtrar itens voided que não devem ir para o espelho
+    if (!pedidoJobs.length || pedidoJobs.some(job => job.status === 'falha')) {
+      throw new Error('A via PEDIDO não foi impressa em todos os destinos. Corrija o roteamento e reimprima antes de gerar o espelho.');
+    }
+
+    // Se o lote já tem espelhoJobId (gerado anteriormente mas não confirmado),
+    // não recria jobs — apenas reabre o diálogo. Idempotência garantida.
+    if (batch.espelhoJobId || (batch.espelhoJobIds || []).length > 0) {
+      setSelectedMirrorOrderId(orderId);
+      return;
+    }
+
+    // Usar snapshot do lote (imutável); filtrar voided
     const batchItems = batch.itemsSnapshot?.length
       ? batch.itemsSnapshot.filter(i => i.status !== 'voided')
-      : (batch.itemIds?.length 
+      : (batch.itemIds?.length
         ? order.itens.filter(item => batch.itemIds!.includes(item.cartItemId) && item.status !== 'voided')
         : order.itens.filter(i => i.status !== 'voided'));
-    
+
     if (!batchItems.length) throw new Error('Não há itens válidos vinculados a este lote de impressão.');
-    
+
     const result = routePrintJobs(order, 'espelho', batchItems, batch.grupoId);
     if (!result.ok) throw new Error('O espelho não foi roteado para todas as impressoras configuradas. Corrija o roteamento antes de concluir o preparo.');
-    
-    // Atualizar status dos itens no lote para 'ready'
-    const updatedItems = order.itens.map(item => {
-      if (batch.itemIds?.includes(item.cartItemId) || batch.itemsSnapshot?.some(s => s.cartItemId === item.cartItemId)) {
-        return { ...item, status: 'ready' as CartItemStatus };
-      }
-      return item;
-    });
-    
-    const nextBatches = batches.map(item => item.grupoId === batch.grupoId ? {
-      ...item,
+
+    // Registra os jobs no batch SEM marcar pronto nem 'ready'
+    const nextBatches = batches.map(b => b.grupoId === batch.grupoId ? {
+      ...b,
       espelhoJobId: result.jobs.find(j => j.status !== 'falha')?.id,
       espelhoJobIds: result.jobs.filter(j => j.status !== 'falha').map(j => j.id),
       espelhoGeradoEm: result.jobs[0]?.dataHora
-    } : item);
-    
-    const nextOrder = { ...order, status: 'pronto' as OrderStatus, impressoes: nextBatches, itens: updatedItems };
+    } : b);
+
+    setOrders(prev => prev.map(o => o.id === orderId ? { ...o, impressoes: nextBatches } : o));
+    recordAudit('preparou espelho', 'pedido', orderId, `Lançamento ${order.codigoExibicao || order.codigoMesa || order.numero} • jobs criados, aguardando confirmação`);
+
+    // Abre o diálogo de prévia/confirmação
+    setSelectedMirrorOrderId(orderId);
+  };
+
+  /**
+   * ETAPA 2 do espelho: chamada quando o operador confirma a impressão no
+   * diálogo. Somente aqui o pedido muda para 'pronto', itens para 'ready'
+   * e a mesa pode ser liberada.
+   *
+   * Nunca deve ser chamada se os jobs do espelho estiverem com status 'falha'
+   * ou 'pendente' — a UI deve verificar antes.
+   */
+  const confirmOrderMirror = (orderId: string) => {
+    const order = store.state.orders.find((o: Order) => o.id === orderId) as Order | undefined;
+    if (!order || order.status === 'cancelado') throw new Error('Pedido inválido.');
+    if (order.status !== 'novo') throw new Error('O espelho só pode ser confirmado para um pedido aguardando preparo.');
+    const batches = order.impressoes || [];
+    const batch = [...batches].reverse().find(b =>
+      (b.espelhoJobId || (b.espelhoJobIds || []).length > 0) && !b.mirrorConfirmed
+    );
+    if (!batch) throw new Error('Nenhum espelho pendente de confirmação encontrado.');
+
+    // Verificar que nenhum job do espelho está com falha ou ainda pendente
+    const espelhoJobs = (batch.espelhoJobIds || [batch.espelhoJobId]).filter(Boolean)
+      .map(id => store.state.printQueue.find((job: PrintJob) => job.id === id))
+      .filter(Boolean) as PrintJob[];
+
+    // Jobs 'sucesso' confirmam; 'pendente' também é aceito (impressão em andamento na rede)
+    // Jobs 'falha' BLOQUEIAM — nunca confirmar espelho com falha
+    if (espelhoJobs.some(j => j.status === 'falha')) {
+      throw new Error('O espelho não foi impresso em todos os destinos (falha). Corrija e reimprima antes de confirmar.');
+    }
+
+    const agora = new Date().toISOString();
+
+    // Marcar itens do lote como 'ready'
+    const updatedItems = order.itens.map(item => {
+      const inBatch = batch.itemIds?.includes(item.cartItemId) ||
+        batch.itemsSnapshot?.some(s => s.cartItemId === item.cartItemId);
+      return inBatch ? { ...item, status: 'ready' as CartItemStatus } : item;
+    });
+
+    // Marcar lote como confirmado
+    const nextBatches = batches.map(b => b.grupoId === batch.grupoId
+      ? { ...b, mirrorConfirmed: true, mirrorConfirmedAt: agora }
+      : b);
+
+    const nextOrder: Order = { ...order, status: 'pronto' as OrderStatus, impressoes: nextBatches, itens: updatedItems };
     setOrders(prev => prev.map(o => o.id === orderId ? nextOrder : o));
-    recordAudit('gerou espelho', 'pedido', orderId, `Lançamento ${order.codigoExibicao || order.codigoMesa || order.numero} • conclui preparo (não paga a conta)`);
-    
-    // REGRA DO SALÃO: com o espelho gerado o preparo daquele lançamento acaba.
-    // Se é o ÚLTIMO lançamento da conta ainda aguardando espelho, a mesa volta
-    // a ficar livre — e SOMENTE se esta conta for a que ocupa a mesa.
-    // O débito permanece nos lançamentos, visível na Central de Contas.
+    recordAudit('confirmou espelho', 'pedido', orderId,
+      `Lançamento ${order.codigoExibicao || order.codigoMesa || order.numero} • preparo concluído, pagamento liberado`);
+
+    // Fecha o diálogo
+    setSelectedMirrorOrderId(null);
+
+    // REGRA DO SALÃO: se último lançamento da conta aguardando espelho, libera a mesa
     const contaId = order.contaId;
     if (order.tipo === 'mesa' && contaId) {
       const table = tableByNumber(order.mesaNumero);
       const isCurrentOfTable = !!table && table.contaAtualId === contaId;
       if (isCurrentOfTable && isLastOperationalOrder(orderList(), contaId, orderId)) {
         releaseTableOccupation(table!.numero);
-        recordAudit('liberou mesa por espelho', 'mesa', table!.id, `Mesa ${table!.numero} • último lançamento da Conta ${accountById(contaId)?.numero} concluído`);
+        recordAudit('liberou mesa por espelho', 'mesa', table!.id,
+          `Mesa ${table!.numero} • último lançamento da Conta ${accountById(contaId)?.numero} concluído`);
       }
     }
+  };
+
+  /**
+   * REGRA ABSOLUTA DE PAGAMENTO — aplicada em TODOS os caminhos de baixa.
+   *
+   * Retorna null se o pagamento for permitido, ou uma string com o motivo
+   * de bloqueio (para exibir na UI ou lançar como erro).
+   *
+   * Critérios:
+   *  1. Pedido deve existir e não estar cancelado.
+   *  2. Pedido não pode ser de total zero (já foi cortesia).
+   *  3. O espelho obrigatório deve ter sido confirmado (mirrorConfirmed: true
+   *     em pelo menos um lote) — OU o pedido não tem nenhum lote (edge case
+   *     de pedidos antigos sem fila de impressão).
+   */
+  const canStartPayment = (order: Order): string | null => {
+    if (!order) return 'Pedido não encontrado.';
+    if (order.status === 'cancelado') return 'Não é possível cobrar um pedido cancelado.';
+    if (order.saldoRestante <= 0) return null; // já quitado, pode re-visualizar pagamentos
+    const batches = order.impressoes || [];
+    // Pedidos sem nenhum lote de impressão (caso raro/legado) passam direto
+    if (!batches.length) return null;
+    // Exige que pelo menos um lote tenha mirrorConfirmed === true
+    const hasConfirmedMirror = batches.some(b => b.mirrorConfirmed === true);
+    if (!hasConfirmedMirror) {
+      return 'Imprima e confirme o ESPELHO antes de iniciar o pagamento.';
+    }
+    return null;
   };
 
   /** Próxima sequência global do lançamento: max(sequenciaGlobal) + 1. */
@@ -2108,6 +2284,9 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     const order = store.state.orders.find((o: Order) => o.id === orderId) as Order | undefined;
     const option = store.state.paymentOptions.find((p: ManualPaymentOption) => p.id === formaId) as ManualPaymentOption | undefined;
     if (!order || order.status === 'cancelado' || !store.state.cashRegister.aberto || !option?.ativo) return false;
+    // REGRA ABSOLUTA: espelho obrigatório antes de qualquer baixa financeira
+    const mirrorBlock = canStartPayment(order);
+    if (mirrorBlock) return false;
     if (!Number.isFinite(valor) || valor <= 0 || money(valor) > order.saldoRestante || order.saldoRestante <= 0) return false;
     valor = amount(valor, 'Pagamento', false);
     const received = formaId === 'dinheiro' ? (valorRecebido ?? valor) : valor;
@@ -2145,6 +2324,9 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   };
 
   const openPaymentModal = useCallback((order: Order) => {
+    // REGRA ABSOLUTA: verificação no domínio, não apenas na UI
+    const block = canStartPayment(order);
+    if (block) throw new Error(block);
     setOrderForPaymentModal(order);
     setIsPaymentModalOpen(true);
   }, []);
@@ -2188,6 +2370,11 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     if (account.status === 'encerrada') throw new Error(`A Conta ${account.numero} está encerrada e não recebe lançamentos.`);
     const own = ordersOfAccount(contaId).filter(o => o.status !== 'cancelado');
     if (!own.length) throw new Error('Esta conta ainda não possui lançamentos.');
+    // REGRA ABSOLUTA: verificar espelho em todos os lançamentos com saldo
+    const bloqueados = own.filter(o => o.saldoRestante > 0).map(o => canStartPayment(o)).filter(Boolean);
+    if (bloqueados.length > 0) {
+      throw new Error(`Imprima e confirme o ESPELHO de todos os lançamentos antes de cobrar a Conta ${account.numero}.`);
+    }
     const totalDue = money(own.reduce((sum, o) => sum + o.saldoRestante, 0));
     if (totalDue <= 0) return [];
     if (!formaId) throw new Error('Selecione a forma de pagamento antes de cobrar a conta.');
@@ -2472,6 +2659,11 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     }
     const own = ordersOfAccount(account.id).filter(o => o.status !== 'cancelado');
     if (!own.length) throw new Error('Esta conta ainda não possui lançamentos.');
+    // REGRA ABSOLUTA: espelho obrigatório para todos os lançamentos com saldo
+    const bloqueados = own.filter(o => o.saldoRestante > 0).map(o => canStartPayment(o)).filter(Boolean);
+    if (bloqueados.length > 0) {
+      throw new Error(`Imprima e confirme o ESPELHO antes de cobrar a Mesa ${tableNumber}.`);
+    }
     if (account.saldoRestante <= 0) {
       if (table.contaAtualId === account.id) releaseTableOccupation(tableNumber);
       return own[own.length - 1] || null;
@@ -2677,6 +2869,10 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         createOrder,
         updateOrderStatus,
         generateOrderMirror,
+        confirmOrderMirror,
+        canStartPayment,
+        selectedMirrorOrderId,
+        setSelectedMirrorOrderId,
         rerouteOrderPrintBatch,
         cancelOrder,
         cancelOrderItem,

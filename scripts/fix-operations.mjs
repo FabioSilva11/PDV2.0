@@ -132,6 +132,7 @@ replace('applyOrderDiscount', 'updateOrderItemProductionStatus', `  const applyO
     syncTableTotals(next);
     logAuditEvent('Desconto', motivo, order.numero, desconto);
   };`);
+  
 replace('reopenOrder', 'addManualPaymentToOrder', `  const reopenOrder = (id: string, motivo: string) => {
     requirePermission(currentUser, 'reabrirConta');
     const order = store.state.orders.find((o: Order) => o.id === id) as Order | undefined;

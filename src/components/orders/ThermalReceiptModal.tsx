@@ -1,27 +1,47 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { useRestaurant } from '../../context/RestaurantContext';
 import { formatCurrency } from '../../utils/formatters';
-import { Printer, X, Download } from 'lucide-react';
+import { Printer, X } from 'lucide-react';
 
+/**
+ * COMPROVANTE TÉRMICO (80mm)
+ *
+ * Sempre trabalha com o pedido ATUAL do estado central — nunca guarda
+ * snapshot interno. `selectedReceiptOrder` carrega o pedido a exibir e é
+ * nulado ao fechar.
+ *
+ * Campos garantidos:
+ *   PEDIDO · CONTA · LANÇAMENTO · MESA · CLIENTE · ATENDENTE
+ *   ITENS · TOTAL · PAGAMENTOS · SALDO
+ */
 export const ThermalReceiptModal: React.FC = () => {
-  const { selectedReceiptOrder, setSelectedReceiptOrder, currentUser, settings } = useRestaurant();
+  const { orders, selectedReceiptOrder, setSelectedReceiptOrder, currentUser, settings } = useRestaurant();
 
-  if (!selectedReceiptOrder) return null;
+  // Busca o pedido ATUAL pelo id — não usa o objeto congelado
+  const order = useMemo(
+    () => (selectedReceiptOrder ? (orders.find(o => o.id === selectedReceiptOrder.id) ?? selectedReceiptOrder) : null),
+    [selectedReceiptOrder, orders],
+  );
 
-  const order = selectedReceiptOrder;
+  if (!order) return null;
 
-  const handlePrint = () => {
-    window.print();
-  };
+  const handlePrint = () => window.print();
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-900/70 backdrop-blur-xs p-4 animate-in fade-in">
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="thermal-receipt-title"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-stone-900/70 backdrop-blur-xs p-4 animate-in fade-in"
+    >
       <div className="bg-white rounded-2xl max-w-md w-full shadow-2xl border border-stone-200 overflow-hidden flex flex-col max-h-[95vh]">
         {/* Header toolbar */}
         <div className="p-4 bg-slate-900 text-white flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Printer className="w-4 h-4 text-sky-400" />
-            <span className="font-bold text-sm">Comprovante Térmico (80mm)</span>
+            <span id="thermal-receipt-title" className="font-bold text-sm">
+              Comprovante Térmico (80mm)
+            </span>
           </div>
           <div className="flex items-center gap-2">
             <button
@@ -34,6 +54,7 @@ export const ThermalReceiptModal: React.FC = () => {
             </button>
             <button
               id="thermal-close-btn"
+              aria-label="Fechar comprovante"
               onClick={() => setSelectedReceiptOrder(null)}
               className="p-1 rounded-lg text-stone-400 hover:text-white"
             >
@@ -42,18 +63,35 @@ export const ThermalReceiptModal: React.FC = () => {
           </div>
         </div>
 
-        {/* Paper receipt preview */}
+        {/* Preview do papel */}
         <div className="p-6 overflow-y-auto bg-stone-200/50 flex justify-center">
-          <div id="thermal-receipt" className="w-[300px] bg-white p-5 rounded shadow-sm border border-stone-300 font-mono text-[11px] leading-tight text-stone-900 select-text">
-            {/* Store header — dados vindos de RestaurantSettings */}
+          <div
+            id="thermal-receipt"
+            className="w-[300px] bg-white p-5 rounded shadow-sm border border-stone-300 font-mono text-[11px] leading-tight text-stone-900 select-text"
+          >
+            {/* Cabeçalho do estabelecimento */}
             <div className="text-center pb-3 border-b border-dashed border-stone-400 space-y-0.5">
-              <div className="font-bold text-sm tracking-wider uppercase">{settings.nomeFantasia || settings.nomeAplicacao}</div>
+              <div className="font-bold text-sm tracking-wider uppercase">
+                {settings.nomeFantasia || settings.nomeAplicacao}
+              </div>
               {settings.razaoSocial && <div>{settings.razaoSocial}</div>}
-              {(settings.cnpj || settings.inscricaoEstadual) && <div>{settings.cnpj && `CNPJ: ${settings.cnpj}`}{settings.cnpj && settings.inscricaoEstadual ? ' - ' : ''}{settings.inscricaoEstadual && `IE: ${settings.inscricaoEstadual}`}</div>}
-              {(settings.cidade || settings.telefone) && <div>{[settings.cidade, settings.estado].filter(Boolean).join(' - ')}{settings.cidade && settings.telefone ? ' | ' : ''}{settings.telefone && `Fone: ${settings.telefone}`}</div>}
+              {(settings.cnpj || settings.inscricaoEstadual) && (
+                <div>
+                  {settings.cnpj && `CNPJ: ${settings.cnpj}`}
+                  {settings.cnpj && settings.inscricaoEstadual ? ' - ' : ''}
+                  {settings.inscricaoEstadual && `IE: ${settings.inscricaoEstadual}`}
+                </div>
+              )}
+              {(settings.cidade || settings.telefone) && (
+                <div>
+                  {[settings.cidade, settings.estado].filter(Boolean).join(' - ')}
+                  {settings.cidade && settings.telefone ? ' | ' : ''}
+                  {settings.telefone && `Fone: ${settings.telefone}`}
+                </div>
+              )}
             </div>
 
-            {/* Order info */}
+            {/* Identificação do pedido */}
             <div className="py-2.5 border-b border-dashed border-stone-400 space-y-1">
               <div className="flex justify-between font-bold text-xs">
                 <span>PEDIDO #{order.codigoExibicao || order.codigoMesa || order.numero}</span>
@@ -63,20 +101,37 @@ export const ThermalReceiptModal: React.FC = () => {
                 <span>Data: {new Date(order.criadoEm).toLocaleDateString('pt-BR')}</span>
                 <span>Hora: {new Date(order.criadoEm).toLocaleTimeString('pt-BR')}</span>
               </div>
+
+              {/* CONTA e LANÇAMENTO */}
+              {order.contaNumero !== undefined && (
+                <div className="text-[10px]">
+                  CONTA: {order.contaNumero}
+                  {order.sequencia !== undefined &&
+                    ` • LANÇAMENTO: ${order.codigoExibicao || order.sequencia}`}
+                </div>
+              )}
+
+              {/* MESA — obrigatória quando presente */}
               {order.mesaNumero && (
                 <div className="font-bold">MESA: {order.mesaNumero}</div>
               )}
-              {order.nomeCliente && (
-                <div>CLIENTE: {order.nomeCliente}</div>
-              )}
+
+              {order.nomeCliente && <div>CLIENTE: {order.nomeCliente}</div>}
               {order.garcomNome && (
                 <div className="text-stone-600">ATENDENTE: {order.garcomNome}</div>
               )}
+
+              {/* Delivery */}
               {order.tipo === 'delivery' && order.enderecoEntrega && (
                 <div className="pt-1 text-[10px] text-stone-700">
                   <div className="font-bold">ENDEREÇO DE ENTREGA:</div>
-                  <div>{order.enderecoEntrega.logradouro}, {order.enderecoEntrega.numero}</div>
-                  <div>{order.enderecoEntrega.bairro} {order.enderecoEntrega.complemento || ''}</div>
+                  <div>
+                    {order.enderecoEntrega.logradouro}, {order.enderecoEntrega.numero}
+                  </div>
+                  <div>
+                    {order.enderecoEntrega.bairro}{' '}
+                    {order.enderecoEntrega.complemento || ''}
+                  </div>
                   {order.enderecoEntrega.pontoReferencia && (
                     <div>Ref: {order.enderecoEntrega.pontoReferencia}</div>
                   )}
@@ -84,7 +139,7 @@ export const ThermalReceiptModal: React.FC = () => {
               )}
             </div>
 
-            {/* Items table */}
+            {/* Itens */}
             <div className="py-2.5 border-b border-dashed border-stone-400 space-y-1.5">
               <div className="flex justify-between font-bold pb-1 border-b border-stone-200">
                 <span>ITEM</span>
@@ -93,19 +148,24 @@ export const ThermalReceiptModal: React.FC = () => {
               {order.itens.map((it, idx) => (
                 <div key={idx} className="space-y-0.5">
                   <div className="flex justify-between">
-                    <span>{it.quantidade}x {it.nome} {it.variacaoNome ? `(${it.variacaoNome})` : ''}</span>
+                    <span>
+                      {it.quantidade}x {it.nome}{' '}
+                      {it.variacaoNome ? `(${it.variacaoNome})` : ''}
+                    </span>
                     <span>{formatCurrency(it.precoUnitario * it.quantidade)}</span>
                   </div>
                   {it.adicionais && it.adicionais.length > 0 && (
                     <div className="pl-2 text-[10px] text-stone-600">
                       {it.adicionais.map((ad, i) => (
-                        <div key={i}>+ {ad.nome} ({formatCurrency(ad.preco)})</div>
+                        <div key={i}>
+                          + {ad.nome} ({formatCurrency(ad.preco)})
+                        </div>
                       ))}
                     </div>
                   )}
                   {it.remocoes && it.remocoes.length > 0 && (
                     <div className="pl-2 text-[10px] text-rose-700 italic">
-                      Sem: {it.remocoes?.join(', ')}
+                      Sem: {it.remocoes.join(', ')}
                     </div>
                   )}
                   {it.observacao && (
@@ -117,7 +177,7 @@ export const ThermalReceiptModal: React.FC = () => {
               ))}
             </div>
 
-            {/* Financial summary */}
+            {/* Totais financeiros */}
             <div className="py-2.5 border-b border-dashed border-stone-400 space-y-1">
               <div className="flex justify-between">
                 <span>SUBTOTAL:</span>
@@ -125,7 +185,9 @@ export const ThermalReceiptModal: React.FC = () => {
               </div>
               {order.desconto > 0 && (
                 <div className="flex justify-between text-stone-700">
-                  <span>DESCONTO {order.descontoMotivo ? `(${order.descontoMotivo})` : ''}:</span>
+                  <span>
+                    DESCONTO{order.descontoMotivo ? ` (${order.descontoMotivo})` : ''}:
+                  </span>
                   <span>-{formatCurrency(order.desconto)}</span>
                 </div>
               )}
@@ -147,17 +209,19 @@ export const ThermalReceiptModal: React.FC = () => {
               </div>
             </div>
 
-            {/* Manual Payments recorded */}
+            {/* Pagamentos */}
             <div className="py-2 border-b border-dashed border-stone-400 space-y-1">
               <div className="font-bold text-[10px] uppercase text-stone-600">
-                PAGAMENTOS INFORMADOS (MANUAL):
+                PAGAMENTOS:
               </div>
               {(!order.pagamentos || order.pagamentos.length === 0) ? (
                 <div className="text-stone-500 italic">Nenhum pagamento registrado (Pendente)</div>
               ) : (
                 (order.pagamentos || []).filter(p => !p.estornado).map((p, i) => (
                   <div key={i} className="flex justify-between text-[10px]">
-                    <span>• {p.formaNome} ({p.registradoPor})</span>
+                    <span>
+                      • {p.formaNome} ({p.registradoPor})
+                    </span>
                     <span className="font-bold">{formatCurrency(p.valor)}</span>
                   </div>
                 ))
@@ -168,17 +232,21 @@ export const ThermalReceiptModal: React.FC = () => {
               </div>
             </div>
 
-            {/* Footer message */}
+            {/* Rodapé */}
             <div className="pt-3 text-center text-[10px] text-stone-600 space-y-1">
-              <div className="font-bold">{settings.rodapeComprovante || 'Obrigado pela preferência!'}</div>
+              <div className="font-bold">
+                {settings.rodapeComprovante || 'Obrigado pela preferência!'}
+              </div>
               <div>Documento emitido para conferência interna.</div>
-              <div>{settings.nomeAplicacao} v{settings.versaoExibida}</div>
+              <div>
+                {settings.nomeAplicacao} v{settings.versaoExibida}
+              </div>
               <div>Operador: {currentUser?.nome}</div>
             </div>
           </div>
         </div>
 
-        {/* Modal actions */}
+        {/* Ações */}
         <div className="p-4 bg-stone-100 border-t border-stone-200 flex justify-end gap-2">
           <button
             id="close-thermal-receipt-modal-btn"
