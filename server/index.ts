@@ -8,6 +8,7 @@ import {
   loadStateFromMariaDB, 
   saveStateToMariaDB 
 } from './db';
+import printerRouter from './printer';
 
 dotenv.config({ path: path.resolve(process.cwd(), '.env') });
 
@@ -17,6 +18,9 @@ const port = Number(process.env.SERVER_PORT) || 3001;
 // Middlewares
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
+
+// Printer API routes
+app.use('/api/printers', printerRouter);
 
 // Health Check do Servidor e do MariaDB
 app.get('/api/health', (req, res) => {

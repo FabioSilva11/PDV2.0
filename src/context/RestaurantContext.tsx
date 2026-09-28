@@ -39,12 +39,7 @@ import {
 } from '../lib/accountMigration';
 import type { TableAccountResolution } from '../lib/accountMigration';
 import { isCategoryAllowedForCatalog as isCategoryAllowedForCatalogLib } from '../data/menuCategories';
-import { 
-  INITIAL_MENU, 
-  INITIAL_TABLES, 
-  INITIAL_PRINTERS, 
-  INITIAL_MANUAL_PAYMENTS
-} from '../data/seedData';
+import { INITIAL_MENU, INITIAL_TABLES, INITIAL_MANUAL_PAYMENTS } from '../data/seedData';
 import { LocalStore, useStoreField } from '../lib/localStore';
 import {
   getPendingFinancialOrders,
@@ -451,7 +446,7 @@ const loadRestaurantDatabase = (): RestaurantDatabaseSnapshot => {
     paymentOptions: readLegacy<ManualPaymentOption[]>('payment_options'),
     tables: readLegacy<Table[]>('tables'),
     cashRegister: readLegacy<CashRegister>('cash'),
-    printers: ((readLegacy<PrinterDevice[]>('printers')?.length ? readLegacy<PrinterDevice[]>('printers') : INITIAL_PRINTERS) || []).map(normalizePrinter),
+    printers: (readLegacy<PrinterDevice[]>('printers') || []).map(normalizePrinter),
     printQueue: (readLegacy<PrintJob[]>('print_queue') || []).map(normalizePrintJob)
   });
 };
@@ -629,7 +624,7 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   // Printers & fila de impressão (declarados antes do caixa: a fila é
   // isolada por turno e a abertura do turno reseta a fila operacional).
   const [printers, setPrinters] = useStoreField<PrinterDevice[]>(store, 'printers', () => {
-    return database.printers?.length ? database.printers : INITIAL_PRINTERS;
+    return database.printers?.length ? database.printers : [];
   });
   const [printQueue, setPrintQueue] = useStoreField<PrintJob[]>(store, 'printQueue', () => database.printQueue || []);
 
@@ -837,7 +832,7 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           turnosHistorico: Array.isArray(rawCr.turnosHistorico) ? rawCr.turnosHistorico : [],
           transacoes: Array.isArray(rawCr.transacoes) ? rawCr.transacoes : [],
         });
-        setPrinters(asArray(remote.printers, database.printers || INITIAL_PRINTERS).map(normalizePrinter));
+        setPrinters(asArray(remote.printers, database.printers || []).map(normalizePrinter));
         setPrintQueue(asArray(remote.printQueue, []).map(normalizePrintJob));
         setUsers(asArray(remote.users, users)); setCustomers(asArray(remote.customers, [])); setReservations(asArray(remote.reservations, [])); setAuditLogs(asArray(remote.auditLogs, []));
       }
@@ -1322,34 +1317,44 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const activePrinters = () => store.state.printers.filter((p: PrinterDevice) => p.ativa && p.status === 'online');
 
   /**
-   * Conteúdo texto enviado à impressora.
+   * Gera o conteúdo texto enviado à impressora.
    *
-   * VIA DO PEDIDO (cozinha) → simples: só o necessário para a produção.
-   *   Sem valores financeiros, sem pagamentos — apenas identificação e itens.
+   * VIA DO PEDIDO (cozinha) — simples:
+   *   Cabeçalho mínimo + mesa + garçom + itens com adicionais/remoções/obs.
+   *   Sem valores financeiros. Se for lote adicional ("pedido_adicional"),
+   *   exibe banner "*** ADICIONADO ***" para a cozinha saber que é complemento.
    *
-   * ESPELHO → rico: tudo que o operador precisa conferir antes de confirmar
-   *   a produção. Inclui conta, lançamento, mesa, cliente, garçom, itens
-   *   completos (adicionais / remoções / obs), totais e pagamentos/saldo.
+   * ESPELHO — rico:
+   *   Todos os dados: conta, lançamento, mesa, cliente, garçom, itens
+   *   completos, totais financeiros, pagamentos e saldo.
    */
-  const buildOrderPrintContent = (order: Order, title: string, items = order.itens) => {
+  const buildOrderPrintContent = (
+    order: Order,
+    tipo: import('../types').PrintRouteDocument | string,
+    items = order.itens,
+    tipoOperacao?: 'pedido_inicial' | 'pedido_adicional' | 'reprint',
+  ) => {
     const s = store.state.settings as RestaurantSettings;
     const headerName = (s?.nomeFantasia || s?.nomeCurto || 'ESTABELECIMENTO').toUpperCase();
-    const isEspelho = title.toUpperCase().includes('ESPELHO');
+    const isEspelho = tipo === 'espelho';
 
-    // Bloco de itens (compartilhado pelos dois documentos)
+    // Bloco de itens — compartilhado pelos dois documentos
     const itemLines = items.flatMap(item => [
       `${item.quantidade}x ${item.nome}${item.variacaoNome ? ` (${item.variacaoNome})` : ''}`,
-      ...(item.adicionais || []).map(addon => `  + ${addon.nome}${addon.preco > 0 ? ` (+R$ ${addon.preco.toFixed(2)})` : ''}`),
+      ...(item.adicionais || []).map(addon =>
+        `  + ${addon.nome}${addon.preco > 0 ? ` (+R$ ${addon.preco.toFixed(2)})` : ''}`),
       ...(item.remocoes || []).map(removal => `  SEM: ${removal}`),
-      ...(item.observacao ? [`  OBS: ${item.observacao}`] : [])
+      ...(item.observacao ? [`  OBS: ${item.observacao}`] : []),
     ]);
 
     if (!isEspelho) {
-      // ── VIA DO PEDIDO (cozinha): mínimo necessário para produção ──
+      // ── VIA DO PEDIDO (cozinha) ──
+      const isAdicional = tipoOperacao === 'pedido_adicional' || tipoOperacao === 'reprint';
       const lines = [
         headerName,
-        title,
+        isAdicional ? '*** ADICIONADO AO PEDIDO ***' : 'VIA DO PEDIDO',
         `PEDIDO #${order.numero}${order.codigoExibicao ? ` • ${order.codigoExibicao}` : ''}`,
+        // Mesa — obrigatória quando presente
         order.mesaNumero ? `MESA: ${order.mesaNumero}` : `TIPO: ${order.tipo.toUpperCase()}`,
         order.garcomNome ? `GARCOM: ${order.garcomNome}` : '',
         order.prioridade === 'urgente' ? '*** URGENTE ***' : '',
@@ -1361,17 +1366,18 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       return lines.filter(Boolean).join('\n');
     }
 
-    // ── ESPELHO: documento rico com todos os dados ──
+    // ── ESPELHO — documento rico ──
     const pagamentosAtivos = (order.pagamentos || []).filter(p => !p.estornado);
     const lines = [
       headerName,
-      title,
+      'ESPELHO DO PEDIDO',
       '================================',
       `PEDIDO: #${order.numero}${order.codigoExibicao ? ` • ${order.codigoExibicao}` : ''}`,
       `TIPO: ${order.tipo.toUpperCase()}`,
       order.contaNumero !== undefined
-        ? `CONTA: ${order.contaNumero} • LANCAMENTO: ${order.codigoExibicao || order.sequencia ?? 1}`
+        ? `CONTA: ${order.contaNumero} • LANCAMENTO: ${order.codigoExibicao || (order.sequencia ?? 1)}`
         : '',
+      // Mesa — obrigatória quando presente
       order.mesaNumero ? `MESA: ${order.mesaNumero}` : '',
       order.nomeCliente ? `CLIENTE: ${order.nomeCliente}` : '',
       order.telefoneCliente ? `TELEFONE: ${order.telefoneCliente}` : '',
@@ -1385,17 +1391,17 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       ...itemLines,
       order.observacoesGerais ? `OBS GERAL: ${order.observacoesGerais}` : '',
       '--------------------------------',
-      `SUBTOTAL:    R$ ${order.subtotal.toFixed(2)}`,
-      order.desconto > 0 ? `DESCONTO:   -R$ ${order.desconto.toFixed(2)}` : '',
-      order.taxaServico > 0 ? `TAXA SERV:   R$ ${order.taxaServico.toFixed(2)}` : '',
-      order.taxaEntrega > 0 ? `TAXA ENTREGA:R$ ${order.taxaEntrega.toFixed(2)}` : '',
-      `TOTAL:       R$ ${order.total.toFixed(2)}`,
+      `SUBTOTAL:     R$ ${order.subtotal.toFixed(2)}`,
+      order.desconto > 0 ? `DESCONTO:    -R$ ${order.desconto.toFixed(2)}` : '',
+      order.taxaServico > 0 ? `TAXA SERV:    R$ ${order.taxaServico.toFixed(2)}` : '',
+      order.taxaEntrega > 0 ? `TAXA ENTREGA: R$ ${order.taxaEntrega.toFixed(2)}` : '',
+      `TOTAL:        R$ ${order.total.toFixed(2)}`,
       '--------------------------------',
       'PAGAMENTOS:',
       ...(pagamentosAtivos.length
         ? pagamentosAtivos.map(p => `  ${p.formaNome}: R$ ${p.valor.toFixed(2)}`)
         : ['  Nenhum pagamento registrado']),
-      `SALDO:       R$ ${order.saldoRestante.toFixed(2)}`,
+      `SALDO:        R$ ${order.saldoRestante.toFixed(2)}`,
       '================================',
     ];
     return lines.filter(Boolean).join('\n');
@@ -1423,7 +1429,7 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     });
   };
 
-  const routePrintJobs = (order: Order, tipo: PrintRouteDocument, items = order.itens, grupoImpressaoId?: string) => {
+  const routePrintJobs = (order: Order, tipo: PrintRouteDocument, items = order.itens, grupoImpressaoId?: string, tipoOperacao?: 'pedido_inicial' | 'pedido_adicional' | 'reprint') => {
     const printers = activePrinters();
     const jobs: PrintJob[] = [];
     const groupId = grupoImpressaoId || uid('printgrp');
@@ -1450,7 +1456,7 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         turnoId: (store.state.cashRegister as CashRegister | undefined)?.turnoAtual?.id,
         impressoraId: printer.id, impressoraNome: printer.nome,
         pedidoNumero: order.numero, titulo: `${tipo === 'pedido' ? 'PEDIDO' : tipo === 'espelho' ? 'ESPELHO' : 'COMPROVANTE'} #${order.numero}`,
-        conteudoTexto: buildOrderPrintContent(order, tipo === 'pedido' ? 'VIA DO PEDIDO' : tipo === 'espelho' ? 'ESPELHO DO PEDIDO' : 'COMPROVANTE', routedItems),
+        conteudoTexto: buildOrderPrintContent(order, tipo, routedItems, tipoOperacao),
         status: 'pendente', dataHora: new Date().toISOString(), tentativas: 0
       };
       jobs.push(job);
@@ -1462,7 +1468,7 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         id: uid(`print-${tipo}-falha`), pedidoId: order.id, grupoImpressaoId: groupId, tipo,
         impressoraId: 'sem-impressora', impressoraNome: 'SEM IMPRESSORA CONFIGURADA', pedidoNumero: order.numero,
         titulo: `${tipo.toUpperCase()} #${order.numero} — ROTEAMENTO INCOMPLETO`,
-        conteudoTexto: buildOrderPrintContent(order, `${tipo.toUpperCase()} SEM DESTINO`, missingItems),
+        conteudoTexto: buildOrderPrintContent(order, tipo, missingItems, tipoOperacao),
         status: 'falha', dataHora: new Date().toISOString(), tentativas: 0
       });
     }
@@ -1471,7 +1477,7 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         id: uid(`print-${tipo}-falha`), pedidoId: order.id, grupoImpressaoId: groupId, tipo,
         impressoraId: 'sem-impressora', impressoraNome: 'SEM IMPRESSORA CONFIGURADA', pedidoNumero: order.numero,
         titulo: `${tipo.toUpperCase()} #${order.numero} — SEM ROTEAMENTO`,
-        conteudoTexto: buildOrderPrintContent(order, `${tipo.toUpperCase()} SEM DESTINO`, items),
+        conteudoTexto: buildOrderPrintContent(order, tipo, items, tipoOperacao),
         status: 'falha', dataHora: new Date().toISOString(), tentativas: 0
       });
     }
@@ -1480,7 +1486,7 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   };
 
   const dispatchItems = (order: Order, items = order.itens, tipoOperacao: 'pedido_inicial' | 'pedido_adicional' = 'pedido_inicial') => {
-    const result = routePrintJobs(order, 'pedido', items);
+    const result = routePrintJobs(order, 'pedido', items, undefined, tipoOperacao);
     const batch = {
       grupoId: result.groupId,
       pedidoJobId: result.jobs.find(j => j.status !== 'falha')?.id,
@@ -2777,33 +2783,86 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   }, [setTables]);
 
   // Printers
-  const triggerTestPrint = useCallback((printerId: string) => {
-    const prn = store.state.printers.find(p => p.id === printerId);
-    if (!prn) return;
-    const job: PrintJob = {
-      id: uid('job-test'),
-      tipo: 'teste',
-      impressoraId: prn.id,
-      impressoraNome: prn.nome,
-      pedidoNumero: 0,
-      titulo: 'TESTE DE COMUNICAÇÃO DE IMPRESSORA',
-      conteudoTexto: `TESTE OPERACIONAL ${prn.larguraPapel}\nIP: ${prn.ip}:${prn.porta}\nStatus: ${prn.status.toUpperCase()}`,
-      status: prn.status === 'online' ? 'sucesso' : 'falha',
-      dataHora: new Date().toLocaleTimeString('pt-BR'),
-      tentativas: 1
-    };
-    setPrintQueue(prev => [job, ...prev]);
-    if (soundEnabled) sounds.print();
+  const triggerTestPrint = useCallback(async (printerId: string) => {
+    // Chama o serviço Node.js para testar a impressora real
+    try {
+      const response = await fetch(`/api/printers/test/${printerId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const result = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(result.error || 'Erro ao testar impressora');
+      }
+      
+      // Create a real print job with the result
+      const job: PrintJob = {
+        id: uid('job-test'),
+        tipo: 'teste',
+        impressoraId: printerId,
+        impressoraNome: result.printerNome || '',
+        pedidoNumero: 0,
+        titulo: 'TESTE DE COMUNICAÇÃO DE IMPRESSORA',
+        conteudoTexto: result.conteudoTexto || `TESTE ${new Date().toLocaleTimeString('pt-BR')}`,
+        status: result.status === 'online' ? 'sucesso' : 'falha',
+        dataHora: new Date().toLocaleTimeString('pt-BR'),
+        tentativas: 1
+      };
+      setPrintQueue(prev => [job, ...prev]);
+      
+      if (soundEnabled) sounds.print();
+    } catch (error: any) {
+      // Create a failed job if test failed
+      const job: PrintJob = {
+        id: uid('job-test-failed'),
+        tipo: 'teste',
+        impressoraId: printerId,
+        impressoraNome: '',
+        pedidoNumero: 0,
+        titulo: 'TESTE DE COMUNICAÇÃO FALHOU',
+        conteudoTexto: `Erro: ${error.message}`,
+        status: 'falha',
+        dataHora: new Date().toLocaleTimeString('pt-BR'),
+        tentativas: 1
+      };
+      setPrintQueue(prev => [job, ...prev]);
+      
+      console.error('Erro no teste de impressora:', error);
+    }
   }, [printers, soundEnabled, setPrintQueue]);
 
   const reprintJob = useCallback((jobId: string) => {
     const job = store.state.printQueue.find((item: PrintJob) => item.id === jobId);
-    const printer = job ? store.state.printers.find((item: PrinterDevice) => item.id === job.impressoraId) : undefined;
-    if (!job || !printer || printer.status !== 'online' || !printer.ativa) {
-      throw new Error('Impressora indisponível para reimpressão.');
-    }
-    setPrintQueue(prev => prev.map(j => j.id === jobId ? { ...j, status: 'pendente', tentativas: j.tentativas + 1, dataHora: new Date().toISOString() } : j));
-    if (soundEnabled) sounds.print();
+    if (!job) throw new Error('Job não encontrado.');
+
+    // Envia a reimpressão para o serviço Node.js. A atualização do job local
+    // reflete o resultado real devolvido pela API (sucesso ou falha).
+    void (async () => {
+      try {
+        const response = await fetch('/api/printers/reprint', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ jobId, printerId: job.impressoraId, conteudo: job.conteudoTexto })
+        });
+        const result = await response.json();
+
+        if (!response.ok) {
+          throw new Error(result?.error || 'Falha ao reimprimir');
+        }
+
+        setPrintQueue(prev => prev.map(j => j.id === jobId
+          ? { ...j, status: 'sucesso', tentativas: j.tentativas + 1, dataHora: new Date().toISOString() }
+          : j));
+
+        if (soundEnabled) sounds.print();
+      } catch (error: any) {
+        setPrintQueue(prev => prev.map(j => j.id === jobId
+          ? { ...j, status: 'falha', tentativas: j.tentativas + 1, dataHora: new Date().toISOString() }
+          : j));
+        console.error('Erro ao reimprimir:', error);
+      }
+    })();
   }, [soundEnabled, setPrintQueue, store]);
 
   const togglePrinterStatus = useCallback((printerId: string) => {
@@ -2823,10 +2882,24 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       if (exists) return prev.map(p => p.id === normalized.id ? normalized : p);
       return [...prev, normalized];
     });
+    // Sincroniza com o serviço local de impressão. A persistência do cadastro
+    // no servidor é best-effort: o cadastro não pode ser perdido se a API
+    // estiver fora do ar.
+    void fetch('/api/printers', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(normalized)
+    }).catch((error) => {
+      console.error('Falha ao sincronizar impressora com o serviço de impressão:', error);
+    });
   }, [setPrinters]);
 
   const deletePrinter = useCallback((printerId: string) => {
     setPrinters(prev => prev.filter(p => p.id !== printerId));
+    void fetch(`/api/printers/${encodeURIComponent(printerId)}`, { method: 'DELETE' })
+      .catch((error) => {
+        console.error('Falha ao remover impressora no serviço de impressão:', error);
+      });
   }, [setPrinters]);
 
   const guardActions = <T extends object,>(api: T): T => Object.fromEntries(Object.entries(api).map(([key, value]) => [key, typeof value === 'function' ? (...args: unknown[]) => {
