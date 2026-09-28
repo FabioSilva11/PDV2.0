@@ -4,7 +4,7 @@ import { PrinterDevice, PrinterType, PrinterPurpose, PrinterRouteRule, PrintRout
 import { KITCHEN_STATION_LABELS } from '../../config/appConfig';
 import { X, Save, Printer, Plus, Trash2, Copy } from 'lucide-react';
 
-interface PrinterModalProps { isOpen: boolean; onClose: () => void; onSave: (printer: PrinterDevice) => void; printerToEdit?: PrinterDevice | null; }
+interface PrinterModalProps { isOpen: boolean; onClose: () => void; onSave: (printer: PrinterDevice) => void; printerToEdit?: PrinterDevice | null; prefill?: Partial<PrinterDevice> | null; }
 
 const DOCUMENTOS: { id: PrintRouteDocument; label: string }[] = [
   { id: 'pedido', label: 'Pedido' }, { id: 'espelho', label: 'Espelho' }, { id: 'comprovante', label: 'Comprovante' }
@@ -15,7 +15,7 @@ const ESTACOES: { id: KitchenStation; label: string }[] = Object.entries(KITCHEN
 
 const toggle = <T,>(list: T[], value: T) => list.includes(value) ? list.filter(x => x !== value) : [...list, value];
 
-export const PrinterModal: React.FC<PrinterModalProps> = ({ isOpen, onClose, onSave, printerToEdit }) => {
+export const PrinterModal: React.FC<PrinterModalProps> = ({ isOpen, onClose, onSave, printerToEdit, prefill }) => {
   const { menuCategories } = useRestaurant();
   const [nome,setNome]=useState(''); const [local,setLocal]=useState(''); const [tipo,setTipo]=useState<PrinterType>('rede');
   const [finalidade,setFinalidade]=useState<PrinterPurpose>('geral'); const [ip,setIp]=useState(''); const [porta,setPorta]=useState(9100);
@@ -23,8 +23,8 @@ export const PrinterModal: React.FC<PrinterModalProps> = ({ isOpen, onClose, onS
   const [regras,setRegras]=useState<PrinterRouteRule[]>([]);
   useEffect(()=>{
     if(printerToEdit){ setNome(printerToEdit.nome); setLocal(printerToEdit.local); setTipo(printerToEdit.tipo); setFinalidade(printerToEdit.finalidade||'geral'); setIp(printerToEdit.ip); setPorta(printerToEdit.porta); setModelo(printerToEdit.modelo); setLarguraPapel(printerToEdit.larguraPapel); setRegras(printerToEdit.regras||[]); }
-    else { setNome('');setLocal('');setTipo('rede');setFinalidade('geral');setIp('');setPorta(9100);setModelo('Generic ESC/POS 80mm');setLarguraPapel('80mm');setRegras([]); }
-  },[printerToEdit,isOpen]);
+    else { setNome(prefill?.nome || ''); setLocal(prefill?.local || ''); setTipo(prefill?.tipo || 'rede'); setFinalidade(prefill?.finalidade || 'geral'); setIp(prefill?.ip || ''); setPorta(prefill?.porta ?? 9100); setModelo(prefill?.modelo || 'Generic ESC/POS 80mm'); setLarguraPapel(prefill?.larguraPapel || '80mm'); setRegras([]); }
+  },[printerToEdit,isOpen,prefill]);
   const addRule=()=>setRegras(prev=>[...prev,{id:`route-${Date.now()}`,nome:`Regra ${prev.length+1}`,documentos:['pedido'],catalogos:[],tiposPedido:[],categorias:[],categoriaIds:[],estacoes:[],prioridade:prev.length+1,modo:'incluir',ativo:true}]);
   const updateRule=(id:string,patch:Partial<PrinterRouteRule>)=>setRegras(prev=>prev.map(r=>r.id===id?{...r,...patch}:r));
   const duplicateRule=(r:PrinterRouteRule)=>setRegras(prev=>[...prev,{...r,id:`route-${Date.now()}`,nome:`${r.nome} (cópia)`,prioridade:prev.length+1}]);

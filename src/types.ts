@@ -54,6 +54,9 @@ export interface MenuCategory {
 export interface MenuItem {
   id: string;
   codigo?: string;
+  /** Lista (1+) de cardápios onde o produto é exibido — fonte de verdade. */
+  catalogos?: MenuCatalog[];
+  /** Legado: catálogo único. Relevante apenas durante migração/fluxos antigos. */
   catalogo?: MenuCatalog;
   nome: string;
   descricao?: string;

@@ -33,7 +33,7 @@ const lan = (seq: number, nome: string, preco: number, descricao: string): MenuI
   id: `mg-lan-${String(seq).padStart(2, '0')}`,
   nome,
   categoria: 'Lanches & Burgers',
-  catalogo: 'lanche',
+  catalogos: ['lanche'],
   preco,
   disponivel: true,
   descricao,
@@ -46,6 +46,7 @@ const bev = (id: string, codigo: string | undefined, nome: string, descricao: st
   ...(codigo ? { codigo } : {}),
   nome,
   categoria: 'Sucos de Frutas',
+  catalogos: ['restaurante', 'lanche'],
   preco: sizes[0][1],
   disponivel: true,
   descricao,
@@ -85,11 +86,12 @@ const SIZES_PORCAO_PMG: SizePreco[] = [[300, 5.0], [500, 10.0], [700, 15.0]];
 const SIZES_PORCAO_PMGG: SizePreco[] = [[300, 5.0], [500, 10.0], [700, 15.0], [1000, 20.0]];
 const NOME_PORCAO: Record<number, string> = { 300: 'P', 500: 'M', 700: 'G', 1000: 'GG' };
 
-/** Porção P/M/G(/GG) — categoria 'Porções Extras' atende RESTAURANTE e LANCHE. */
+/** Porção P/M/G(/GG) — atende RESTAURANTE e LANCHE (catalogos explícitos). */
 const porcao = (seq: number, nome: string, descricao: string, sizes: SizePreco[]): MenuItem => ({
   id: `mg-por-${String(seq).padStart(3, '0')}`,
   nome,
   categoria: 'Porções Extras',
+  catalogos: ['restaurante', 'lanche'],
   preco: sizes[0][1],
   disponivel: true,
   descricao,
@@ -104,11 +106,11 @@ const porcao = (seq: number, nome: string, descricao: string, sizes: SizePreco[]
 });
 
 /** Item diverso (bebida/lanche/sobremesa avulsa) do cardápio físico. */
-const diverso = (seq: number, nome: string, preco: number, descricao: string, categoria: CategoryType, estacao: KitchenStation, catalogo?: MenuCatalog, disponivel = true): MenuItem => ({
+const diverso = (seq: number, nome: string, preco: number, descricao: string, categoria: CategoryType, estacao: KitchenStation, catalogos?: MenuCatalog[], disponivel = true): MenuItem => ({
   id: `mg-div-${String(seq).padStart(2, '0')}`,
   nome,
   categoria,
-  ...(catalogo ? { catalogo } : {}),
+  catalogos: catalogos && catalogos.length ? [...catalogos] : ['restaurante'],
   preco,
   disponivel,
   descricao,
@@ -265,6 +267,7 @@ export const MESTRE_GUARANA_MENU: MenuItem[] = [
     id: 'mg-sup-001',
     nome: 'Super Vitamina Banana com Abacate',
     categoria: 'Sucos de Frutas',
+    catalogos: ['restaurante', 'lanche'],
     tamanho: '500 ml',
     preco: 10.0,
     disponivel: true,
@@ -275,6 +278,7 @@ export const MESTRE_GUARANA_MENU: MenuItem[] = [
     id: 'mg-sup-002',
     nome: 'Super Vitamina Abacate com Mel',
     categoria: 'Sucos de Frutas',
+    catalogos: ['restaurante', 'lanche'],
     tamanho: '500 ml',
     preco: 10.0,
     disponivel: true,
@@ -285,6 +289,7 @@ export const MESTRE_GUARANA_MENU: MenuItem[] = [
     id: 'mg-sup-003',
     nome: 'Super Vitamina Mamão com Maçã',
     categoria: 'Sucos de Frutas',
+    catalogos: ['restaurante', 'lanche'],
     tamanho: '500 ml',
     preco: 10.0,
     disponivel: true,
@@ -295,6 +300,7 @@ export const MESTRE_GUARANA_MENU: MenuItem[] = [
     id: 'mg-sup-004',
     nome: 'Super Vitamina Açaí com Laranja',
     categoria: 'Sucos de Frutas',
+    catalogos: ['restaurante', 'lanche'],
     tamanho: '500 ml',
     preco: 10.0,
     disponivel: true,
@@ -316,20 +322,20 @@ export const MESTRE_GUARANA_MENU: MenuItem[] = [
   // Murupi legado; os itens abaixo são os do Mestre do Guaraná (preços
   // próprios) e ficam separados para edição independente.
   // ==============================
-  diverso(1, 'Refrigerante Lata', 5.0, 'Lata 350 ml gelada. (Homônimo do item legado a R$ 6,00 — editável aqui)', 'Bebidas', 'bar'),
-  diverso(2, 'Refrigerante 1 Litro', 6.0, 'Garrafa 1 litro. Cardápio físico lista R$ 6/8/10 sem detalhar as variações — ajuste aqui se necessário.', 'Bebidas', 'bar'),
-  diverso(3, 'Água Mineral 300 ml', 2.0, 'Água mineral natural gelada.', 'Bebidas', 'bar'),
-  diverso(4, 'Água Mineral 500 ml', 0.0, 'Tamanho não oferecido no cardápio original. (Preço a definir caso passe a oferecer)', 'Bebidas', 'bar', undefined, false),
-  diverso(5, 'Água Mineral 1 Litro', 0.0, 'Tamanho não oferecido no cardápio original. (Preço a definir caso passe a oferecer)', 'Bebidas', 'bar', undefined, false),
+  diverso(1, 'Refrigerante Lata', 5.0, 'Lata 350 ml gelada. (Homônimo do item legado a R$ 6,00 — editável aqui)', 'Bebidas', 'bar', ['restaurante', 'lanche']),
+  diverso(2, 'Refrigerante 1 Litro', 6.0, 'Garrafa 1 litro. Cardápio físico lista R$ 6/8/10 sem detalhar as variações — ajuste aqui se necessário.', 'Bebidas', 'bar', ['restaurante', 'lanche']),
+  diverso(3, 'Água Mineral 300 ml', 2.0, 'Água mineral natural gelada.', 'Bebidas', 'bar', ['restaurante', 'lanche']),
+  diverso(4, 'Água Mineral 500 ml', 0.0, 'Tamanho não oferecido no cardápio original. (Preço a definir caso passe a oferecer)', 'Bebidas', 'bar', ['restaurante', 'lanche'], false),
+  diverso(5, 'Água Mineral 1 Litro', 0.0, 'Tamanho não oferecido no cardápio original. (Preço a definir caso passe a oferecer)', 'Bebidas', 'bar', ['restaurante', 'lanche'], false),
 
   // ==============================
   // DIVERSOS DO BALCÃO (lanches e sobremesas avulsas)
   // Preço 0.00 = indefinido no cardápio físico (editar depois).
   // Kikão Simples/Especial e Brotinho estão na lista de lanches (mg-lan-38/39/40).
   // ==============================
-  diverso(6, 'Salgados', 5.0, 'Salgados do balcão (coxinhas, risoles etc.) por unidade.', 'Lanches & Burgers', 'chapa', 'lanche'),
-  diverso(7, 'Sorvete', 0.0, 'Sorvete do balcão. (Preço não informado no cardápio original — definir no cadastro)', 'Sobremesas', 'sobremesa', 'lanche'),
-  diverso(8, 'Doces', 0.0, 'Bolo de Chocolate, Tortas, Pudim e Trufas. (Preço não informado no cardápio original — definir no cadastro)', 'Sobremesas', 'sobremesa', 'lanche'),
-  diverso(9, 'Milk Shake', 0.0, 'Milk shake batido na hora. (Preço não informado no cardápio original — definir no cadastro)', 'Bebidas', 'bar', 'lanche'),
-  diverso(10, 'Frozen', 0.0, 'Frozen de frutas. (Preço não informado no cardápio original — definir no cadastro)', 'Bebidas', 'bar', 'lanche')
+  diverso(6, 'Salgados', 5.0, 'Salgados do balcão (coxinhas, risoles etc.) por unidade.', 'Lanches & Burgers', 'chapa', ['lanche']),
+  diverso(7, 'Sorvete', 0.0, 'Sorvete do balcão. (Preço não informado no cardápio original — definir no cadastro)', 'Sobremesas', 'sobremesa', ['lanche']),
+  diverso(8, 'Doces', 0.0, 'Bolo de Chocolate, Tortas, Pudim e Trufas. (Preço não informado no cardápio original — definir no cadastro)', 'Sobremesas', 'sobremesa', ['lanche']),
+  diverso(9, 'Milk Shake', 0.0, 'Milk shake batido na hora. (Preço não informado no cardápio original — definir no cadastro)', 'Bebidas', 'bar', ['restaurante', 'lanche']),
+  diverso(10, 'Frozen', 0.0, 'Frozen de frutas. (Preço não informado no cardápio original — definir no cadastro)', 'Bebidas', 'bar', ['restaurante', 'lanche'])
 ];

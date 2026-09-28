@@ -23,6 +23,7 @@ import {
 } from '../types';
 import { INITIAL_MENU_ITEMS } from './initialMenu';
 import { MESTRE_GUARANA_MENU } from './mestreGuarana';
+import { getMenuCategoryByLegacyName } from './menuCategories';
 
 export const INITIAL_MANUAL_PAYMENTS: ManualPaymentOption[] = [
   { id: 'dinheiro', nome: 'Dinheiro em Espécie', ativo: true, permiteTroco: true },
@@ -269,7 +270,20 @@ const groupedJuices: MenuItem[] = Array.from(new Map(juiceItems.map(item => [ite
 const existingLegacyIds = new Set([...nonJuiceItems, ...groupedJuices].map(i => i.id));
 const mestreGuaranaItens = MESTRE_GUARANA_MENU.filter(item => !existingLegacyIds.has(item.id));
 
-export const INITIAL_MENU: MenuItem[] = [...nonJuiceItems, ...groupedJuices, ...mestreGuaranaItens];
+/**
+ * Só o SEED declara catalogos explícitos por categoria (dados que nós
+ * escrevemos). Dados reais do usuário NUNCA são inferidos por categoria —
+ * a normalização runtime converte apenas `catalogo`/`catalogos` do que foi
+ * salvo explicitamente.
+ */
+const withSeedCatalogos = (item: MenuItem): MenuItem => {
+  if (item.catalogos?.length) return item;
+  const cat = getMenuCategoryByLegacyName(item.categoria);
+  const catalogos = cat?.catalogos?.length ? [...cat.catalogos] : [item.catalogo || 'restaurante'];
+  return { ...item, catalogos, catalogo: catalogos[0] };
+};
+
+export const INITIAL_MENU: MenuItem[] = [...nonJuiceItems, ...groupedJuices, ...mestreGuaranaItens].map(withSeedCatalogos);
 
 export const INITIAL_TABLES: Table[] = [
   { id: 'tbl-1', numero: 1, capacidade: 4, status: 'ocupada', garcomResponsavel: 'Lucas Silva', clienteNome: 'Dr. Roberto', abertaEm: '2026-09-10T11:45:00', valorAtual: 148.00, pessoasSentadas: 3, posX: 30, posY: 40, formato: 'quadrada', setor: 'Salão Principal' },

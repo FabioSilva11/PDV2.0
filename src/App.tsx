@@ -26,7 +26,7 @@ import { OperationHealthModal } from './components/layout/OperationHealthModal';
 import { AlertsDrawer } from './components/layout/AlertsDrawer';
 
 const MainAppContent: React.FC = () => {
-  const { activeModule, setActiveModule, currentUser, authChecked, needsSetup, settings } = useRestaurant();
+  const { activeModule, setActiveModule, currentUser, authChecked, needsSetup, databaseStatus, settings } = useRestaurant();
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(false);
 
   // Atalhos: F1 PDV, F2 Pedidos, F3 Mesas, F4 Caixa
@@ -53,8 +53,17 @@ const MainAppContent: React.FC = () => {
 
   // Gate de autenticação: primeiro o assistente de configuração inicial
   // (quando não há settings), depois o login. Nenhum usuário fixo no código.
-  if (!authChecked) {
-    return <div className="min-h-screen bg-slate-50 flex items-center justify-center text-slate-400 text-sm">Carregando…</div>;
+  //
+  // O bootstrap do banco local vem PRIMEIRO: sem essa espera, uma porta nova
+  // com localStorage vazio mostrava o SetupWizard mesmo com o SQLite já
+  // configurado.
+  if (!authChecked || databaseStatus === 'loading') {
+    return (
+      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center gap-2 text-slate-400">
+        <div className="text-sm">Carregando banco de dados local…</div>
+        <div className="text-[11px] text-slate-300">Trocar de porta não cria uma nova instalação</div>
+      </div>
+    );
   }
   if (needsSetup) {
     return <SetupWizard />;

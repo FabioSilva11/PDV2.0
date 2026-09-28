@@ -7,7 +7,7 @@ export const DEFAULT_MENU_CATEGORIES: MenuCategory[] = [
   { id: 'cat-porcoes', nome: 'Porções', catalogos: ['restaurante', 'lanche'], ordem: 3, ativo: true },
   { id: 'cat-bebidas', nome: 'Bebidas', catalogos: ['restaurante', 'lanche'], ordem: 4, ativo: true },
   { id: 'cat-sucos', nome: 'Sucos de Frutas', catalogos: ['restaurante', 'lanche'], ordem: 5, ativo: true },
-  { id: 'cat-sobremesas', nome: 'Sobremesas', catalogos: ['restaurante'], ordem: 6, ativo: true },
+  { id: 'cat-sobremesas', nome: 'Sobremesas', catalogos: ['restaurante', 'lanche'], ordem: 6, ativo: true },
   { id: 'cat-combos', nome: 'Combos', catalogos: ['restaurante', 'lanche'], ordem: 7, ativo: true },
   { id: 'cat-hamburgueres', nome: 'Hambúrgueres', catalogos: ['lanche'], ordem: 1, ativo: true },
   { id: 'cat-lanches', nome: 'Lanches & Burgers', catalogos: ['lanche'], ordem: 2, ativo: true },
@@ -37,17 +37,26 @@ export function isCategoryAllowedForCatalog(category: MenuCategory | undefined, 
 }
 
 /**
- * O item aparece no catálogo selecionado? Regra do cardápio Mestre do Guaraná:
- *  - categoria COMPARTILHADA (ex.: 'Sucos de Frutas', 'Porções Extras', 'Bebidas')
- *    → o item aparece nos DOIS catálogos, mesmo que o cadastro antigo esteja
- *    preso a um único catálogo (corrige o dual-catálogo dos sucos);
- *  - categoria exclusiva → vale o catálogo salvo no próprio item.
+ * Lista canônica de cardápios do produto: nunca vazia, sem duplicatas, apenas
+ * valores válidos. A fonte de verdade é `item.catalogos`; `item.catalogo`
+ * (único) é apenas o valor legado — sem inferência por categoria.
+ */
+export function normalizeCatalogos(item: { catalogos?: MenuCatalog[]; catalogo?: MenuCatalog } | null | undefined): MenuCatalog[] {
+  const anyValid = (c?: unknown): c is MenuCatalog => c === 'restaurante' || c === 'lanche';
+  const fromArray = (item?.catalogos ?? []).filter(anyValid);
+  const fromLegacy = item?.catalogo && anyValid(item.catalogo) ? [item.catalogo] : [];
+  const unique = Array.from(new Set(fromArray.length ? fromArray : fromLegacy));
+  return unique.length ? unique : ['restaurante'];
+}
+
+/**
+ * O item aparece no catálogo selecionado? Apenas a lista explícita
+ * `item.catalogos` decide — a categoria do produto nunca mais manda no
+ * roteamento entre Restaurante e Lanche.
  */
 export function itemMatchesCatalog(item: MenuItem | undefined | null, catalogo: MenuCatalog): boolean {
   if (!item) return false;
-  const categoria = getMenuCategoryByLegacyName(item.categoria);
-  if (categoria && categoria.catalogos.length > 1) return true;
-  return (item.catalogo || 'restaurante') === catalogo;
+  return normalizeCatalogos(item).includes(catalogo);
 }
 
 export function getCategoriesForCatalog(catalogo: MenuCatalog): MenuCategory[] {
@@ -58,14 +67,13 @@ export function normalizeMenuItem(item: any): MenuItem {
   const legacyName = item?.categoria;
   const existingCat = item?.categoriaId ? getCategoryById(item.categoriaId) : undefined;
   const cat = existingCat || (legacyName ? getMenuCategoryByLegacyName(legacyName) : undefined);
+  const catalogos = normalizeCatalogos(item);
 
   if (!cat) {
     const name = legacyName || 'Produto';
     const id = item?.categoriaId || `custom-${item?.id || normalizeSearch(name).slice(0, 24)}`;
-    const catalogo: MenuCatalog = item?.catalogo || 'restaurante';
-    return { ...item, catalogo, categoriaId: id, categoria: name };
+    return { ...item, catalogos, catalogo: catalogos[0], categoriaId: id, categoria: name };
   }
 
-  const catalogo: MenuCatalog = item?.catalogo || cat.catalogos[0] || 'restaurante';
-  return { ...item, catalogo, categoriaId: cat.id, categoria: cat.nome };
+  return { ...item, catalogos, catalogo: catalogos[0], categoriaId: cat.id, categoria: cat.nome };
 }

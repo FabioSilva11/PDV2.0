@@ -1,6 +1,6 @@
 import { spawn } from 'child_process';
 
-console.log('Iniciando Servidor MariaDB e Aplicação Frontend PDV Murupi...');
+console.log('Iniciando PDV Murupi (banco local SQLite + frontend)...');
 
 const isWindows = process.platform === 'win32';
 const npmCmd = isWindows ? 'npm.cmd' : 'npm';

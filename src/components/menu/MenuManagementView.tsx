@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useRestaurant } from '../../context/RestaurantContext';
-import { MenuItem, CategoryType } from '../../types';
+import { MenuItem, CategoryType, MenuCatalog } from '../../types';
 import { formatCurrency } from '../../utils/formatters';
 import { itemMatchesCatalog } from '../../data/menuCategories';
 import { 
@@ -39,8 +39,8 @@ export const MenuManagementView: React.FC = () => {
   // New/Edit item form state
   const [editingProduct, setEditingProduct] = useState<MenuItem | null>(null);
   // Produto novo começa SEM guarnições: o usuário decide o que cadastrar.
-  const emptyProductForm = (catalogo: 'restaurante' | 'lanche' = 'restaurante') => ({
-    catalogo,
+  const emptyProductForm = () => ({
+    catalogos: ['restaurante'] as MenuCatalog[],
     nome: '',
     categoria: 'Pratos principais' as CategoryType,
     preco: '',
@@ -54,8 +54,15 @@ export const MenuManagementView: React.FC = () => {
       { nome: 'Opção 3', quantidade: '', unidade: 'un', preco: '', disponivel: true }
     ]
   });
-  const [newItem, setNewItem] = useState(emptyProductForm('restaurante'));
+  const [newItem, setNewItem] = useState(emptyProductForm());
   const [formError, setFormError] = useState('');
+
+  const toggleCatalog = (c: MenuCatalog) => setNewItem(prev => ({
+    ...prev,
+    catalogos: prev.catalogos.includes(c)
+      ? prev.catalogos.filter(x => x !== c)
+      : [...prev.catalogos, c]
+  }));
 
   const filteredItems = menu.filter(item => {
     const matchCatalog = itemMatchesCatalog(item, selectedCatalog);
@@ -81,7 +88,7 @@ export const MenuManagementView: React.FC = () => {
   const handleStartFullEdit = (item: MenuItem) => {
     setEditingProduct(item);
     setNewItem({
-      catalogo: item.catalogo || 'restaurante',
+      catalogos: item.catalogos && item.catalogos.length ? [...item.catalogos] : [item.catalogo || 'restaurante'],
       nome: item.nome,
       categoria: item.categoria,
       preco: item.preco.toString(),
@@ -114,6 +121,10 @@ export const MenuManagementView: React.FC = () => {
     const hasVariations = newItem.usarVariacoes || isJuice;
     const priceVal = parseFloat(newItem.preco);
     const validVariations = newItem.volumes.filter(v => v.nome.trim() && v.disponivel && parseFloat(v.preco) >= 0 && v.preco !== '');
+    if (!newItem.catalogos.length) {
+      setFormError('Selecione pelo menos um cardápio para este produto.');
+      return;
+    }
     if (!newItem.nome.trim()) {
       setFormError('Informe o nome do produto.');
       return;
@@ -131,7 +142,7 @@ export const MenuManagementView: React.FC = () => {
 
     const item: MenuItem = {
       id: editingProduct ? editingProduct.id : 'custom-' + Math.random().toString(36).substring(2, 9),
-      catalogo: newItem.catalogo,
+      catalogos: [...newItem.catalogos],
       nome: newItem.nome.trim(),
       categoria: newItem.categoria,
       preco: hasVariations ? parseFloat(validVariations[0].preco) : priceVal,
@@ -145,7 +156,7 @@ export const MenuManagementView: React.FC = () => {
     saveMenuItem(item);
     setIsNewItemModalOpen(false);
     setEditingProduct(null);
-    setNewItem(emptyProductForm(selectedCatalog));
+    setNewItem(emptyProductForm());
     setFormError('');
   };
 
@@ -193,7 +204,7 @@ export const MenuManagementView: React.FC = () => {
           <button
             type="button"
             id="menu-add-product-btn"
-            onClick={() => { setFormError(''); setIsNewItemModalOpen(true); }}
+            onClick={() => { setEditingProduct(null); setNewItem(emptyProductForm()); setFormError(''); setIsNewItemModalOpen(true); }}
             className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl shadow-xs transition-all flex items-center gap-1.5 ml-auto sm:ml-0"
           >
             <Plus className="w-4 h-4" />
@@ -439,37 +450,61 @@ export const MenuManagementView: React.FC = () => {
             </div>
 
             <form onSubmit={handleCreateNewItem} className="p-6 space-y-4">
-              {/* Escolha Explícita de Catálogo */}
+              {/* Escolha de Cardápios (multi-seleção; mínimo 1) */}
               <div>
                 <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-                  Cardápio de Destino *
+                  Cardápios de Exibição *
                 </label>
                 <div className="grid grid-cols-2 gap-2">
                   <button
                     type="button"
-                    id="catalog-select-restaurante"
-                    onClick={() => setNewItem({ ...newItem, catalogo: 'restaurante' })}
-                    className={`py-2 px-3 rounded-xl border font-bold text-xs flex items-center justify-center gap-1.5 transition-all ${
-                      newItem.catalogo === 'restaurante'
+                    id="catalog-toggle-restaurante"
+                    onClick={() => toggleCatalog('restaurante')}
+                    className={`py-2 px-3 rounded-xl border font-bold text-xs flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                      newItem.catalogos.includes('restaurante')
                         ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
                         : 'bg-slate-50 text-slate-700 border-slate-300 hover:bg-slate-100'
                     }`}
                   >
+                    <span className="w-4 h-4 rounded border flex items-center justify-center text-[10px] shrink-0 ${
+                      newItem.catalogos.includes('restaurante') ? 'bg-white/25 border-white/40' : 'bg-white border-slate-400'
+                    }">
+                      {newItem.catalogos.includes('restaurante') ? (
+                        <Check className="w-3 h-3" />
+                      ) : null}
+                    </span>
                     <span>🍽️ Cardápio Restaurante</span>
                   </button>
                   <button
                     type="button"
-                    id="catalog-select-lanche"
-                    onClick={() => setNewItem({ ...newItem, catalogo: 'lanche' })}
-                    className={`py-2 px-3 rounded-xl border font-bold text-xs flex items-center justify-center gap-1.5 transition-all ${
-                      newItem.catalogo === 'lanche'
+                    id="catalog-toggle-lanche"
+                    onClick={() => toggleCatalog('lanche')}
+                    className={`py-2 px-3 rounded-xl border font-bold text-xs flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                      newItem.catalogos.includes('lanche')
                         ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
                         : 'bg-slate-50 text-slate-700 border-slate-300 hover:bg-slate-100'
                     }`}
                   >
+                    <span className="w-4 h-4 rounded border flex items-center justify-center text-[10px] shrink-0 ${
+                      newItem.catalogos.includes('lanche') ? 'bg-white/25 border-white/40' : 'bg-white border-slate-400'
+                    }">
+                      {newItem.catalogos.includes('lanche') ? (
+                        <Check className="w-3 h-3" />
+                      ) : null}
+                    </span>
                     <span>🍔 Cardápio Lanche</span>
                   </button>
                 </div>
+                <p className="text-[11px] text-slate-500 mt-1.5">
+                  {newItem.catalogos.length > 1
+                    ? 'Este produto aparecerá nos dois cardápios com o mesmo cadastro.'
+                    : 'Marque um ou mais cardápios — o produto precisa estar em pelo menos um.'}
+                </p>
+                {newItem.catalogos.length === 0 && (
+                  <p className="text-[11px] text-rose-600 font-semibold mt-1">
+                    Selecione pelo menos um cardápio.
+                  </p>
+                )}
               </div>
 
               <div>

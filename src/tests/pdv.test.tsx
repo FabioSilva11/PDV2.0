@@ -919,6 +919,7 @@ describe('melhorias operacionais v2 — edicao, caixa zerado, destaque e produto
       disponivel: true,
       catalogo: 'restaurante'
     }));
+    expect(result.current.menu.find(m => m.id === 'item-rest')?.catalogos).toEqual(['restaurante']);
     expect(result.current.menu.find(m => m.id === 'item-rest')?.catalogo).toBe('restaurante');
   });
 
@@ -933,6 +934,7 @@ describe('melhorias operacionais v2 — edicao, caixa zerado, destaque e produto
       disponivel: true,
       catalogo: 'lanche'
     }));
+    expect(result.current.menu.find(m => m.id === 'item-lanche')?.catalogos).toEqual(['lanche']);
     expect(result.current.menu.find(m => m.id === 'item-lanche')?.catalogo).toBe('lanche');
   });
 
@@ -984,6 +986,7 @@ describe('melhorias operacionais v2 — edicao, caixa zerado, destaque e produto
       preco: 32,
       disponivel: true
     }));
+    expect(result.current.menu.find(m => m.id === 'item-sem-cat')?.catalogos).toEqual(['restaurante']);
     expect(result.current.menu.find(m => m.id === 'item-sem-cat')?.catalogo).toBe('restaurante');
   });
 
@@ -1107,9 +1110,9 @@ describe('melhorias operacionais v3 — UI edicao completa e sincronizacao deter
     expect(queryByText('Bife Acebolado')).toBeNull();
   });
 
-  it('2. UI edicao: categorias sao filtradas conforme o catalogo selecionado', () => {
-    const p1: MenuItem = { id: 'm-suco', nome: 'Suco de Laranja', preco: 8, categoria: 'Sucos de Frutas', catalogo: 'restaurante', disponivel: true };
-    const p2: MenuItem = { id: 'm-sobremesa', nome: 'Pudim de Leite', preco: 12, categoria: 'Sobremesas', catalogo: 'lanche', disponivel: true };
+  it('2. UI edicao: produto dual-catalogo aparece nos dois cardápios; item exclusivo só no seu', () => {
+    const p1: MenuItem = { id: 'm-suco', nome: 'Suco de Laranja Dual', preco: 8, categoria: 'Sucos de Frutas', catalogos: ['restaurante', 'lanche'], disponivel: true };
+    const p2: MenuItem = { id: 'm-sobremesa', nome: 'Pudim de Leite', preco: 12, categoria: 'Sobremesas', catalogos: ['lanche'], disponivel: true };
 
     const Harness: React.FC = () => {
       const api = useRestaurant();
@@ -1122,7 +1125,7 @@ describe('melhorias operacionais v3 — UI edicao completa e sincronizacao deter
       return <OrderDetailsModal />;
     };
 
-    const { getByText, queryByText, container } = render(
+    const { getByText, queryByText } = render(
       <RestaurantProvider>
         <Harness />
       </RestaurantProvider>
@@ -1130,16 +1133,16 @@ describe('melhorias operacionais v3 — UI edicao completa e sincronizacao deter
 
     fireEvent.click(getByText('Editar Pedido'));
 
-    // Catálogo Restaurante deve ter pílula de Sucos de Frutas
-    const sucoPill = container.querySelector('#edit-cat-pill-sucos-de-frutas');
-    expect(sucoPill).not.toBeNull();
-    expect(container.querySelector('#edit-cat-pill-sobremesas')).toBeNull();
+    // No catálogo Restaurante (default): produto dual aparece; o de Sobremesas
+    // (exclusivo LANCHE) não.
+    expect(getByText('Suco de Laranja Dual')).toBeDefined();
+    expect(queryByText('Pudim de Leite')).toBeNull();
 
-    // Alternar para Lanche. 'Sucos de Frutas' é dual-catálogo: a pílula
-    // continua disponível nos dois catálogos (regra do cardápio Mestre do Guaraná).
+    // Ao alternar para Lanche, ambos aparecem — a associação é por catalogos
+    // explícitos do produto, não pela categoria.
     fireEvent.click(getByText('Lanche'));
-    expect(container.querySelector('#edit-cat-pill-sobremesas')).not.toBeNull();
-    expect(container.querySelector('#edit-cat-pill-sucos-de-frutas')).not.toBeNull();
+    expect(getByText('Pudim de Leite')).toBeDefined();
+    expect(getByText('Suco de Laranja Dual')).toBeDefined();
   });
 
   it('3. UI edicao: busca por texto filtra dentro do catalogo ativo', () => {
@@ -1351,6 +1354,84 @@ describe('melhorias operacionais v3 — UI edicao completa e sincronizacao deter
       expect(err.details.remote).toBe('completo');
       expect(err.details.base).toBe('padrao');
     }
+  });
+});
+
+describe('modelo catalogos (produto em um ou mais cardápios)', () => {
+  it('saveMenuItem com catalogos duais cria UM produto (não duplica)', () => {
+    const { result } = boot();
+    act(() => result.current.saveMenuItem({
+      id: 'dual-1',
+      nome: 'Porção de Fritas',
+      categoria: 'Porções Extras',
+      preco: 25,
+      disponivel: true,
+      catalogos: ['restaurante', 'lanche']
+    }));
+    const matches = result.current.menu.filter(m => m.id === 'dual-1');
+    expect(matches).toHaveLength(1);
+    const saved = matches[0];
+    expect(saved.catalogos).toEqual(['restaurante', 'lanche']);
+    expect(saved.catalogo).toBe('restaurante');
+  });
+
+  it('editar mantém o mesmo ID e atualiza a associação de cardápios', () => {
+    const { result } = boot();
+    const base: MenuItem = { id: 'dual-2', nome: 'Batata Frita', categoria: 'Porções Extras', preco: 25, disponivel: true, catalogos: ['restaurante', 'lanche'] };
+    act(() => result.current.saveMenuItem(base));
+    const before = result.current.menu.length;
+
+    act(() => result.current.saveMenuItem({ ...base, preco: 30, catalogos: ['lanche'] }));
+    expect(result.current.menu.length).toBe(before);
+    const saved = result.current.menu.find(m => m.id === 'dual-2')!;
+    expect(saved.catalogos).toEqual(['lanche']);
+    expect(saved.preco).toBe(30);
+  });
+
+  it('remover um cardápio da associação tira o produto daquele filtro', () => {
+    const { result } = boot();
+    act(() => result.current.saveMenuItem({
+      id: 'dual-3',
+      nome: 'Suco de Maracujá',
+      categoria: 'Sucos de Frutas',
+      preco: 8,
+      disponivel: true,
+      catalogos: ['restaurante', 'lanche']
+    }));
+    act(() => result.current.saveMenuItem({
+      id: 'dual-3',
+      nome: 'Suco de Maracujá',
+      categoria: 'Sucos de Frutas',
+      preco: 8,
+      disponivel: true,
+      catalogos: ['restaurante']
+    }));
+    const saved = result.current.menu.find(m => m.id === 'dual-3')!;
+    expect(saved.catalogos).toEqual(['restaurante']);
+  });
+
+  it('catalogos nunca ficam vazios nem duplicados após normalizar', () => {
+    const { result } = boot();
+    act(() => result.current.saveMenuItem({
+      id: 'blank-cat',
+      nome: 'Produto Sem Cardápio',
+      categoria: 'Pratos principais',
+      preco: 10,
+      disponivel: true
+    }));
+    const saved = result.current.menu.find(m => m.id === 'blank-cat')!;
+    expect(saved.catalogos?.length).toBeGreaterThan(0);
+    expect(saved.catalogos).toEqual(['restaurante']);
+
+    act(() => result.current.saveMenuItem({
+      id: 'dup-cat',
+      nome: 'Produto Duplicado',
+      categoria: 'Pratos principais',
+      preco: 10,
+      disponivel: true,
+      catalogos: ['restaurante', 'restaurante', 'lanche', 'lanche']
+    }));
+    expect(result.current.menu.find(m => m.id === 'dup-cat')?.catalogos).toEqual(['restaurante', 'lanche']);
   });
 });
 

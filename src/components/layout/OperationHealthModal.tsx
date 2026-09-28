@@ -32,10 +32,14 @@ export const OperationHealthModal: React.FC = () => {
       icon: Server
     },
     {
-      id: 'mariadb',
-      nome: 'MariaDB',
-      status: health.mariadb || 'unknown',
-      detalhe: health.mariadb === 'online' ? 'Conexão ativa com o banco' : 'Banco indisponível ou não verificado',
+      id: 'banco',
+      nome: 'Banco de Dados Local',
+      status: health.banco || 'unknown',
+      detalhe: health.banco === 'online'
+        ? 'SQLite operacional'
+        : health.banco === 'atencao'
+          ? 'Banco íntegro, mas com aviso'
+          : 'Banco indisponível',
       icon: DatabaseBackup
     },
     {
@@ -54,8 +58,8 @@ export const OperationHealthModal: React.FC = () => {
     },
     {
       id: 'sync',
-      nome: 'Última Sincronização Local',
-      status: (health.ultimaSincronizacao === 'Aguardando verificação' ? 'unknown' : 'online') as 'online' | 'offline' | 'atencao' | 'unknown',
+      nome: 'Última Persistência',
+      status: (health.ultimaSincronizacao === 'Aguardando verificação' || health.ultimaSincronizacao === 'Sem gravação ainda' ? 'unknown' : 'online') as 'online' | 'offline' | 'atencao' | 'unknown',
       detalhe: health.ultimaSincronizacao,
       icon: RefreshCw
     }
@@ -142,7 +146,7 @@ export const OperationHealthModal: React.FC = () => {
           <div className="p-3 bg-sky-50 rounded-xl border border-sky-200 text-sky-900 text-xs flex items-start gap-2.5">
             <ShieldCheck className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
             <p>
-              Operação em modo seguro. Caso a internet oscile, o sistema retém os pedidos no banco local e sincroniza assim que a conectividade for restabelecida.
+              Operação em modo seguro. O banco fica em arquivo local (SQLite): o PDV continua operando sem internet e, ao mudar de porta ou reiniciar o computador, carrega exatamente o mesmo estabelecimento.
             </p>
           </div>
         </div>

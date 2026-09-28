@@ -1,84 +1,110 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import path from 'path';
-import { 
-  initMariaDatabase, 
-  getDbStatus, 
-  loadStateFromMariaDB, 
-  saveStateToMariaDB 
-} from './db';
-import printerRouter from './printer';
+import path from 'node:path';
+import databaseRouter from './routes/database';
+import printersRouter from './routes/printers';
+import {
+  openDatabase,
+  closeDatabase,
+  getBootstrapStatus,
+  getDatabaseStatus,
+  getSchemaVersion,
+  checkIntegrity,
+  markBootstrapError,
+  projectRoot
+} from './db/sqlite';
+import { bootstrapMigrations } from './db/legacy-mariadb';
+import { getLastBackup, createBackup } from './db/backup';
 
-dotenv.config({ path: path.resolve(process.cwd(), '.env') });
+dotenv.config({ path: path.join(projectRoot, '.env') });
+
+// `node:sqlite` ainda emite ExperimentalWarning no Node 24. O aviso é esperado
+// e não interessa no console do PDV; os demais avisos continuam passando.
+process.removeAllListeners('warning');
+process.on('warning', (warning) => {
+  if (warning.name !== 'ExperimentalWarning') console.warn(warning);
+});
 
 const app = express();
 const port = Number(process.env.SERVER_PORT) || 3001;
 
-// Middlewares
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 
-// Printer API routes
-app.use('/api/printers', printerRouter);
+app.use('/api/database', databaseRouter);
+app.use('/api/printers', printersRouter);
 
-// Health Check do Servidor e do MariaDB
-app.get('/api/health', (req, res) => {
-  const status = getDbStatus();
+/**
+ * Saúde do backend. `database` substitui o antigo bloco `mariadb`: o PDV não
+ * depende mais de nenhum servidor de banco externo.
+ */
+app.get('/api/health', (_req, res) => {
+  const status = getDatabaseStatus();
+  const integrity = checkIntegrity();
+  const backup = getLastBackup();
+
   res.json({
-    status: 'ok',
+    status: getBootstrapStatus() === 'error' ? 'degraded' : 'ok',
     timestamp: new Date().toISOString(),
-    mariadb: status
+    engine: 'sqlite',
+    bootstrap: getBootstrapStatus(),
+    database: {
+      ...status,
+      integrity,
+      lastBackupAt: backup.at
+    }
   });
 });
 
-// Carregar dados completos do MariaDB
-app.get('/api/database', async (req, res) => {
+/**
+ * Bootstrap real: o backend só fica pronto depois que o arquivo existe, o
+ * schema está aplicado e a migração legada (quando necessária) terminou.
+ */
+async function start(): Promise<void> {
+  console.log('[Servidor Local] Iniciando backend do PDV...');
+
   try {
-    const data = await loadStateFromMariaDB();
-    if (data) {
-      res.json({ success: true, data });
+    openDatabase();
+
+    const migration = await bootstrapMigrations();
+    if (migration.migrated) {
+      console.log('[Migration] Migração do banco legado concluída.');
     } else {
-      res.json({ success: true, data: null, message: 'Nenhum dado salvo no MariaDB ainda ou banco offline' });
+      console.log(`[Migration] ${migration.reason}`);
     }
-  } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
+
+    // Backup de segurança na inicialização (§30): o PDV mostra "Último backup".
+    const backup = createBackup('startup');
+    if (!backup.success) console.warn(`[SQLite] Aviso: backup de início não gerado (${backup.error}).`);
+
+    app.listen(port, () => {
+      console.log(`[Servidor Local] API em http://localhost:${port}`);
+      console.log(`[Servidor Local] Banco: ${getDatabaseStatus().file} (schema v${getSchemaVersion()})`);
+      console.log(`[Servidor Local] Rotas:`);
+      console.log(`  - GET  /api/health`);
+      console.log(`  - GET  /api/database`);
+      console.log(`  - POST /api/database`);
+      console.log(`  - GET  /api/database/status`);
+      console.log(`  - POST /api/database/backup`);
+      console.log(`  - /api/printers/*`);
+    });
+  } catch (error) {
+    markBootstrapError(error);
+    // O backend sobe mesmo assim para reportar o erro com clareza em vez de
+    // simplesmente não existir — mas nunca apaga o banco original.
+    app.listen(port, () => {
+      console.error('[Servidor Local] API em modo de erro:', getDatabaseStatus().lastError);
+    });
   }
-});
+}
 
-// Salvar / Sincronizar estado completo no MariaDB
-app.post('/api/database', async (req, res) => {
-  try {
-    const snapshot = req.body;
-    if (!snapshot || typeof snapshot !== 'object') {
-      return res.status(400).json({ success: false, error: 'Snapshot inválido.' });
-    }
-
-    const saved = await saveStateToMariaDB(snapshot);
-    if (saved) {
-      res.json({ success: true, message: 'Dados salvos com sucesso no MariaDB.' });
-    } else {
-      res.status(503).json({ success: false, message: 'Não foi possível gravar no MariaDB. Verifique a conexão com o banco.' });
-    }
-  } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// Inicialização
-async function start() {
-  console.log('[Servidor Local] Iniciando serviço backend PDV...');
-  await initMariaDatabase();
-
-  app.listen(port, () => {
-    console.log(`[Servidor Local] API rodando em http://localhost:${port}`);
-    console.log(`[Servidor Local] Rotas disponíveis:`);
-    console.log(`  - GET  http://localhost:${port}/api/health`);
-    console.log(`  - GET  http://localhost:${port}/api/database`);
-    console.log(`  - POST http://localhost:${port}/api/database`);
+for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+  process.on(signal, () => {
+    console.log('\n[Servidor Local] Encerrando...');
+    closeDatabase();
+    process.exit(0);
   });
 }
 
-start().catch(err => {
-  console.error('[Servidor Local] Erro crítico ao iniciar:', err);
-});
+void start();

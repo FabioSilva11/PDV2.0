@@ -78,12 +78,12 @@ export const Topbar: React.FC = () => {
           />
         </div>
 
-        {/* MariaDB Localhost Indicator */}
-        <div className="hidden lg:flex items-center gap-1.5 px-2 py-0.8 rounded-md bg-sky-50/80 border border-sky-200 text-[11px] font-medium text-sky-800" title="Banco de Dados Principal: MariaDB Localhost (Porta 3306)">
+        {/* Banco local (SQLite em arquivo) */}
+        <div className="hidden lg:flex items-center gap-1.5 px-2 py-0.8 rounded-md bg-sky-50/80 border border-sky-200 text-[11px] font-medium text-sky-800" title="Banco de dados principal: arquivo local SQLite (data/pdv.sqlite). Sem servidor externo.">
           <Database className="w-3 h-3 text-sky-600" />
-          <span>MariaDB:</span>
-          <span className="font-semibold">localhost:3306</span>
-          <span className={`w-1.5 h-1.5 rounded-full ${health.mariadb === 'offline' ? 'bg-yellow-500 animate-pulse' : 'bg-emerald-500'}`} />
+          <span>Banco:</span>
+          <span className="font-semibold">SQLite local</span>
+          <span className={`w-1.5 h-1.5 rounded-full ${health.banco === 'offline' ? 'bg-yellow-500 animate-pulse' : 'bg-emerald-500'}`} />
         </div>
       </div>
 

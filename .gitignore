@@ -10,3 +10,6 @@ visionare-firebase-adminsdk-*.json
 
 test-results.json
 public.zip
+
+# Banco de dados local (SQLite) e backups — nunca para o git
+data/

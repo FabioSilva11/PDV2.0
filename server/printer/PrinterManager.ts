@@ -81,8 +81,7 @@ export class PrinterManager {
       connection = new UsbPrinterConnection(
         usbInfo.vendorId,
         usbInfo.productId,
-        usbInfo.serialNumber,
-        usbInfo.deviceKey
+        usbInfo.serialNumber
       );
     } else if (target?.type === 'network') {
       connection = new NetworkPrinterConnection(target.config);

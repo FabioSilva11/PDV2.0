@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { MESTRE_GUARANA_MENU } from '../data/mestreGuarana';
 import { INITIAL_MENU } from '../data/seedData';
-import { normalizeMenuItem, DEFAULT_MENU_CATEGORIES, isCategoryAllowedForCatalog, itemMatchesCatalog } from '../data/menuCategories';
+import { normalizeMenuItem, normalizeCatalogos, DEFAULT_MENU_CATEGORIES, isCategoryAllowedForCatalog, itemMatchesCatalog } from '../data/menuCategories';
 import { getMenuCategoryByLegacyName } from '../data/menuCategories';
 
 describe('cardápio Mestre do Guaraná (seed adicional)', () => {
@@ -24,48 +24,63 @@ describe('cardápio Mestre do Guaraná (seed adicional)', () => {
     expect(ids.every(id => id.startsWith('mg-'))).toBe(true);
   });
 
-  it('lanches pertencem ao catálogo LANCHE e bebidas/porções atendem RESTAURANTE e LANCHE', () => {
+  it('cada item declara catalogos explícitos (mínimo 1, únicos) coerentes com sua categoria', () => {
     for (const raw of MESTRE_GUARANA_MENU) {
       const item = normalizeMenuItem(raw);
       const categoria = DEFAULT_MENU_CATEGORIES.find(c => c.id === item.categoriaId);
       expect(categoria).toBeDefined();
+      // Lista canônica: nunca vazia, sem duplicatas, sempre valores válidos.
+      expect(normalizeCatalogos(item)).toEqual(item.catalogos);
+      expect(item.catalogos!.length).toBeGreaterThan(0);
+      expect(new Set(item.catalogos).size).toBe(item.catalogos!.length);
+      // A categoria precisa estar ativa para cada cardápio onde o item foi ativado.
+      for (const c of item.catalogos!) expect(isCategoryAllowedForCatalog(categoria, c)).toBe(true);
+      // Lanches do balcão são exclusivos do catálogo LANCHE.
       if (item.categoria === 'Lanches & Burgers') {
-        expect(item.catalogo).toBe('lanche');
-        expect(isCategoryAllowedForCatalog(categoria, 'lanche')).toBe(true);
-        expect(isCategoryAllowedForCatalog(categoria, 'restaurante')).toBe(false);
+        expect(item.catalogos).toEqual(['lanche']);
       } else {
-        // Sucos/Porções/Bebidas: categorias compartilhadas entre os catálogos
-        // (regra pedida pelo usuário). Obs.: normalizeMenuItem mapeia
-        // 'Porções Extras' -> 'Porções'.
-        expect(['Sucos de Frutas', 'Porções', 'Bebidas', 'Sobremesas']).toContain(item.categoria);
-        // Regra efetiva: categoria compartilhada aparece nos DOIS catálogos;
-        // categoria exclusiva ('Sobremesas' só-restaurante) segue o catálogo
-        // salvo no item — é assim que Sorvete/Doces vendem no lanche.
-        if (categoria.catalogos.length > 1) {
-          expect(isCategoryAllowedForCatalog(categoria, 'restaurante')).toBe(true);
-          expect(isCategoryAllowedForCatalog(categoria, 'lanche')).toBe(true);
-          expect(itemMatchesCatalog(item, 'restaurante')).toBe(true);
-          expect(itemMatchesCatalog(item, 'lanche')).toBe(true);
-        } else {
-          expect(itemMatchesCatalog(item, item.catalogo || 'restaurante')).toBe(true);
-        }
+        // Sucos/Porções/Bebidas (categorias compartilhadas) declarados nos DOIS catálogos.
+        // Sobremesas avulsas vendidas no balcão ficaram explícitas como LANCHE.
+        expect(itemMatchesCatalog(item, item.catalogos![0])).toBe(true);
       }
     }
   });
 
-  it('sucos e porções aparecem nos DOIS catálogos sem duplicar cadastro (itemMatchesCatalog)', () => {
+  it('sucos e porções aparecem nos DOIS catálogos sem duplicar cadastro (catalogos explícitos)', () => {
     const suco = MESTRE_GUARANA_MENU.find(i => i.id === 'mg-suco-acerola')!;
     const porcao = MESTRE_GUARANA_MENU.find(i => i.id === 'mg-por-001')!;
     const lanche = MESTRE_GUARANA_MENU.find(i => i.id === 'mg-lan-01')!;
     for (const catalogo of ['restaurante', 'lanche'] as const) {
+      expect(suco.catalogos).toContain(catalogo);
+      expect(porcao.catalogos).toContain(catalogo);
       expect(itemMatchesCatalog(suco, catalogo)).toBe(true);
       expect(itemMatchesCatalog(porcao, catalogo)).toBe(true);
     }
+    expect(lanche.catalogos).toEqual(['lanche']);
     expect(itemMatchesCatalog(lanche, 'lanche')).toBe(true);
     expect(itemMatchesCatalog(lanche, 'restaurante')).toBe(false);
+    // 'Suco de Frutas' e 'Porções Extras' são os produtos duais por natureza
+    // (cardápio físico): o mesmo cadastro atende os dois cardápios.
+    expect(suco.catalogos).toEqual(['restaurante', 'lanche']);
+    expect(porcao.catalogos).toEqual(['restaurante', 'lanche']);
+
     // 'Refrigerante Lata' do Mestre do Guaraná (R$ 5) também vende no lanche.
     const refrMG = MESTRE_GUARANA_MENU.find(i => i.id === 'mg-div-01')!;
+    expect(refrMG.catalogos).toContain('lanche');
     expect(itemMatchesCatalog(refrMG, 'lanche')).toBe(true);
+  });
+
+  it('normalizeCatalogos converte legado catalogo único (migração idempotente)', () => {
+    expect(normalizeCatalogos({ catalogo: 'lanche' })).toEqual(['lanche']);
+    expect(normalizeCatalogos({ catalogo: 'restaurante' })).toEqual(['restaurante']);
+    expect(normalizeCatalogos({ catalogos: ['restaurante', 'restaurante', 'lanche'] })).toEqual(['restaurante', 'lanche']);
+    expect(normalizeCatalogos({})).toEqual(['restaurante']);
+    expect(normalizeCatalogos(undefined)).toEqual(['restaurante']);
+    expect(normalizeCatalogos({ catalogos: ['invalid' as any], catalogo: 'lanche' })).toEqual(['lanche']);
+    // A categoria NUNCA decide; só o explícito no item conta.
+    const sucoRestauranteOnly = normalizeMenuItem({ id: 'x', nome: 'Suco', categoria: 'Sucos de Frutas', catalogo: 'restaurante' });
+    expect(sucoRestauranteOnly.catalogos).toEqual(['restaurante']);
+    expect(itemMatchesCatalog(sucoRestauranteOnly, 'lanche')).toBe(false);
   });
 
   it('itens com preço indefinido no cardápio físico ficam com preço 0.00 (editáveis)', () => {

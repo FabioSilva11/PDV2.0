@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useRestaurant } from '../../context/RestaurantContext';
 import { PrinterDevice } from '../../types';
+import { apiUrl } from '../../lib/apiUrl';
 import { PrinterModal } from './PrinterModal';
 import { 
   Printer, 
@@ -15,8 +16,21 @@ import {
   Settings2,
   Trash2,
   Edit2,
-  Bluetooth
+  Bluetooth,
+  Scan,
+  Loader2,
+  X
 } from 'lucide-react';
+
+interface DiscoveredPrinterUi {
+  id: string;
+  name: string;
+  type: 'usb' | 'network' | 'bluetooth';
+  ip?: string;
+  porta?: number;
+  modelo?: string;
+  local?: string;
+}
 
 export const PrintersView: React.FC = () => {
   const { 
@@ -33,14 +47,65 @@ export const PrintersView: React.FC = () => {
   const [testPrintSuccessId, setTestPrintSuccessId] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingPrinter, setEditingPrinter] = useState<PrinterDevice | null>(null);
+  const [prefillPrinter, setPrefillPrinter] = useState<Partial<PrinterDevice> | null>(null);
+  const [discovering, setDiscovering] = useState(false);
+  const [discoveryError, setDiscoveryError] = useState('');
+  const [discoveryOpen, setDiscoveryOpen] = useState(false);
+  const [discovered, setDiscovered] = useState<DiscoveredPrinterUi[]>([]);
 
   const handleOpenNew = () => {
     setEditingPrinter(null);
+    setPrefillPrinter(null);
     setIsModalOpen(true);
   };
 
   const handleOpenEdit = (prn: PrinterDevice) => {
     setEditingPrinter(prn);
+    setPrefillPrinter(null);
+    setIsModalOpen(true);
+  };
+
+  const handleDiscover = async () => {
+    setDiscovering(true);
+    setDiscoveryError('');
+    try {
+      const response = await fetch(apiUrl('/api/printers/discover'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data?.error || 'Falha ao escanear a rede.');
+      setDiscovered((data?.printers || []).map((p: any) => ({
+        id: p.id,
+        name: p.name,
+        type: p.type,
+        ip: p.ip,
+        porta: p.porta,
+        modelo: p.modelo,
+        local: p.local,
+      })));
+      setDiscoveryOpen(true);
+    } catch (error: any) {
+      setDiscoveryError(error.message || 'Não foi possível escanear a rede.');
+      setDiscoveryOpen(true);
+    } finally {
+      setDiscovering(false);
+    }
+  };
+
+  const handleUseDiscovered = (p: DiscoveredPrinterUi) => {
+    setDiscoveryOpen(false);
+    setEditingPrinter(null);
+    setPrefillPrinter({
+      nome: p.name,
+      local: p.local && p.local !== 'usb' ? p.local : 'Rede',
+      tipo: p.type === 'usb' ? 'usb' : 'rede',
+      ip: p.ip,
+      porta: p.porta ?? 9100,
+      modelo: p.modelo || 'Generic ESC/POS 80mm',
+      finalidade: 'geral',
+      larguraPapel: '80mm',
+    });
     setIsModalOpen(true);
   };
 
@@ -72,14 +137,26 @@ export const PrintersView: React.FC = () => {
           </p>
         </div>
 
-        <button
-          id="new-printer-btn"
-          onClick={handleOpenNew}
-          className="flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs sm:text-sm font-bold shadow-xs transition-colors self-start sm:self-auto cursor-pointer"
-        >
-          <Plus className="w-4 h-4" />
-          Adicionar Impressora
-        </button>
+        <div className="flex items-center gap-2 flex-wrap">
+          <button
+            id="discover-printers-btn"
+            onClick={handleDiscover}
+            disabled={discovering}
+            className="flex items-center gap-2 px-4 py-2 rounded-xl border border-sky-300 bg-sky-50 hover:bg-sky-100 text-sky-800 text-xs sm:text-sm font-bold transition-colors disabled:opacity-60 cursor-pointer"
+            title="Escanear a rede local por impressoras ESC/POS"
+          >
+            {discovering ? <Loader2 className="w-4 h-4 animate-spin" /> : <Scan className="w-4 h-4" />}
+            {discovering ? 'Escaneando...' : 'Detectar Impressoras'}
+          </button>
+          <button
+            id="new-printer-btn"
+            onClick={handleOpenNew}
+            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs sm:text-sm font-bold shadow-xs transition-colors self-start sm:self-auto cursor-pointer"
+          >
+            <Plus className="w-4 h-4" />
+            Adicionar Impressora
+          </button>
+        </div>
       </div>
 
       {/* Tabs */}
@@ -273,10 +350,75 @@ export const PrintersView: React.FC = () => {
       {/* Printer Modal */}
       <PrinterModal
         isOpen={isModalOpen}
-        onClose={() => setIsModalOpen(false)}
+        onClose={() => { setIsModalOpen(false); setPrefillPrinter(null); }}
         onSave={(data) => savePrinter(data)}
         printerToEdit={editingPrinter}
+        prefill={prefillPrinter}
       />
+
+      {/* Discovery Modal */}
+      {discoveryOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl max-w-lg w-full max-h-[82vh] overflow-y-auto shadow-2xl border border-stone-200">
+            <div className="sticky top-0 z-10 px-6 py-4 border-b border-stone-200 flex items-center justify-between bg-stone-50">
+              <div className="flex items-center gap-2">
+                <Scan className="w-5 h-5 text-sky-600" />
+                <h3 className="font-bold text-stone-900">Impressoras Detectadas ({discovered.length})</h3>
+              </div>
+              <button onClick={() => setDiscoveryOpen(false)} className="p-1 rounded-lg hover:bg-stone-200 text-stone-500">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-3">
+              {discoveryError && (
+                <div className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800" role="alert">
+                  <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                  <span>{discoveryError}</span>
+                </div>
+              )}
+
+              {!discoveryError && discovered.length === 0 && (
+                <div className="p-6 text-center text-xs text-stone-500 border border-dashed border-stone-300 rounded-xl">
+                  Nenhuma impressora encontrada na rede local no momento.
+                  <br />
+                  <span className="text-stone-400">Confirme se o servidor está rodando e se os dispositivos estão ligados na mesma rede.</span>
+                </div>
+              )}
+
+              {discovered.map((p) => (
+                <div key={p.id} className="rounded-xl border border-stone-200 p-4 space-y-2 hover:border-sky-300 transition-colors">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-9 h-9 rounded-xl bg-sky-50 border border-sky-200 flex items-center justify-center text-sky-700">
+                        {p.type === 'usb' ? <Usb className="w-4 h-4" /> : <Wifi className="w-4 h-4" />}
+                      </div>
+                      <div>
+                        <h4 className="font-bold text-sm text-stone-900">{p.name}</h4>
+                        <p className="text-[11px] text-stone-500 font-mono">
+                          {p.type === 'usb' ? 'USB' : `${p.ip || 'IP não resolvido'}${p.porta ? `:${p.porta}` : ''}`}
+                          {p.modelo ? ` • ${p.modelo}` : ''}
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      id={`use-discovered-${p.id}`}
+                      onClick={() => handleUseDiscovered(p)}
+                      className="shrink-0 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-bold transition-colors cursor-pointer"
+                    >
+                      Usar este
+                    </button>
+                  </div>
+                </div>
+              ))}
+
+              <p className="text-[10px] text-stone-400">
+                Clique em “Usar este” para pré-cadastrar a impressora e ajustar finalidade, roteamento e bobina antes de salvar.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

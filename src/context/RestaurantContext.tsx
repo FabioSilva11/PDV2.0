@@ -56,14 +56,19 @@ import {
   DEFAULT_MENU_CATEGORIES,
   getMenuCategoryByLegacyName,
   getCategoryById,
-  isCategoryAllowedForCatalog as checkCategoryAllowed
+  isCategoryAllowedForCatalog as checkCategoryAllowed,
+  normalizeMenuItem as normalizeCatalogMenuItem,
+  normalizeCatalogos
 } from '../data/menuCategories';
 import {
-  loadMariaDatabase,
-  saveMariaDatabase,
-  checkMariaDbHealth,
-  mariaDatabaseEnabled
-} from '../lib/mariaDatabase';
+  loadDatabase,
+  saveDatabase,
+  checkDatabaseHealth,
+  fetchDatabaseStatus,
+  databaseEnabled
+} from '../lib/databaseApi';
+import { apiUrl } from '../lib/apiUrl';
+import type { DatabaseBootstrapStatus } from '../lib/databaseApi';
 import {
   DEFAULT_RESTAURANT_SETTINGS,
   normalizeRestaurantSettings
@@ -77,8 +82,8 @@ interface HealthStatus {
   servidor: 'online' | 'offline' | 'atencao' | 'unknown';
   sistema: 'online' | 'offline' | 'atencao' | 'unknown';
   impressoras: 'online' | 'offline' | 'atencao' | 'unknown';
-  mariadb?: 'online' | 'offline' | 'atencao' | 'unknown';
-  ultimoBackup: string; // "Não configurado" até existir mecanismo real
+  banco?: 'online' | 'offline' | 'atencao' | 'unknown';
+  ultimoBackup: string;
   ultimaSincronizacao: string;
 }
 
@@ -123,6 +128,8 @@ interface RestaurantContextType {
   logout: () => void;
   authChecked: boolean;
   needsSetup: boolean; // assistente de primeira execução
+  /** Estado do bootstrap do banco local. 'loading' trava a UI de setup. */
+  databaseStatus: DatabaseBootstrapStatus;
   completeSetup: (payload: { settings: Partial<RestaurantSettings>; admin: { nome: string; usuario: string; senha: string } }) => Promise<void>;
   // Configuração do estabelecimento
   settings: RestaurantSettings;
@@ -300,7 +307,7 @@ interface RestaurantDatabaseSnapshot {
   users?: UserAccount[]; customers?: Customer[]; reservations?: Reservation[]; auditLogs?: AuditLog[];
 }
 
-const normalizeMenuItem = (item: any): MenuItem => ({ ...item, catalogo: item.catalogo === 'lanche' || item.categoria === 'Hambúrgueres' || item.categoria === 'Lanches & Burgers' ? 'lanche' : 'restaurante' });
+const normalizeMenuItem = (item: any): MenuItem => normalizeCatalogMenuItem(item);
 
 const normalizeOrder = (order: any): Order => ({
   ...order,
@@ -790,21 +797,28 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   // Sound
   const [soundEnabled, setSoundEnabled] = useState(true);
 
-  // MariaDB é a fonte remota primária em localhost. O estado local é exibido imediatamente
-  // como cache (localStorage) e substituído pelo MariaDB assim que a resposta chega.
-  const [databaseSyncReady, setDatabaseSyncReady] = useState(false);
+  // O banco local (SQLite via API) é a fonte de verdade. O estado local aparece
+  // imediatamente como cache (localStorage) e é substituído pelo banco assim
+  // que a resposta chega. `databaseStatus` impede mostrar o SetupWizard antes de
+  // o bootstrap terminar — é isso que fazia a porta nova parecer instalação nova.
+  const [databaseStatus, setDatabaseStatus] = useState<DatabaseBootstrapStatus>('loading');
 
   useEffect(() => {
     let cancelled = false;
 
     const hydrateDatabase = async () => {
-      // MariaDB é a única persistência remota. Se estiver indisponível,
-      // mantemos o cache local (localStorage) sem sobrescrever o banco.
+      // Sem backend não há fonte de verdade: o cache local nunca decide que é
+      // uma instalação nova, então o estado fica em erro explícito.
+      if (!databaseEnabled) {
+        if (!cancelled) setDatabaseStatus('ready');
+        return;
+      }
+
       let remote: RestaurantDatabaseSnapshot | undefined;
       try {
-        remote = await loadMariaDatabase<RestaurantDatabaseSnapshot>();
+        remote = await loadDatabase<RestaurantDatabaseSnapshot>();
       } catch {
-        // MariaDB indisponível: segue com cache local
+        // Backend indisponível: segue com o cache local sem sobrescrever nada.
       }
 
       if (cancelled) return;
@@ -837,7 +851,13 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         setUsers(asArray(remote.users, users)); setCustomers(asArray(remote.customers, [])); setReservations(asArray(remote.reservations, [])); setAuditLogs(asArray(remote.auditLogs, []));
       }
 
-      setDatabaseSyncReady(true);
+      // O snapshot veio do banco local: ele prevalece sobre qualquer cache
+      // antigo do navegador (ex.: localStorage de outra porta).
+      // Distingue "banco vazio" (instalação nova de verdade) de "banco com
+      // dados". Sem resposta do backend, o cache local decide — nunca a porta.
+      const status = await fetchDatabaseStatus();
+      if (cancelled) return;
+      setDatabaseStatus(status === 'empty' ? 'empty' : 'ready');
     };
 
     void hydrateDatabase();
@@ -849,8 +869,8 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   store.state.operationalDemoResetApplied = true;
   useEffect(() => {
     store.onCommit = snapshot => {
-      // Persistência: MariaDB (autoridade) + localStorage (cache via LocalStore)
-      void saveMariaDatabase(snapshot);
+      // Persistência: banco local (autoridade) + localStorage (cache via LocalStore)
+      void saveDatabase(snapshot);
     };
     return () => { store.onCommit = undefined; };
   }, [store]);
@@ -920,17 +940,21 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   // Refresh Health
   const refreshHealth = useCallback(() => {
     const hasOfflinePrinters = store.state.printers.some((p: PrinterDevice) => p.status === 'offline');
-    void checkMariaDbHealth().then(({ dbStatus }) => {
+    void checkDatabaseHealth().then(({ serverOk, database }) => {
+      const formatMoment = (value?: string | null): string | null => {
+        if (!value) return null;
+        const date = new Date(value);
+        return Number.isNaN(date.getTime()) ? null : date.toLocaleString('pt-BR');
+      };
+
       setHealth({
-        // Internet só é "online" se verificado de fato (fetch ao backend).
-        internet: dbStatus ? 'online' : 'offline',
-        servidor: dbStatus ? 'online' : 'offline',
-        sistema: dbStatus ? 'online' : 'atencao',
+        internet: serverOk ? 'online' : 'offline',
+        servidor: serverOk ? 'online' : 'offline',
+        sistema: serverOk ? (database?.integrity?.ok === false ? 'atencao' : 'online') : 'atencao',
         impressoras: hasOfflinePrinters ? 'atencao' : 'online',
-        mariadb: dbStatus?.connected ? 'online' : 'offline',
-        // Não há rotina de backup implementada: reportar "Não configurado".
-        ultimoBackup: 'Não configurado',
-        ultimaSincronizacao: dbStatus ? 'Sincronizado agora' : 'MariaDB indisponível'
+        banco: serverOk ? (database?.integrity?.ok === false ? 'atencao' : 'online') : 'offline',
+        ultimoBackup: formatMoment(database?.lastBackupAt) ?? 'Não configurado',
+        ultimaSincronizacao: formatMoment(database?.lastWriteAt) ?? (serverOk ? 'Sem gravação ainda' : 'Banco local indisponível')
       });
     });
     if (soundEnabled) sounds.click();
@@ -1415,10 +1439,11 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     const rules = (printer.regras || []).filter(r => r.ativo).sort((a, b) => a.prioridade - b.prioridade);
     if (!rules.length) return printerMatchesLegacyPurpose(printer, tipo);
     const menuItem = store.state.menu.find((m: MenuItem) => m.id === item.menuItemId);
-    const catalogo = menuItem?.catalogo || 'restaurante';
+    const catalogos = normalizeCatalogos(menuItem);
     return rules.some(rule => {
       const docOk = !rule.documentos.length || rule.documentos.includes(tipo);
-      const catalogoOk = !rule.catalogos.length || rule.catalogos.includes(catalogo as MenuCatalog);
+      // Item em mais de um cardápio casa com a regra de qualquer um deles.
+      const catalogoOk = !rule.catalogos.length || catalogos.some(c => rule.catalogos.includes(c));
       const tipoOk = !rule.tiposPedido.length || rule.tiposPedido.includes(order.tipo as OrderType);
       // Roteamento por categoria usa IDs (categoriaIds); o campo textual legado
       // continua aceito para compatibilidade com dados antigos.
@@ -2840,7 +2865,7 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     // reflete o resultado real devolvido pela API (sucesso ou falha).
     void (async () => {
       try {
-        const response = await fetch('/api/printers/reprint', {
+        const response = await fetch(apiUrl('/api/printers/reprint'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ jobId, printerId: job.impressoraId, conteudo: job.conteudoTexto })
@@ -2885,7 +2910,7 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     // Sincroniza com o serviço local de impressão. A persistência do cadastro
     // no servidor é best-effort: o cadastro não pode ser perdido se a API
     // estiver fora do ar.
-    void fetch('/api/printers', {
+    void fetch(apiUrl('/api/printers'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(normalized)
@@ -2916,6 +2941,7 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     setPosHandoff,
         currentUser, hasPermission, users, saveUser, changeUserPassword,
         login, logout, authChecked, needsSetup, completeSetup,
+        databaseStatus,
         settings, saveSettings, menuCategories, saveMenuCategory, deleteMenuCategory, isCategoryAllowedForCatalog,
         customers, saveCustomer, deleteCustomer, reservations, saveReservation, updateReservationStatus, auditLogs,
 
