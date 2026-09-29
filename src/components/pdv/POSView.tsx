@@ -1,11 +1,10 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { money, normalizeSearch, uid } from '../../utils/business';
 import { useRestaurant } from '../../context/RestaurantContext';
-import { MenuItem, CategoryType, OrderType, CartItem, Order } from '../../types';
+import { MenuItem, CategoryType, OrderType, CartItem } from '../../types';
 import { formatCurrency } from '../../utils/formatters';
 import { FIRST_ACCOUNT_NUMBER, nextGlobalLaunchSequence, buildLaunchDisplayCode } from '../../lib/accountMigration';
 import { AccompanimentModal } from './AccompanimentModal';
-import { ReceiptModal } from './ReceiptModal';
 import { itemMatchesCatalog } from '../../data/menuCategories';
 import { 
   Search, 
@@ -50,7 +49,6 @@ export const POSView: React.FC = () => {
   const [deliveryFee, setDeliveryFee] = useState<number>(settings.delivery.defaultFee);
   const [discount, setDiscount] = useState<number>(0);
   const [notes, setNotes] = useState<string>('');
-  const [selectedReceiptOrder, setSelectedReceiptOrder] = useState<Order | null>(null);
   const [isItemModalOpen, setIsItemModalOpen] = useState<boolean>(false);
   const [selectedItemForModal, setSelectedItemForModal] = useState<MenuItem | null>(null);
   // Escolha explícita do atendimento: continuar uma conta aberta ou abrir uma
@@ -835,11 +833,6 @@ export const POSView: React.FC = () => {
         onConfirm={handleAccompanimentConfirm}
       />
 
-      <ReceiptModal
-        order={selectedReceiptOrder}
-        isOpen={!!selectedReceiptOrder}
-        onClose={() => setSelectedReceiptOrder(null)}
-      />
     </div>
   );
 };

@@ -12,7 +12,6 @@ import {
   CheckCircle2, 
   Copy, 
   Check, 
-  Printer, 
   AlertTriangle 
 } from 'lucide-react';
 
@@ -21,7 +20,6 @@ interface PaymentModalProps {
   total: number;
   onClose: () => void;
   onConfirm: (method: PaymentMethod, amountPaid?: number, change?: number) => Order;
-  onReceiptTrigger: (order: Order) => void;
 }
 
 export const PaymentModal: React.FC<PaymentModalProps> = ({
@@ -29,7 +27,6 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
   total,
   onClose,
   onConfirm,
-  onReceiptTrigger,
 }) => {
   const { settings } = useRestaurant();
   const [method, setMethod] = useState<PaymentMethod>('dinheiro');
@@ -79,7 +76,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
     }
   };
 
-  const handleFinalize = (printImmediately: boolean = false) => {
+  const handleFinalize = () => {
     if (isInsufficient || locked.current) return;
     locked.current = true;
     setError('');
@@ -104,9 +101,6 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
     setFinished(true);
     onClose();
 
-    if (printImmediately) {
-      onReceiptTrigger(order);
-    }
     } catch (err) {
       locked.current = false;
       setError(err instanceof Error ? err.message : 'Não foi possível registrar o pagamento.');
@@ -353,20 +347,9 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
           
           <button
             type="button"
-            id="payment-confirm-and-print-btn"
-            disabled={isInsufficient || finished}
-            onClick={() => handleFinalize(true)}
-            className="w-full sm:w-auto px-4 py-2.5 bg-stone-800 hover:bg-stone-900 disabled:opacity-50 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-2"
-          >
-            <Printer className="w-4 h-4" />
-            <span>Pagar & Imprimir Cupom</span>
-          </button>
-
-          <button
-            type="button"
             id="payment-confirm-only-btn"
             disabled={isInsufficient || finished}
-            onClick={() => handleFinalize(false)}
+            onClick={handleFinalize}
             className="w-full sm:w-auto px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold text-xs rounded-xl shadow-md transition-all flex items-center justify-center gap-2"
           >
             <CheckCircle2 className="w-4 h-4" />

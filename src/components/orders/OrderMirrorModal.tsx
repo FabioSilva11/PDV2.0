@@ -54,6 +54,13 @@ export const OrderMirrorModal: React.FC = () => {
         .filter(Boolean) as PrintJob[]
     : [];
 
+  const pedidoJobs: PrintJob[] = (order.impressoes || [])
+    .flatMap(batch => batch.pedidoJobIds || [batch.pedidoJobId])
+    .filter(Boolean)
+    .map(id => printQueue.find(j => j.id === id))
+    .filter(Boolean) as PrintJob[];
+  const hasKitchenRouteFailure = pedidoJobs.length === 0 || pedidoJobs.some(j => j.status === 'falha');
+
   const hasFailedJob = espelhoJobs.some(j => j.status === 'falha');
   const hasPendingJob = espelhoJobs.some(j => j.status === 'pendente');
   const allSuccess  = espelhoJobs.length > 0 && espelhoJobs.every(j => j.status === 'sucesso');
@@ -92,6 +99,12 @@ export const OrderMirrorModal: React.FC = () => {
         </div>
 
         {/* Banners de status */}
+        {hasKitchenRouteFailure && (
+          <div className="px-4 py-2.5 bg-amber-50 border-b border-amber-200 flex items-center gap-2 text-xs text-amber-900 font-semibold">
+            <AlertTriangle className="w-4 h-4 shrink-0 text-amber-600" />
+            Prévia disponível. Corrija o roteamento da cozinha antes de confirmar a produção.
+          </div>
+        )}
         {hasFailedJob && (
           <div className="px-4 py-2.5 bg-rose-50 border-b border-rose-200 flex items-center gap-2 text-xs text-rose-800 font-semibold">
             <AlertTriangle className="w-4 h-4 shrink-0 text-rose-600" />

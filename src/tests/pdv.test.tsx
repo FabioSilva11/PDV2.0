@@ -283,8 +283,8 @@ describe('interface pagamento', () => {
     fireEvent.change(view.container.querySelector('#pos-search-input')!, { target: { value: query } });
     expect(view.container.querySelector('#product-card-qa-product')).not.toBeNull();
   });
-  it('UI dinheiro insuficiente desabilita confirmação', () => { const view = render(<RestaurantProvider><PaymentModal isOpen total={100} onClose={vi.fn()} onConfirm={vi.fn()} onReceiptTrigger={vi.fn()} /></RestaurantProvider>); fireEvent.change(view.container.querySelector('#cash-amount-input')!, { target: { value: '50' } }); expect(view.container.querySelector('#payment-confirm-only-btn')).toBeDisabled(); });
-  it('CHAOS UI duplo clique 10 confirmações dispara uma operação', () => { const confirm = vi.fn(() => ({} as Order)); const view = render(<RestaurantProvider><PaymentModal isOpen total={100} onClose={vi.fn()} onConfirm={confirm} onReceiptTrigger={vi.fn()} /></RestaurantProvider>); const button = view.container.querySelector('#payment-confirm-only-btn')!; act(() => { for (let i = 0; i < 10; i++) fireEvent.click(button); }); expect(confirm).toHaveBeenCalledTimes(1); });
+  it('UI dinheiro insuficiente desabilita confirmação', () => { const view = render(<RestaurantProvider><PaymentModal isOpen total={100} onClose={vi.fn()} onConfirm={vi.fn()} /></RestaurantProvider>); fireEvent.change(view.container.querySelector('#cash-amount-input')!, { target: { value: '50' } }); expect(view.container.querySelector('#payment-confirm-only-btn')).toBeDisabled(); });
+  it('CHAOS UI duplo clique 10 confirmações dispara uma operação', () => { const confirm = vi.fn(() => ({} as Order)); const view = render(<RestaurantProvider><PaymentModal isOpen total={100} onClose={vi.fn()} onConfirm={confirm} /></RestaurantProvider>); const button = view.container.querySelector('#payment-confirm-only-btn')!; act(() => { for (let i = 0; i < 10; i++) fireEvent.click(button); }); expect(confirm).toHaveBeenCalledTimes(1); });
 });
 describe('fluxo oficial pedido + espelho', () => {
   it('IMP pedido confirmado gera exatamente uma via PEDIDO e fica aguardando espelho', () => {
@@ -356,6 +356,39 @@ describe('fluxo oficial pedido + espelho', () => {
       expect(job.conteudoTexto).toContain('2x Hambúrguer QA');
       expect(job.conteudoTexto).toContain('OBS: Sem cebola');
     }
+  });
+
+  it('IMP via da cozinha não contém preços', () => {
+    const { result } = boot();
+    const o = sale(result, {
+      itens: [item({
+        nome: 'Hambúrguer QA',
+        adicionais: [{ grupoId: 'g', addonId: 'queijo', nome: 'Queijo', preco: 3 }],
+      })],
+    });
+    const jobs = result.current.printQueue.filter(j => j.pedidoId === o.id);
+    const cozinha = jobs.find(j => j.tipo === 'pedido')!;
+    expect(cozinha.conteudoTexto).toContain('1x Hambúrguer QA');
+    expect(cozinha.conteudoTexto).toContain('+ Queijo');
+    expect(cozinha.conteudoTexto).not.toMatch(/R\$/);
+  });
+
+  it('IMP edição envia somente o acréscimo e exclusão não cria nova via', () => {
+    const { result } = boot();
+    const original = item({ cartItemId: 'original', nome: 'Item original' });
+    const adicional = item({ cartItemId: 'adicional', nome: 'Item adicional' });
+    const o = sale(result, { itens: [original] });
+    const before = result.current.printQueue.filter(j => j.pedidoId === o.id).length;
+
+    act(() => result.current.editOrder(o.id, { itens: [original, adicional] }));
+    const afterEdit = result.current.printQueue.filter(j => j.pedidoId === o.id);
+    const loteAdicional = afterEdit[afterEdit.length - 1];
+    expect(afterEdit).toHaveLength(before + 1);
+    expect(loteAdicional.conteudoTexto).toContain('1x Item adicional');
+    expect(loteAdicional.conteudoTexto).not.toContain('Item original');
+
+    act(() => result.current.cancelOrderItem(o.id, 'adicional', 'Correção de lançamento'));
+    expect(result.current.printQueue.filter(j => j.pedidoId === o.id)).toHaveLength(before + 1);
   });
 
   it('UI confirmação não possui botão Enviar Cozinha e usa Confirmar Pedido', () => {

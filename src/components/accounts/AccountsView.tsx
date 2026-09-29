@@ -3,7 +3,6 @@ import { useRestaurant } from '../../context/RestaurantContext';
 import { Account, AccountStatus, PaymentMethod } from '../../types';
 import { formatCurrency, formatDateTime } from '../../utils/formatters';
 import { PaymentModal } from '../pdv/PaymentModal';
-import { ReceiptModal } from '../pdv/ReceiptModal';
 import { FileText, Search, X, MoveRight, Check, Lock, Layers, Users, PlusCircle, CircleAlert } from 'lucide-react';
 
 const STATUS_STYLE: Record<AccountStatus, string> = {
@@ -35,7 +34,7 @@ const accountTableLabel = (account: Account): string => {
 export const AccountsView: React.FC = () => {
   const {
     accounts, tables, getAccount, getAccountOrders, searchAccounts, payAccount, closeAccount,
-    transferAccount, mergeAccounts, setActiveModule, selectedReceiptOrder, setSelectedReceiptOrder,
+    transferAccount, mergeAccounts, setActiveModule,
     canStartPayment,
   } = useRestaurant();
 
@@ -95,8 +94,6 @@ export const AccountsView: React.FC = () => {
     setIsPaymentOpen(false);
     setPaymentTargetAmount(undefined);
     const refreshed = getAccount(selectedAccount.id);
-    const lastOrder = getAccountOrders(selectedAccount.id).slice(-1)[0];
-    if (lastOrder) setSelectedReceiptOrder(lastOrder);
     return refreshed || selectedAccount;
   };
 
@@ -295,10 +292,8 @@ export const AccountsView: React.FC = () => {
           total={Math.min(paymentTargetAmount ?? selectedAccount.saldoRestante, selectedAccount.saldoRestante)}
           onClose={() => setIsPaymentOpen(false)}
           onConfirm={handleSettleConfirm}
-          onReceiptTrigger={order => setSelectedReceiptOrder(order)}
         />
       )}
-      <ReceiptModal order={selectedReceiptOrder} isOpen={!!selectedReceiptOrder} onClose={() => setSelectedReceiptOrder(null)} />
     </div>
   );
 };

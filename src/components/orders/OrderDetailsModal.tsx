@@ -45,7 +45,6 @@ export const OrderDetailsModal: React.FC = () => {
     setOrderPriority,
     reopenOrder,
     openPaymentModal,
-    setSelectedReceiptOrder,
     currentUser,
     tables,
     getAccount,
@@ -85,6 +84,7 @@ export const OrderDetailsModal: React.FC = () => {
   const [showAddItems, setShowAddItems] = useState(false);
   const [addItemSearch, setAddItemSearch] = useState('');
   const [addCart, setAddCart] = useState<CartItem[]>([]);
+  const [mirrorError, setMirrorError] = useState('');
 
   const editCatalogCategories = useMemo(() => {
     return Array.from(new Set(
@@ -316,7 +316,16 @@ export const OrderDetailsModal: React.FC = () => {
   };
 
   const latestBatch = [...(order.impressoes || [])].reverse()[0];
-  const canGenerateMirror = order.status === 'novo' && !!latestBatch && !latestBatch.espelhoJobId;
+  const canGenerateMirror = order.status === 'novo' && !!latestBatch && !latestBatch.mirrorConfirmed;
+
+  const handleGenerateMirror = () => {
+    setMirrorError('');
+    try {
+      generateOrderMirror(order.id);
+    } catch (e: unknown) {
+      setMirrorError(e instanceof Error ? e.message : 'Erro ao gerar espelho.');
+    }
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-900/60 backdrop-blur-xs p-4 animate-in fade-in">
@@ -1221,7 +1230,7 @@ export const OrderDetailsModal: React.FC = () => {
             {canGenerateMirror && (
               <button
                 id="order-details-generate-mirror-btn"
-                onClick={() => generateOrderMirror(order.id)}
+                onClick={handleGenerateMirror}
                 className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-emerald-600 text-white hover:bg-emerald-700 text-xs font-bold shadow-2xs"
                 title="Gera a via espelho e marca o pedido como pronto"
               >
@@ -1229,16 +1238,11 @@ export const OrderDetailsModal: React.FC = () => {
                 <span>Gerar Espelho / Pronto</span>
               </button>
             )}
-
-            {/* Print thermal receipt */}
-            <button
-              id="order-details-print-btn"
-              onClick={() => setSelectedReceiptOrder(order)}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white border border-stone-300 text-stone-700 hover:bg-stone-50 text-xs font-semibold shadow-2xs transition-colors"
-            >
-              <Printer className="w-4 h-4 text-stone-500" />
-              <span>Imprimir Térmico</span>
-            </button>
+            {mirrorError && (
+              <span role="alert" className="text-[11px] font-semibold text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-2 py-1.5 max-w-[260px]">
+                {mirrorError}
+              </span>
+            )}
 
             {/* Toggle priority */}
             <button

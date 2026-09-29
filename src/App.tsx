@@ -21,7 +21,7 @@ import { AuditView } from './components/admin/AuditView';
 // Global Modals
 import { ManualPaymentModal } from './components/payment/ManualPaymentModal';
 import { OrderDetailsModal } from './components/orders/OrderDetailsModal';
-import { ThermalReceiptModal } from './components/orders/ThermalReceiptModal';
+import { OrderMirrorModal } from './components/orders/OrderMirrorModal';
 import { OperationHealthModal } from './components/layout/OperationHealthModal';
 import { AlertsDrawer } from './components/layout/AlertsDrawer';
 
@@ -122,7 +122,7 @@ const MainAppContent: React.FC = () => {
       {/* Global Modals Mounted at Root */}
       <ManualPaymentModal />
       <OrderDetailsModal />
-      <ThermalReceiptModal />
+      <OrderMirrorModal />
       <OperationHealthModal />
       <AlertsDrawer />
     </div>

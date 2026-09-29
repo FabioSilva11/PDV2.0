@@ -2,12 +2,12 @@ import React, { useState, useMemo } from 'react';
 import { useRestaurant } from '../../context/RestaurantContext';
 import { formatCurrency } from '../../utils/formatters';
 import { getPendingFinancialOrders } from '../../lib/turno';
-import { OrderStatus } from '../../types';
+import { Order, OrderStatus } from '../../types';
+import { KitchenTicketPreviewModal } from './KitchenTicketPreviewModal';
 import {
   Receipt,
   Search,
   Plus,
-  Printer,
   DollarSign,
   Clock,
   Flame,
@@ -18,27 +18,24 @@ import {
   UtensilsCrossed,
   AlertTriangle,
 } from 'lucide-react';
-import { OrderMirrorModal } from './OrderMirrorModal';
-import { ThermalReceiptModal } from './ThermalReceiptModal';
 
 export const OrdersView: React.FC = () => {
   const {
     orders,
     setSelectedOrderForModal,
     openPaymentModal,
-    setSelectedReceiptOrder,
     setActiveModule,
     generateOrderMirror,
     canStartPayment,
     turnoAtualId,
     cashRegister,
-    selectedMirrorOrderId,
   } = useRestaurant();
 
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('todos');
   const [channelFilter, setChannelFilter] = useState<string>('todos');
   const [periodFilter, setPeriodFilter] = useState<string>('hoje');
+  const [kitchenPreviewOrder, setKitchenPreviewOrder] = useState<Order | null>(null);
 
   // -----------------------------------------------------------------------
   // FILA OPERACIONAL DO TURNO ATUAL
@@ -377,6 +374,15 @@ export const OrdersView: React.FC = () => {
                       <ChevronRight className="w-3.5 h-3.5 text-stone-400" />
                     </button>
 
+                    <button
+                      id={`preview-kitchen-${order.id}`}
+                      onClick={() => setKitchenPreviewOrder(order)}
+                      className="py-1.5 px-3 rounded-lg bg-orange-100 text-orange-900 border border-orange-300 hover:bg-orange-200 text-xs font-bold shadow-2xs"
+                      title="Abrir a prévia da via da cozinha"
+                    >
+                      Cozinha
+                    </button>
+
                     {/* BOTÃO ESPELHO — abre o diálogo de prévia/confirmação */}
                     {needsMirror && (
                       <button
@@ -397,16 +403,6 @@ export const OrdersView: React.FC = () => {
                         Espelho
                       </button>
                     )}
-
-                    {/* Comprovante térmico */}
-                    <button
-                      id={`print-thermal-${order.id}`}
-                      onClick={() => setSelectedReceiptOrder(order)}
-                      className="p-1.5 rounded-lg bg-white border border-stone-300 text-stone-700 hover:bg-stone-50 shadow-2xs transition-colors"
-                      title="Imprimir Comprovante Térmico"
-                    >
-                      <Printer className="w-4 h-4 text-stone-500" />
-                    </button>
 
                     {/* BOTÃO COBRAR — bloqueado se espelho pendente */}
                     <button
@@ -432,10 +428,10 @@ export const OrdersView: React.FC = () => {
         </div>
       )}
 
-      {/* Diálogo do Espelho — montado aqui para ter acesso ao contexto */}
-      {selectedMirrorOrderId && <OrderMirrorModal />}
-      {/* Comprovante térmico */}
-      <ThermalReceiptModal />
+      <KitchenTicketPreviewModal
+        order={kitchenPreviewOrder}
+        onClose={() => setKitchenPreviewOrder(null)}
+      />
     </div>
   );
 };
