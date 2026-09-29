@@ -401,14 +401,21 @@ const MENU_SEED_MG_FLAG = 'menuSeedMestreGuaranaApplied';
  * vez nos bancos existentes — sempre idempotente (só adiciona o que falta).
  * v1: lanches + guaranás/sucos/vitaminas. v2: porções, bebidas diversas e itens diversos.
  */
-const MENU_SEED_MG_VERSION = 'v2';
+const MENU_SEED_MG_VERSION = 'v3';
 const mergeMenuCatalog = (menu: MenuItem[] | undefined, snapshot: RestaurantDatabaseSnapshot): MenuItem[] => {
-  const atual = menu || [];
+  const seenIds = new Set<string>();
+  const atual = (menu || []).filter(item => {
+    if (seenIds.has(item.id)) return false;
+    seenIds.add(item.id);
+    return true;
+  });
   if ((snapshot as any)?.[MENU_SEED_MG_FLAG] === MENU_SEED_MG_VERSION) return atual;
-  const chaves = new Set(atual.map(i => `${i.id}|${normalizeMenuItem(i).nome.toLowerCase()}|${i.categoria}`));
+  // O ID do produto é a identidade do catálogo. Usar também nome/categoria
+  // permitia reintroduzir o mesmo ID quando um item fosse recategorizado.
+  const idsExistentes = new Set(atual.map(i => i.id));
+  const nomesExistentes = new Set(atual.map(i => `${normalizeMenuItem(i).nome.toLowerCase()}|${i.categoria}`));
   const faltantes = MESTRE_GUARANA_MENU.filter(item => {
-    const cat = item.categoria;
-    return !chaves.has(`${item.id}|${item.nome.toLowerCase()}|${cat}`);
+    return !idsExistentes.has(item.id) && !nomesExistentes.has(`${item.nome.toLowerCase()}|${item.categoria}`);
   });
   if (!faltantes.length) {
     (snapshot as any)[MENU_SEED_MG_FLAG] = MENU_SEED_MG_VERSION;
@@ -1366,7 +1373,8 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     const itemLines = items.flatMap(item => [
       `${item.quantidade}x ${item.nome}${item.variacaoNome ? ` (${item.variacaoNome})` : ''}`,
       ...(item.adicionais || []).map(addon =>
-        `  + ${addon.nome}${addon.preco > 0 ? ` (+R$ ${addon.preco.toFixed(2)})` : ''}`),
+        `  + ${addon.nome}${isEspelho && addon.preco > 0 ? ` (+R$ ${addon.preco.toFixed(2)})` : ''}`
+      ),
       ...(item.remocoes || []).map(removal => `  SEM: ${removal}`),
       ...(item.observacao ? [`  OBS: ${item.observacao}`] : []),
     ]);
@@ -1520,7 +1528,6 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       tipoOperacao,
       itemIds: items.map(item => item.cartItemId)
     };
-    setOrders(prev => prev.map(o => o.id === order.id ? { ...o, impressoes: [...(o.impressoes || []), batch] } : o));
     return batch;
   };
 
@@ -1568,7 +1575,10 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
     const pedidoJobs = (batch.pedidoJobIds || [batch.pedidoJobId]).filter(Boolean).map(id => store.state.printQueue.find((job: PrintJob) => job.id === id)).filter(Boolean) as PrintJob[];
     if (!pedidoJobs.length || pedidoJobs.some(job => job.status === 'falha')) {
-      throw new Error('A via PEDIDO não foi impressa em todos os destinos. Corrija o roteamento e reimprima antes de gerar o espelho.');
+      // A prévia é sempre consultável. A confirmação segue bloqueada porque
+      // ainda não há um job de espelho válido para concluir o preparo.
+      setSelectedMirrorOrderId(orderId);
+      return;
     }
 
     // Se o lote já tem espelhoJobId (gerado anteriormente mas não confirmado),
@@ -1686,14 +1696,6 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     if (!order) return 'Pedido não encontrado.';
     if (order.status === 'cancelado') return 'Não é possível cobrar um pedido cancelado.';
     if (order.saldoRestante <= 0) return null; // já quitado, pode re-visualizar pagamentos
-    const batches = order.impressoes || [];
-    // Pedidos sem nenhum lote de impressão (caso raro/legado) passam direto
-    if (!batches.length) return null;
-    // Exige que pelo menos um lote tenha mirrorConfirmed === true
-    const hasConfirmedMirror = batches.some(b => b.mirrorConfirmed === true);
-    if (!hasConfirmedMirror) {
-      return 'Imprima e confirme o ESPELHO antes de iniciar o pagamento.';
-    }
     return null;
   };
 
@@ -1803,7 +1805,10 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         }
       }
     }
-    dispatchItems(order);
+    const initialBatch = dispatchItems(order);
+    setOrders(prev => prev.map(o => o.id === order.id
+      ? { ...o, impressoes: [...(o.impressoes || []), initialBatch] }
+      : o));
     recordAudit('criou pedido', 'pedido', order.id, `Lançamento ${codigoExibicao} • conta ${account.numero}`);
     // Retorna o pedido mais atualizado do store (com pagamentos aplicados).
     return orderList().find((o: Order) => o.id === order.id) ?? order;
@@ -2012,9 +2017,10 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     const items = [...asArray(order.itens, []), ...added];
     const values = totals(items, order.desconto, order.taxaServico, order.taxaEntrega);
     const next = reconcile({ ...order, ...values, itens: items, status: 'novo' });
-    setOrders(prev => prev.map(o => o.id === orderId ? next : o));
-    syncTableTotals(next);
-    dispatchItems(next, added, 'pedido_adicional');
+    const newBatch = dispatchItems(next, added, 'pedido_adicional');
+    const nextWithBatch = { ...next, impressoes: [...(next.impressoes || []), newBatch] };
+    setOrders(prev => prev.map(o => o.id === orderId ? nextWithBatch : o));
+    syncTableTotals(nextWithBatch);
     // O lançamento voltou para "aguardando espelho". Se a conta é a que ocupa
     // a mesa, a ocupação é retomada; se outra conta já ocupa a mesa, nada muda.
     const account = accountById(next.contaId);
@@ -2234,19 +2240,6 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       );
     }
 
-    // Preparar itens para novo lote de impressão (apenas alterados/adicionados)
-    const itemsToReprint = updatedItems.filter(item => {
-      // Item novo
-      if (!order.itens.some(o => o.cartItemId === item.cartItemId)) return true;
-      // Item com quantidade alterada
-      const oldItem = order.itens.find(o => o.cartItemId === item.cartItemId);
-      if (oldItem && oldItem.quantidade !== item.quantidade) return true;
-      // Item com observação/variacao alterada
-      const old = order.itens.find(o => o.cartItemId === item.cartItemId);
-      if (old && (old.observacao !== item.observacao || old.variacaoNome !== item.variacaoNome)) return true;
-      return false;
-    });
-
     // Montar pedido final
     const withTotals = {
       ...order,
@@ -2286,21 +2279,18 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
     // Criar novo lote de impressão se houver itens alterados/adicionados
     let finalOrder = recalculated;
-    const itemsToReprintFinal = updatedItems.filter(item => {
-      // Item novo
-      if (!order.itens.some(o => o.cartItemId === item.cartItemId)) return true;
-      // Item com quantidade alterada
-      const oldItem = order.itens.find(o => o.cartItemId === item.cartItemId);
-      if (oldItem && oldItem.quantidade !== item.quantidade) return true;
-      // Item com observação/variacao alterada
+    const itemsToReprintFinal = updatedItems.flatMap(item => {
       const old = order.itens.find(o => o.cartItemId === item.cartItemId);
-      if (old && (old.observacao !== item.observacao || old.variacaoNome !== item.variacaoNome)) return true;
-      return false;
+      if (!old) return [item];
+      if (item.quantidade > old.quantidade) return [{ ...item, quantidade: item.quantidade - old.quantidade }];
+      if (old.observacao !== item.observacao || old.variacaoNome !== item.variacaoNome) return [item];
+      return [];
     });
     if (itemsToReprintFinal.length > 0) {
       const newBatch = dispatchItems(recalculated, itemsToReprintFinal, 'pedido_adicional');
       finalOrder = {
         ...recalculated,
+        status: 'novo',
         impressoes: [...(recalculated.impressoes || []), newBatch]
       };
     }
