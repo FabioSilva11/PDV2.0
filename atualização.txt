@@ -1,0 +1,2688 @@
+OBJETIVO GERAL
+Quero evoluir o PDV2.0 para operar com UMA ÚNICA BASE DE CÓDIGO e com dois clientes de operação:
+
+1. SITE/WEB
+2. APLICATIVO ANDROID
+
+Os dois usam o mesmo backend Express, o mesmo SQLite, o mesmo modelo de pedido e as mesmas regras de impressão.
+
+A principal simplificação da arquitetura é:
+
+- o SITE é responsável por definir o ambiente operacional;
+- o ambiente é obrigatoriamente RESTAURANTE ou LANCHE;
+- o SITE gera uma configuração de terminal, preferencialmente por QR Code;
+- o APP ANDROID apenas recebe essa configuração e a salva;
+- o Android NÃO deve pedir para o operador escolher RESTAURANTE/LANCHE manualmente;
+- o Android NÃO deve criar uma lógica de pedido diferente da WEB;
+- pedidos feitos pelo SITE funcionam mesmo sem nenhum APP ANDROID instalado.
+
+O servidor continua tendo um IP/hostname e uma porta. O ambiente NÃO cria um IP diferente. O SITE apenas associa o servidor à configuração do ambiente e gera os dados que o Android precisa para se conectar.
+
+Exemplo:
+
+Servidor do PDV:
+  http://192.168.1.100:3001
+
+Site configurado como:
+  RESTAURANTE
+
+Terminal Android configurado pelo QR Code:
+  servidor = http://192.168.1.100:3001
+  ambiente = restaurante
+
+Outro terminal pode usar o mesmo servidor:
+  servidor = http://192.168.1.100:3001
+  ambiente = lanche
+
+Não hardcode um IP real do estabelecimento no código. O endereço deve ser configurável.
+
+IMPORTANTE:
+Não quero criar um segundo sistema de PDV separado para Android. O Android deve reutilizar a aplicação React/TypeScript existente, com a camada nativa mínima necessária para gerar um APK instalável.
+
+============================================================
+1. ARQUITETURA EXISTENTE — LEIA ANTES DE ALTERAR
+============================================================
+
+O projeto atual é React 19 + TypeScript + Vite + Tailwind, com backend Express e SQLite local.
+
+Arquivos importantes do estado atual:
+
+- src/types.ts
+- src/context/RestaurantContext.tsx
+- src/components/pdv/POSView.tsx
+- src/lib/databaseApi.ts
+- src/lib/apiUrl.ts
+- src/lib/localStore.ts
+- src/lib/mergeSnapshots.ts
+- server/index.ts
+- server/routes/database.ts
+- server/routes/printers.ts
+- server/printer/index.ts
+- server/printer/PrinterManager.ts
+- server/printer/NetworkPrinter.ts
+- server/printer/UsbPrinter.ts
+- server/printer/EscPosFormatter.ts
+- src/tests/pdv.test.tsx
+- demais testes existentes
+
+O POS atual já possui:
+- catálogo Restaurante/Lanche;
+- pedidos;
+- contas;
+- mesas;
+- espelho;
+- fila de impressão;
+- regras de impressão;
+- impressoras USB/rede;
+- SQLite no backend;
+- API HTTP;
+- persistência/local cache;
+- testes Vitest.
+
+Não apague funcionalidades existentes.
+Não faça uma reescrita desnecessária.
+Não substitua SQLite por outro banco.
+Não remova o suporte existente de impressão ESC/POS.
+Não crie uma segunda lógica de pedido paralela apenas para Android.
+
+============================================================
+2. REGRA DE NEGÓCIO CENTRAL
+============================================================
+
+Existem CINCO impressoras físicas:
+
+1. Espelho do Lanche
+2. Cozinha do Lanche
+3. Sucos
+4. Espelho Restaurante
+5. Cozinha Restaurante
+
+O PEDIDO é um único pedido comercial.
+Mesmo que sejam misturados itens Restaurante, Lanche e compartilhados, continua existindo apenas UM pedido, com UM número, UMA conta e UM histórico.
+
+A origem do atendimento é determinada pela configuração do cliente que criou o pedido:
+
+SITE/WEB:
+- site configurado como RESTAURANTE -> pedido nasce em RESTAURANTE;
+- site configurado como LANCHE -> pedido nasce em LANCHE.
+
+ANDROID:
+- terminal configurado pelo SITE como RESTAURANTE -> pedido nasce em RESTAURANTE;
+- terminal configurado pelo SITE como LANCHE -> pedido nasce em LANCHE.
+
+Essa origem deve ser gravada no pedido no momento da criação e permanecer imutável depois.
+
+IMPORTANTE:
+- o SITE pode criar pedidos sem o APP ANDROID;
+- o APP ANDROID não escolhe o ambiente manualmente;
+- o ambiente do Android vem da configuração recebida do SITE;
+- SITE e Android usam o mesmo Order, backend, SQLite, regras de negócio e roteamento de impressão;
+- a origem do pedido NÃO deve ser inferida olhando os produtos.
+
+Exemplo:
+
+Site = RESTAURANTE
+ou
+Terminal Android = RESTAURANTE
+
+pedido:
+  origemAtendimento = restaurante
+
+Site = LANCHE
+ou
+Terminal Android = LANCHE
+
+pedido:
+  origemAtendimento = lanche
+
+A origem do pedido é definida antes da criação e fica salva no próprio Order.
+
+============================================================
+3. DIFERENÇA ENTRE AMBIENTE, CATÁLOGO E ITEM
+============================================================
+
+Não misture estes conceitos.
+
+A) AMBIENTE DO SITE
+É o ambiente operacional configurado no site/instância:
+
+- restaurante
+- lanche
+
+Esse campo é obrigatório na configuração inicial do site.
+
+B) CONFIGURAÇÃO DO TERMINAL ANDROID
+É a configuração recebida do SITE para aquele aparelho:
+
+- deviceId
+- ambienteOperacional
+- serverBaseUrl
+- configuradoEm
+
+O operador do Android não escolhe o ambiente manualmente. O terminal apenas recebe, salva e utiliza a configuração do SITE.
+
+C) ORIGEM DO ATENDIMENTO
+É copiada do ambiente configurado no cliente que criou o pedido:
+
+- Site Restaurante -> restaurante
+- Site Lanche -> lanche
+- Android configurado como Restaurante -> restaurante
+- Android configurado como Lanche -> lanche
+
+D) CATÁLOGO DO ITEM
+É o cardápio de onde o item foi selecionado:
+
+- restaurante
+- lanche
+
+Um pedido pode ter itens de qualquer catálogo e continuar sendo um único pedido.
+
+O catálogo do item NÃO muda a origem do atendimento.
+
+Exemplo:
+
+Terminal = RESTAURANTE
+
+Pedido:
+- Carne de Sol
+- X-Salada
+- Pizza
+- Suco
+
+Continua:
+  origemAtendimento = restaurante
+
+O catálogo pode continuar sendo alterado livremente para permitir pedidos mistos.
+
+============================================================
+4. NOVOS TIPOS DE DADOS
+============================================================
+
+No src/types.ts crie tipos explícitos e reutilizáveis.
+
+Sugestão:
+
+export type OperatingEnvironment = 'restaurante' | 'lanche';
+
+Adicione uma configuração equivalente para o SITE/WEB:
+
+interface SiteSettings {
+  siteId: string;
+  ambienteOperacional: OperatingEnvironment;
+  configuradoEm: string;
+  atualizadoEm: string;
+}
+
+Adicione ao terminal/dispositivo uma configuração equivalente a:
+
+interface DeviceSettings {
+  deviceId: string;
+  ambienteOperacional: OperatingEnvironment;
+  serverBaseUrl: string;
+  configuradoEm: string;
+  atualizadoEm: string;
+}
+
+Atenção: no Android, ambienteOperacional é recebido da configuração gerada pelo SITE. Não criar um seletor livre de ambiente para o operador.
+
+O nome exato pode ser adaptado à arquitetura existente, mas a informação deve ser persistida.
+
+No Order adicione:
+
+origemAtendimento?: OperatingEnvironment;
+
+Prefira tornar esse campo obrigatório nos novos pedidos, mas mantenha compatibilidade de migração para pedidos antigos.
+
+Também é recomendado adicionar ao CartItem:
+
+catalogoOrigem?: MenuCatalog;
+
+Esse campo registra de qual catálogo o atendente selecionou o item.
+
+IMPORTANTE:
+catalogoOrigem do item é histórico/proveniência.
+Ele NÃO deve ser usado para decidir para qual cozinha completa o pedido será enviado.
+
+============================================================
+5. MIGRAÇÃO E COMPATIBILIDADE
+============================================================
+
+Existem pedidos antigos que não possuem origemAtendimento.
+
+Implemente uma normalização/migração segura.
+
+Para dados antigos:
+- não invente uma origem com base em um item isolado;
+- use uma estratégia explícita e segura de legado;
+- quando não for possível determinar a origem, marque como undefined/legado e impeça que a aplicação trate isso como se fosse uma escolha atual do terminal;
+- não altere silenciosamente pedidos históricos.
+
+A configuração do ambiente do dispositivo deve poder ser criada sem modificar pedidos antigos.
+
+============================================================
+ADENDO A — PEDIDOS PELO SITE/WEB, SEM APP ANDROID
+============================================================
+
+O PDV2.0 também deve permitir criar pedidos diretamente pela versão WEB,
+sem exigir o aplicativo Android.
+
+O site é um cliente do mesmo sistema. Ele NÃO é um segundo PDV e NÃO deve
+criar backend, banco, modelo Order ou lógica de impressão separados.
+
+A versão WEB deve utilizar:
+- o mesmo Order;
+- as mesmas regras de negócio;
+- o mesmo backend Express;
+- o mesmo SQLite;
+- as mesmas regras de impressão;
+- o mesmo número comercial por pedido;
+- a mesma função central de roteamento de impressão.
+
+A.1 CONFIGURAÇÃO INICIAL OBRIGATÓRIA DO SITE
+
+Na configuração inicial do site, além das informações atuais do estabelecimento,
+deve existir uma opção OBRIGATÓRIA para selecionar o ambiente:
+
+[ RESTAURANTE ]
+Pedidos e operação do ambiente Restaurante
+
+[ LANCHE ]
+Pedidos e operação do ambiente Lanche
+
+Não permitir finalizar a configuração do site sem escolher um ambiente.
+
+A escolha deve ser persistida como configuração daquele site/instância.
+Não assumir o ambiente pelo catálogo de produtos.
+
+A.2 REGRA DE ORIGEM DOS PEDIDOS DO SITE
+
+Site configurado como RESTAURANTE:
+- todo pedido criado pelo site recebe:
+  origemAtendimento = restaurante
+
+Site configurado como LANCHE:
+- todo pedido criado pelo site recebe:
+  origemAtendimento = lanche
+
+A atribuição deve acontecer no momento da criação do pedido e ser preservada
+no próprio Order.
+
+A interface de venda do site NÃO deve permitir ao operador escolher manualmente
+a origem do pedido. A origem vem da configuração do site.
+
+A.3 PEDIDOS DO SITE PODEM SER MISTOS
+
+O site deve continuar permitindo produtos do catálogo Restaurante, do catálogo
+Lanche e itens compartilhados.
+
+Exemplo:
+
+Site = RESTAURANTE
+
+Pedido 700:
+- Carne de Sol
+- X-Salada
+- Pizza
+- Suco
+
+Resultado:
+
+origemAtendimento = restaurante
+
+Continua sendo UM único pedido comercial.
+
+A.4 IMPRESSÃO DOS PEDIDOS CRIADOS PELO SITE
+
+Os pedidos criados pelo site devem passar pela mesma função:
+
+resolveOrderPrintDestinations(order)
+
+Não criar uma segunda lógica de impressão apenas para WEB.
+
+Site Restaurante:
+- Cozinha Restaurante -> pedido completo
+- Espelho Restaurante -> pedido completo
+- Sucos -> somente sucos
+- Cozinha Lanche -> nada
+- Espelho Lanche -> nada
+
+Site Lanche:
+- Cozinha Lanche -> pedido completo
+- Espelho Lanche -> pedido completo
+- Sucos -> somente sucos
+- Cozinha Restaurante -> nada
+- Espelho Restaurante -> nada
+
+A mesma regra vale para pedidos criados pelo Android.
+
+A.5 ORIGEM DO CLIENTE X ORIGEM DO ATENDIMENTO
+
+Manter esses conceitos separados.
+
+Pode existir:
+
+origemCliente = 'web' | 'android'
+
+e:
+
+origemAtendimento = 'restaurante' | 'lanche'
+
+Isso permite identificar:
+- qual cliente criou o pedido;
+- em qual ambiente o atendimento nasceu.
+
+Não usar origemCliente como substituto de origemAtendimento.
+
+A.6 CONFIGURAÇÃO E ALTERAÇÃO DO AMBIENTE DO SITE
+
+A configuração deve ser recuperável após reinicialização do site.
+
+Criar área administrativa para:
+- visualizar ambiente atual;
+- visualizar configuração do estabelecimento;
+- alterar ambiente;
+- confirmar alteração;
+- registrar auditoria.
+
+Não permitir troca silenciosa enquanto houver carrinho/pedido em andamento.
+
+A alteração não pode mudar retroativamente pedidos já criados.
+
+A.7 FONTE DE VERDADE
+
+Para pedidos WEB:
+- a origem vem da configuração do site no momento da criação.
+
+Para pedidos ANDROID:
+- a origem vem da configuração do terminal no momento da criação.
+
+Para ambos:
+- o Order salvo é a fonte histórica;
+- catalogoOrigem é somente proveniência do item;
+- o catálogo nunca redefine origemAtendimento;
+- reimpressão utiliza o histórico do job/order, não uma nova inferência.
+
+============================================================
+6. PRIMEIRA INICIALIZAÇÃO DO APP ANDROID
+============================================================
+
+O Android NÃO deve perguntar:
+"RESTaurante ou Lanche?"
+
+Essa decisão já foi feita no SITE.
+
+O fluxo mais simples será:
+
+ETAPA 1 — BEM-VINDO
+
+Título:
+"Configuração do terminal"
+
+Texto:
+"Escaneie o QR Code gerado na configuração do sistema."
+
+ETAPA 2 — ESCANEAR QR CODE
+
+[ 📷 ESCANEAR QR CODE ]
+
+O QR Code deve conter ou identificar a configuração do terminal, incluindo:
+- servidor do PDV;
+- porta;
+- ambiente operacional.
+
+Exemplo conceitual:
+
+{
+  serverBaseUrl: "http://192.168.1.100:3001",
+  ambienteOperacional: "restaurante"
+}
+
+Não é necessário que o operador digite o ambiente.
+
+ETAPA 3 — CONFIRMAÇÃO
+
+Depois da leitura, mostrar:
+
+Servidor:
+192.168.1.100:3001
+
+Ambiente:
+RESTAURANTE
+
+[ TESTAR CONEXÃO ]
+
+ETAPA 4 — TESTE REAL
+
+Testar:
+GET /api/health
+
+Mostrar:
+- Servidor conectado
+- Banco conectado
+- Nome/status do estabelecimento, quando disponível
+
+ETAPA 5 — FINALIZAÇÃO
+
+Salvar:
+- deviceId;
+- ambienteOperacional recebido do SITE;
+- serverBaseUrl;
+- configuradoEm;
+- atualizadoEm.
+
+Depois abrir o Login/PDV normalmente.
+
+RECUPERAÇÃO:
+Se o QR Code não puder ser usado, permitir uma configuração manual de emergência do servidor, mas NÃO permitir escolher o ambiente arbitrariamente. O ambiente deve continuar vindo da configuração do SITE.
+
+============================================================
+7. CONFIGURAÇÃO DE AMBIENTE DEPOIS DA PRIMEIRA INICIALIZAÇÃO
+============================================================
+
+A alteração do ambiente deve ser feita no SITE, não como uma troca casual dentro do Android.
+
+No SITE/Administração:
+- visualizar ambiente atual;
+- visualizar servidor/IP e porta;
+- alterar RESTAURANTE/LANCHE;
+- gerar novo QR Code de configuração;
+- visualizar quais terminais estão associados ao ambiente.
+
+No Android:
+- visualizar ambiente atual;
+- visualizar servidor atual;
+- testar conexão;
+- usar "Reconfigurar terminal" para escanear um novo QR Code.
+
+Regras de segurança:
+- não permitir troca silenciosa do ambiente durante venda;
+- se houver carrinho/pedido em andamento, exigir encerramento/cancelamento/limpeza explícita;
+- registrar auditoria quando houver usuário autenticado;
+- trocar o ambiente não altera pedidos históricos;
+- o novo ambiente só passa a valer para pedidos criados depois da reconfiguração.
+
+Quando o SITE mudar de RESTAURANTE para LANCHE, os pedidos antigos permanecem com a origem original.
+
+O Android deve mostrar sempre algo como:
+
+"Terminal: RESTAURANTE"
+
+ou:
+
+"Terminal: LANCHE"
+
+Isso deve ficar visível no cabeçalho/topbar.
+
+============================================================
+8. APP ANDROID — TECNOLOGIA
+============================================================
+
+Use Capacitor para empacotar o aplicativo web existente em Android.
+
+Motivo:
+- reaproveita o React/TypeScript atual;
+- mantém uma única base de código;
+- cria um projeto Android real;
+- permite gerar APK;
+- permite usar armazenamento nativo;
+- permite lidar com recursos específicos do Android no futuro.
+
+Use a versão ESTÁVEL atual do Capacitor compatível com o projeto, não uma versão experimental.
+
+Ao implementar:
+- adicionar dependências Capacitor;
+- criar capacitor.config;
+- criar pasta android/;
+- configurar applicationId estável;
+- configurar nome do aplicativo;
+- configurar ícone/splash se os assets atuais permitirem;
+- manter o projeto compilável via Gradle/CLI; Android Studio é opcional e NÃO deve ser aberto pelo processo de build do Codex.
+
+Nome sugerido:
+PDV 2.0
+
+Application ID sugerido:
+com.fabiosilva.pdv
+
+Se o repositório já tiver uma convenção melhor, preserve-a.
+
+============================================================
+9. COMO O APP ANDROID DEVE FUNCIONAR
+============================================================
+
+IMPORTANTE:
+
+O Android não deve criar um segundo backend.
+
+Fluxo:
+
+Android App
+   |
+   | HTTP/HTTPS
+   v
+Servidor PDV2.0
+   |
+   +-- Express API
+   +-- SQLite
+   +-- serviço ESC/POS
+   +-- impressoras físicas
+
+O APK é um cliente do sistema.
+
+A aplicação React empacotada no APK deve consumir o backend pelo serverBaseUrl configurado no dispositivo.
+
+Não dependa de:
+localhost
+127.0.0.1
+
+dentro do Android, porque localhost no celular é o próprio celular.
+
+Exemplo:
+
+http://192.168.1.100:3001
+
+é um servidor em outro equipamento da LAN.
+
+============================================================
+10. API BASE URL
+============================================================
+
+Hoje o projeto já possui:
+
+src/lib/apiUrl.ts
+src/lib/databaseApi.ts
+
+E utiliza VITE_API_URL.
+
+Não destrua esse mecanismo.
+
+Crie uma camada de resolução de API que funcione assim:
+
+WEB/DESKTOP:
+- continua podendo usar VITE_API_URL;
+- mantém compatibilidade atual.
+
+ANDROID:
+- usar serverBaseUrl salvo na configuração do dispositivo.
+
+A ordem de resolução deve ser documentada e testada.
+
+Por exemplo:
+
+1. configuração nativa do terminal;
+2. configuração persistida da aplicação;
+3. VITE_API_URL;
+4. fallback relativo somente no navegador, quando aplicável.
+
+Nunca deixar o Android cair silenciosamente em fetch('/api/...') quando estiver configurado com servidor remoto.
+
+============================================================
+11. IP FIXO
+============================================================
+
+Não confundir:
+"IP fixo" não significa IP escrito permanentemente no código.
+
+O estabelecimento terá um computador/servidor com IP reservado/estático na LAN.
+
+O aplicativo deve guardar esse endereço.
+
+Exemplo de configuração real:
+http://192.168.0.50:3001
+
+Mas esse valor deve vir da tela de configuração.
+
+Criar validação de:
+IPv4 válido
+porta 1..65535
+
+Aceitar também hostname somente se for útil à arquitetura, mas tratar IP como caso principal.
+
+Não permitir URL arbitrária sem validação básica.
+
+Não aceitar esquemas perigosos como:
+javascript:
+file:
+content:
+
+O objetivo é permitir:
+http://192.168.x.x:3001
+https://servidor.exemplo
+
+============================================================
+12. SERVIDOR EXPRESS — ACESSO PELA REDE
+============================================================
+
+O backend atual usa:
+
+app.listen(port)
+
+Garanta que o servidor aceite conexões da LAN e não apenas loopback.
+
+Usar bind apropriado para o cenário, por exemplo 0.0.0.0.
+
+Não quebrar o desenvolvimento local.
+
+Documentar:
+- porta do servidor;
+- como descobrir o IP;
+- como testar do celular;
+- firewall do Windows/Linux;
+- roteador;
+- mesma rede Wi-Fi/LAN.
+
+Adicionar uma rota:
+
+GET /api/health
+
+já existente, preservando-a.
+
+Ela deve continuar retornando estado do servidor e SQLite.
+
+============================================================
+13. PRODUÇÃO DO FRONTEND
+============================================================
+
+Atualmente o frontend usa Vite.
+
+Criar uma forma coerente para produção.
+
+O Android terá a aplicação web embutida no APK.
+
+Para acesso via navegador desktop na LAN, o projeto deve continuar funcionando normalmente.
+
+Não obrigatoriamente transformar Express em servidor de arquivos se isso não for necessário para o APK.
+
+Se for necessário criar um modo de produção unificado, faça-o sem quebrar o dev server atual.
+
+============================================================
+14. SEGURANÇA HTTP LOCAL NO ANDROID
+============================================================
+
+Como o cenário inicial usa IP local com HTTP, tratar corretamente o tráfego cleartext.
+
+Não fazer uma liberação indiscriminada de qualquer destino se puder evitar.
+
+Implementar a configuração Android apropriada para permitir o servidor local necessário e manter a aplicação preparada para HTTPS no futuro.
+
+Criar:
+- Network Security Config, quando necessário;
+- permissão INTERNET;
+- tratamento de erro de rede.
+
+O código deve ser compatível com as mudanças recentes de acesso à rede local do Android.
+
+Se o target SDK usado for Android 17/API 37 ou superior, tratar corretamente ACCESS_LOCAL_NETWORK conforme a documentação atual da plataforma e solicitar a permissão em runtime antes de acessar a LAN quando necessário.
+
+Se o projeto optar por target SDK inferior a 37, não inventar/requestar ACCESS_LOCAL_NETWORK prematuramente.
+
+Não adicionar permissões não utilizadas.
+
+============================================================
+15. CONECTIVIDADE
+============================================================
+
+Criar um pequeno serviço de conectividade no app.
+
+Estados:
+
+ONLINE
+OFFLINE
+CONECTANDO
+ERRO
+
+Criar:
+- timeout;
+- retry com backoff moderado;
+- botão "Tentar novamente";
+- indicador visual.
+
+Não ficar fazendo centenas de requisições por segundo.
+
+Quando o servidor estiver indisponível:
+- não apagar dados;
+- não perder carrinho;
+- não alterar pedido para pago;
+- não inventar sucesso de impressão;
+- deixar claro que a operação está offline/pedente.
+
+============================================================
+16. IMPRESSÃO — REGRA DEFINITIVA
+============================================================
+
+Esta é a parte mais importante.
+
+As cinco impressoras são:
+
+A. Espelho do Lanche
+B. Cozinha do Lanche
+C. Sucos
+D. Espelho Restaurante
+E. Cozinha Restaurante
+
+REGRA:
+
+A impressora de COZINHA do ambiente de origem recebe o PEDIDO COMPLETO.
+
+Não separar a via principal por catálogo.
+
+Não fazer:
+"cozinha restaurante recebe apenas restaurante"
+
+e
+"cozinha lanche recebe apenas lanche"
+
+Isso está ERRADO para a via principal.
+
+O correto é:
+
+Se origemAtendimento = restaurante:
+    Cozinha Restaurante recebe TODOS os itens do pedido.
+
+Se origemAtendimento = lanche:
+    Cozinha Lanche recebe TODOS os itens do pedido.
+
+A outra cozinha NÃO recebe o pedido principal.
+
+============================================================
+17. EXEMPLO — TERMINAL RESTAURANTE
+============================================================
+
+Terminal configurado:
+
+ambienteOperacional = restaurante
+
+Pedido 100:
+
+1 Carne de Sol
+1 X-Salada
+1 Pizza Calabresa
+2 Sucos
+
+A saída da cozinha deve ser:
+
+COZINHA RESTAURANTE
+
+PEDIDO 100
+
+1x Carne de Sol
+1x X-Salada
+1x Pizza Calabresa
+2x Sucos
+
+A COZINHA LANCHE não recebe esse pedido.
+
+A impressora SUCOS recebe somente:
+
+PEDIDO 100
+
+2x Sucos
+
+Nenhum outro item.
+
+============================================================
+18. EXEMPLO — TERMINAL LANCHE
+============================================================
+
+Terminal:
+
+ambienteOperacional = lanche
+
+Pedido 101:
+
+1 X-Salada
+1 Carne de Sol
+1 Pizza
+2 Sucos
+
+A saída principal:
+
+COZINHA LANCHE
+
+PEDIDO 101
+
+1x X-Salada
+1x Carne de Sol
+1x Pizza
+2x Sucos
+
+A COZINHA RESTAURANTE não recebe o pedido principal.
+
+A impressora SUCOS recebe:
+
+PEDIDO 101
+
+2x Sucos
+
+============================================================
+19. REGRA DA IMPRESSORA SUCOS
+============================================================
+
+A impressora "Sucos" é compartilhada pelos dois ambientes.
+
+Ela NÃO deve depender da origem do atendimento.
+
+Ela deve imprimir somente itens que pertencem à categoria de sucos.
+
+Preferir identificação estável:
+
+categoriaId = 'cat-sucos'
+
+ou equivalente já existente no sistema.
+
+Não usar somente:
+
+estacaoProducao === 'bar'
+
+porque existem outras bebidas e produtos que podem utilizar a estação bar.
+
+Assim:
+
+if item is suco:
+    Sucos recebe
+else:
+    Sucos não recebe
+
+Isso vale para:
+- pedido inicial;
+- espelho;
+- reimpressão controlada.
+
+============================================================
+20. ESPELHO — REGRA DEFINITIVA
+============================================================
+
+O ESPELHO segue o MESMO conceito de ambiente.
+
+Se:
+
+origemAtendimento = restaurante
+
+então:
+
+Espelho Restaurante recebe o pedido COMPLETO.
+
+Se:
+
+origemAtendimento = lanche
+
+então:
+
+Espelho do Lanche recebe o pedido COMPLETO.
+
+A impressora de espelho do outro ambiente não recebe nada.
+
+A impressora Sucos recebe apenas os itens de suco correspondentes ao espelho.
+
+============================================================
+21. EXEMPLO COMPLETO COM 5 RESTAURANTE + 5 LANCHE + SUCOS
+============================================================
+
+Use para testes os seguintes exemplos existentes no projeto, quando disponíveis:
+
+RESTAURANTE:
+R1 Carne de Sol Chapeada Completa
+R2 Filé Parmegiana ao Molho Rústico
+R3 Pizza Calabresa Especial & Cebola Roxa
+R4 Pizza Quatro Queijos Nobres
+R5 Dadinhos de Tapioca com Geleia de Pimenta
+
+LANCHE:
+L1 Americano
+L2 X-Salada
+L3 X-Bacon
+L4 X-Picanha
+L5 Hambúrguer Artesanal 2
+
+SUCOS:
+S1 Suco de Acerola
+S2 Suco de Laranja
+
+============================================================
+22. MATRIZ DE IMPRESSÃO
+============================================================
+
+CASO A — Pedido somente Restaurante, sem suco
+
+origemAtendimento = restaurante
+
+PEDIDO:
+Cozinha Restaurante -> R1 R2 R3 R4 R5
+
+Nada:
+Cozinha Lanche
+Sucos
+
+ESPELHO:
+Espelho Restaurante -> R1 R2 R3 R4 R5
+
+Nada:
+Espelho Lanche
+
+------------------------------------------------------------
+
+CASO B — Restaurante + sucos
+
+origemAtendimento = restaurante
+
+PEDIDO:
+Cozinha Restaurante -> R1 R2 R3 R4 R5 S1 S2
+Sucos -> S1 S2
+
+ESPELHO:
+Espelho Restaurante -> R1 R2 R3 R4 R5 S1 S2
+Sucos -> S1 S2
+
+Importante:
+A cozinha principal é COMPLETA.
+
+------------------------------------------------------------
+
+CASO C — Somente Lanche
+
+origemAtendimento = lanche
+
+PEDIDO:
+Cozinha Lanche -> L1 L2 L3 L4 L5
+
+ESPELHO:
+Espelho Lanche -> L1 L2 L3 L4 L5
+
+Nada:
+Cozinha Restaurante
+Sucos
+
+------------------------------------------------------------
+
+CASO D — Lanche + sucos
+
+origemAtendimento = lanche
+
+PEDIDO:
+Cozinha Lanche -> L1 L2 L3 L4 L5 S1 S2
+Sucos -> S1 S2
+
+ESPELHO:
+Espelho Lanche -> L1 L2 L3 L4 L5 S1 S2
+Sucos -> S1 S2
+
+------------------------------------------------------------
+
+CASO E — Pedido misto Restaurante + Lanche, sem suco
+
+origemAtendimento = restaurante
+
+PEDIDO:
+Cozinha Restaurante -> R1 R2 R3 R4 R5 L1 L2 L3 L4 L5
+
+Cozinha Lanche:
+NÃO recebe.
+
+ESPELHO:
+Espelho Restaurante -> R1 R2 R3 R4 R5 L1 L2 L3 L4 L5
+
+Espelho Lanche:
+NÃO recebe.
+
+Se o mesmo pedido tivesse nascido em um terminal Lanche, inverter somente a impressora principal:
+
+Cozinha Lanche -> pedido completo
+Espelho Lanche -> pedido completo
+
+------------------------------------------------------------
+
+CASO F — Misto + sucos
+
+origemAtendimento = restaurante
+
+PEDIDO:
+Cozinha Restaurante -> todos os R + todos os L + todos os S
+Sucos -> somente S
+
+ESPELHO:
+Espelho Restaurante -> todos os R + todos os L + todos os S
+Sucos -> somente S
+
+Total:
+2 jobs no pedido
+2 jobs no espelho
+
+Não criar:
+Cozinha Lanche
+Espelho Lanche
+
+------------------------------------------------------------
+
+CASO G — Somente sucos
+
+origemAtendimento = qualquer
+
+PEDIDO:
+Cozinha do ambiente -> S1 S2
+Sucos -> S1 S2
+
+ESPELHO:
+Espelho do ambiente -> S1 S2
+Sucos -> S1 S2
+
+============================================================
+23. ATENÇÃO A PRODUTOS MULTICATÁLOGO
+============================================================
+
+Existem produtos que podem aparecer nos dois catálogos.
+
+Isso NÃO pode provocar duplicação entre cozinhas.
+
+Exemplo:
+
+Batata/Porção que aparece em Restaurante e Lanche.
+
+Se foi adicionada ao pedido:
+
+origemAtendimento = restaurante
+
+então:
+- Cozinha Restaurante recebe o pedido completo;
+- Cozinha Lanche não recebe nada;
+- eventual impressora específica só deve receber a saída explicitamente configurada para esse tipo de item.
+
+Na nova regra da via principal, nunca usar:
+normalizeCatalogos(menuItem)
+como critério para decidir qual cozinha principal imprime.
+
+O catálogo pode continuar sendo usado:
+- para filtrar o cardápio na interface;
+- para saber onde o produto é vendido;
+- para relatórios;
+- para origem do item;
+- para regras específicas.
+
+Mas não para escolher a cozinha principal do pedido.
+
+============================================================
+24. MUDANÇA NECESSÁRIA NO POS
+============================================================
+
+Arquivo principal:
+src/components/pdv/POSView.tsx
+
+Hoje existe:
+selectedCatalog
+
+Preservar isso.
+
+Quando addToCart criar CartItem, armazenar:
+
+catalogoOrigem: selectedCatalog
+
+Isso é importante para histórico.
+
+Também buscar do contexto/configuração o ambiente do terminal.
+
+Exemplo:
+
+const operatingEnvironment = deviceSettings.ambienteOperacional;
+
+Na confirmação:
+
+createOrder({
+   ...,
+   origemAtendimento: operatingEnvironment,
+   itens: cart
+})
+
+Nunca deixar a UI escolher manualmente a origem do pedido se isso pode contradizer a configuração do terminal.
+
+============================================================
+25. NOVA FUNÇÃO CENTRAL DE ROTEAMENTO
+============================================================
+
+Centralizar a regra de roteamento.
+
+Não espalhar ifs por vários componentes.
+
+Criar algo equivalente a:
+
+resolveOrderPrintDestinations(order)
+
+que retorne uma estrutura determinística.
+
+Exemplo conceitual:
+
+{
+  pedidoPrincipal: printerId,
+  espelhoPrincipal: printerId,
+  sucos: {
+     pedido: printerId | null,
+     espelho: printerId | null
+  }
+}
+
+Regras:
+
+pedidoPrincipal:
+  restaurante -> Cozinha Restaurante
+  lanche -> Cozinha Lanche
+
+espelhoPrincipal:
+  restaurante -> Espelho Restaurante
+  lanche -> Espelho do Lanche
+
+sucos:
+  somente itens de categoria sucos
+
+A resolução não deve depender de texto do nome da impressora.
+
+NÃO fazer:
+if (printer.nome.includes('Restaurante'))
+
+Use configuração explícita, finalidade, role/purpose ou identificadores de destino.
+
+============================================================
+26. MODELAGEM MELHOR PARA IMPRESSORAS
+============================================================
+
+Aproveitar PrinterDevice/PrinterRouteRule.
+
+Se necessário, adicionar um papel específico:
+
+type PrinterRole =
+  | 'cozinha_completa'
+  | 'espelho_completo'
+  | 'sucos'
+  | 'comprovante'
+  | 'geral';
+
+Ou adaptar os tipos existentes sem destruir compatibilidade.
+
+Para os cinco equipamentos, permitir identificar explicitamente:
+
+COZINHA_COMPLETA + restaurante
+COZINHA_COMPLETA + lanche
+ESPELHO_COMPLETO + restaurante
+ESPELHO_COMPLETO + lanche
+SUCOS + compartilhado
+
+Isso é preferível a depender de nomes.
+
+============================================================
+27. NÃO USAR PRIORIDADE COMO EXCLUSÃO
+============================================================
+
+No roteamento atual, prioridade apenas ordena regras.
+
+Não presumir que prioridade significa "ganhador".
+
+Não criar duplicação acidental.
+
+O algoritmo deve gerar exatamente os destinos necessários.
+
+Se quiser manter o sistema genérico de PrinterRouteRule para futuras impressoras, criar uma distinção clara entre:
+- regras de roteamento específicas;
+- destino principal por ambiente;
+- impressora compartilhada.
+
+============================================================
+28. VIA PRINCIPAL COMPLETA
+============================================================
+
+Criar uma forma clara de indicar no PrintJob que aquele job é:
+
+- pedido_principal_completo
+- espelho_principal_completo
+- sucos
+
+Pode continuar usando os tipos existentes pedido/espelho, desde que metadata adicional torne o destino inequívoco.
+
+Exemplo:
+
+metadata:
+{
+  escopo: 'pedido_completo',
+  ambiente: 'restaurante'
+}
+
+ou equivalente.
+
+Isso facilitará:
+- auditoria;
+- reimpressão;
+- testes;
+- diagnóstico.
+
+============================================================
+29. MESMO NÚMERO DO PEDIDO
+============================================================
+
+Todas as vias físicas devem mostrar o mesmo número comercial.
+
+Nunca criar:
+Pedido 101 Restaurante
+Pedido 101 Lanche
+
+Isso é proibido.
+
+Existe apenas:
+
+Pedido 101
+
+O que muda é o conteúdo/destino físico.
+
+============================================================
+30. PEDIDO + ESPELHO
+============================================================
+
+Preservar a arquitetura atual:
+
+PEDIDO inicial
+   ↓
+impressão principal
+   ↓
+produção
+   ↓
+ESPELHO
+   ↓
+pedido pode ser marcado como pronto conforme as regras existentes
+
+Não quebrar:
+- grupo de impressão;
+- itemsSnapshot;
+- itemIds;
+- mirrorConfirmed;
+- reprint;
+- void;
+- histórico.
+
+Cada lote deve continuar cobrindo exatamente os itens do lançamento correspondente.
+
+============================================================
+31. PEDIDOS ADICIONAIS
+============================================================
+
+Pedido adicional NÃO deve reimprimir itens antigos sem motivo.
+
+A nova lógica deve continuar respeitando:
+itemsSnapshot
+itemIds
+grupoImpressaoId
+
+Se o atendente adicionar dois itens depois:
+- o novo lote contém os novos itens;
+- a via principal completa desse lote pode mostrar os itens desse novo lançamento/lote conforme a regra atual;
+- não duplicar fisicamente itens antigos.
+
+Se a especificação existente do projeto define o lançamento como a unidade de impressão, preserve-a.
+
+Não alterar essa semântica apenas por causa do Android.
+
+============================================================
+32. OFFLINE / IMPRESSORA OFFLINE
+============================================================
+
+Se a impressora principal do ambiente estiver offline:
+
+origemAtendimento = restaurante
+Cozinha Restaurante offline
+
+Então:
+- criar o job de forma controlada;
+- marcar falha/pendente conforme modelo existente;
+- NÃO redirecionar silenciosamente para Cozinha Lanche;
+- não mudar a origem do pedido;
+- não fingir que imprimiu;
+- mostrar alerta claro.
+
+Se Sucos estiver offline:
+- o job do ambiente pode ser impresso;
+- o job de Sucos fica pendente/falha;
+- não duplicar sucos em outra impressora sem regra explícita de reserva.
+
+Se existir impressora reserva já suportada, respeitar a regra de reserva existente sem mudar o ambiente.
+
+============================================================
+33. APP ANDROID + LOGIN
+============================================================
+
+Não remover o sistema de login existente.
+
+Fluxo:
+
+1. Instalar APK.
+2. Escanear QR Code de configuração gerado pelo SITE.
+3. Testar conexão.
+4. Salvar deviceId + servidor + ambiente.
+5. Usuário faz login.
+6. Utilizar o PDV.
+
+A configuração do terminal é diferente da autenticação do usuário.
+
+Se o servidor estiver indisponível, mostrar primeiro o problema de conectividade.
+
+O ambiente operacional não deve ser um campo digitado ou escolhido livremente durante o login.
+
+============================================================
+34. IDENTIDADE DO DISPOSITIVO
+============================================================
+
+Criar um deviceId persistente.
+
+Exemplo:
+
+terminal-<uuid>
+
+Não usar IMEI.
+Não usar MAC address.
+
+Gerar UUID na primeira instalação/configuração e persistir.
+
+Enviar ao backend em chamadas relevantes, por exemplo:
+X-Device-Id
+
+e:
+
+X-Operating-Environment
+
+quando apropriado.
+
+Ainda assim, a fonte de verdade do pedido deve ser o campo salvo no próprio Order.
+
+============================================================
+35. SERVER BASE URL E HEADERS
+============================================================
+
+Padronizar um cliente HTTP central.
+
+Ele deve ser capaz de enviar:
+
+X-Device-Id
+X-Operating-Environment
+
+e, quando autenticado:
+Authorization
+
+Não duplicar fetchs configuracionais em dezenas de arquivos.
+
+Criar um serviço/cliente:
+
+apiClient.ts
+
+ou adaptar um existente.
+
+============================================================
+36. MULTI-CLIENTE — PONTO CRÍTICO
+============================================================
+
+ATENÇÃO:
+
+O projeto atual possui LocalStore + snapshots completos no frontend e POST/GET de snapshot no backend.
+
+Com Android + navegador + mais de um terminal escrevendo ao mesmo SQLite, NÃO é seguro simplesmente deixar dois clientes sobrescreverem o snapshot inteiro.
+
+Isso pode causar:
+- perda de pedidos;
+- perda de pagamentos;
+- conflito de conta;
+- perda de impressões;
+- último escritor vencendo.
+
+Portanto, antes de declarar a arquitetura multi-terminal pronta, implementar proteção de concorrência.
+
+Preferência:
+
+A) API transacional do backend para operações críticas.
+
+Ou, no mínimo:
+
+B) versionamento do snapshot:
+- servidor mantém revision;
+- cliente informa baseRevision;
+- servidor rejeita gravação obsoleta com 409;
+- cliente recarrega e reconcilia;
+- nunca sobrescreve silenciosamente dados mais novos.
+
+Para operações críticas, prefira endpoints específicos no backend:
+- criação de pedido;
+- adição de itens;
+- pagamento;
+- espelho;
+- alteração de estado;
+- impressão;
+- configuração.
+
+Não é necessário reescrever todo o sistema imediatamente, mas não deixe o Android depender de um "último snapshot ganha" sem proteção.
+
+Documentar qualquer parte ainda baseada em snapshot.
+
+============================================================
+37. API DE CONFIGURAÇÃO DO TERMINAL
+============================================================
+
+A configuração do terminal deve ser gerada pelo SITE.
+
+O SITE deve possuir uma área para gerar uma configuração de terminal:
+
+- ambiente: RESTAURANTE ou LANCHE;
+- serverBaseUrl;
+- token/código de pareamento opcional;
+- QR Code.
+
+Pode existir uma API como:
+
+GET /api/terminal/config
+POST /api/terminal/pair
+
+ou outra equivalente, desde que o fluxo permaneça simples.
+
+O principal objetivo é que o Android receba a configuração em vez de escolher o ambiente.
+
+A configuração continua pertencendo ao dispositivo/terminal, mas sua fonte de criação é o SITE.
+
+O servidor pode registrar:
+- deviceId;
+- ambiente atual;
+- última conexão;
+- data da configuração.
+
+Não salvar "ambiente = restaurante" como configuração global única para todo o restaurante, porque podem existir vários terminais em ambientes diferentes.
+
+============================================================
+38. AUDITORIA
+============================================================
+
+Ao:
+- configurar ambiente;
+- alterar ambiente;
+- alterar servidor/IP;
+- forçar reconfiguração;
+
+registrar auditoria quando houver usuário.
+
+Exemplo:
+
+AÇÃO:
+TERMINAL_AMBIENTE_ALTERADO
+
+detalhes:
+de: restaurante
+para: lanche
+deviceId: ...
+usuario: ...
+horario: ...
+
+============================================================
+39. INTERFACE
+============================================================
+
+Criar uma aparência simples, profissional e touch-friendly.
+
+Primeira configuração Android:
+- botões grandes;
+- textos claros;
+- bom contraste;
+- suporte a celular/tablet;
+- evitar telas minúsculas;
+- usar o mesmo design system do PDV.
+
+No topo do PDV:
+
+[RESTaurante]
+ou
+[Lanche]
+
+e:
+[Servidor: 192.168.x.x:3001]
+[Online]
+
+Não exibir IP completo o tempo todo se ficar poluído, mas permitir ver nos detalhes.
+
+============================================================
+40. PERSISTÊNCIA NATIVA NO ANDROID
+============================================================
+
+Usar armazenamento apropriado para:
+- deviceId;
+- serverBaseUrl;
+- ambienteOperacional;
+- versão de configuração.
+
+Pode usar Capacitor Preferences ou solução equivalente.
+
+Não usar senha em plain text.
+
+Se token de sessão for persistido, seguir as práticas atuais do projeto e não criar um mecanismo de senha paralelo.
+
+============================================================
+41. RECONFIGURAÇÃO DO APP
+============================================================
+
+Criar uma ação:
+"Reconfigurar terminal"
+
+Ela deve:
+- pedir confirmação;
+- mostrar o ambiente atual;
+- mostrar servidor atual;
+- permitir alterar;
+- testar;
+- salvar.
+
+Não apagar:
+- pedidos históricos;
+- dados do restaurante;
+- banco SQLite;
+- configurações globais.
+
+A configuração do terminal é separada dos dados comerciais.
+
+============================================================
+42. BUILD ANDROID
+============================================================
+
+Criar scripts no package.json para que o CODEX consiga executar todo o processo sem abrir o Android Studio, por exemplo:
+
+"android:init"
+"android:sync"
+"android:build:debug"
+"android:build:release"
+
+Adaptar nomes aos scripts existentes.
+
+Fluxo esperado pelo Codex, SEM ABRIR ANDROID STUDIO:
+
+npm install
+
+npm run build
+
+npx cap sync android
+
+cd android
+gradlew.bat assembleDebug
+
+Para Linux/macOS:
+./gradlew assembleDebug
+
+Criar/usar scripts npm equivalentes, por exemplo:
+- npm run android:init
+- npm run android:sync
+- npm run android:build:debug
+- npm run android:build:release
+
+O build deve ser executável integralmente por terminal/CLI.
+Nenhuma etapa de aceite deve depender da interface do Android Studio.
+
+Gerar:
+
+android/app/build/outputs/apk/debug/app-debug.apk
+
+Também preparar release build sem colocar senha/keystore no Git.
+
+Se não houver keystore, gerar release unsigned ou documentar claramente o passo de assinatura.
+
+============================================================
+43. ARQUIVOS DE DOCUMENTAÇÃO
+============================================================
+
+Criar:
+
+README_ANDROID.md
+
+Explicar:
+
+1. pré-requisitos;
+2. Node;
+3. Android SDK e ferramentas de build instaladas;
+4. SDK;
+5. JDK;
+6. npm install;
+7. build web;
+8. sync Capacitor;
+9. executar o build Android diretamente pela CLI/Gradle;
+10. gerar APK;
+11. instalar APK;
+12. configurar Wi-Fi;
+13. informar IP do servidor;
+14. testar /api/health;
+15. solucionar firewall;
+16. trocar ambiente;
+17. gerar release.
+
+Criar também:
+
+docs/ARQUITETURA_AMBIENTE_E_IMPRESSAO.md
+
+Com:
+- diagrama;
+- matriz de roteamento;
+- exemplos;
+- regras de mixed order;
+- regra de sucos;
+- diferenças entre ambiente/origem/catalogo.
+
+============================================================
+44. SERVER /api/health
+============================================================
+
+Garantir que:
+
+GET /api/health
+
+seja acessível pela LAN.
+
+Retornar algo suficiente para o app exibir:
+
+status
+timestamp
+database status
+bootstrap
+schemaVersion
+integrity
+nome do restaurante, se disponível
+
+Não retornar senha, hash ou dados sensíveis desnecessários.
+
+============================================================
+45. TESTES UNITÁRIOS
+============================================================
+
+Criar testes para:
+
+ENV1:
+primeira configuração salva restaurante.
+
+ENV2:
+primeira configuração salva lanche.
+
+ENV3:
+configuração persiste após reiniciar app.
+
+ENV4:
+IP inválido é rejeitado.
+
+ENV5:
+porta inválida é rejeitada.
+
+ENV6:
+serverBaseUrl é montado corretamente.
+
+ENV7:
+health test reconhece servidor online.
+
+ENV8:
+erro de servidor é reportado.
+
+SITE1:
+primeira configuração do site exige ambiente obrigatório.
+
+SITE2:
+site configurado como restaurante cria pedido com origem restaurante.
+
+SITE3:
+site configurado como lanche cria pedido com origem lanche.
+
+SITE4:
+pedido criado pelo site não depende do app Android.
+
+SITE5:
+pedido misto criado pelo site continua sendo uma única ordem.
+
+SITE6:
+site e Android podem criar pedidos simultaneamente no mesmo backend,
+cada um preservando sua origemAtendimento correta.
+
+------------------------------------------------------------
+
+ROTEAMENTO:
+
+IMP1:
+origem restaurante -> Cozinha Restaurante.
+
+IMP2:
+origem lanche -> Cozinha Lanche.
+
+IMP3:
+a outra cozinha não recebe.
+
+IMP4:
+pedido misto continua sendo uma única ordem.
+
+IMP5:
+pedido misto em terminal restaurante -> Cozinha Restaurante recebe todos os itens.
+
+IMP6:
+pedido misto em terminal lanche -> Cozinha Lanche recebe todos os itens.
+
+IMP7:
+Sucos recebe somente sucos.
+
+IMP8:
+Sucos não depende da origem do terminal.
+
+IMP9:
+Espelho usa o ambiente do pedido.
+
+IMP10:
+outra impressora de espelho não recebe.
+
+IMP11:
+mesmo número do pedido em todos os jobs.
+
+IMP12:
+itensSnapshot é preservado.
+
+IMP13:
+pedido adicional só contém itens novos no lote.
+
+IMP14:
+reimpressão não cria pedido novo.
+
+IMP15:
+item multicatálogo não duplica entre cozinhas.
+
+IMP16:
+suco compartilhado pode estar no pedido completo E na impressora Sucos.
+
+IMP17:
+se a cozinha principal estiver offline, não redirecionar automaticamente para a outra cozinha.
+
+IMP18:
+se Sucos estiver offline, marcar apenas o job de Sucos como falha/pendente.
+
+------------------------------------------------------------
+
+CONCORRÊNCIA:
+
+SYNC1:
+dois dispositivos não podem sobrescrever silenciosamente o mesmo snapshot.
+
+SYNC2:
+versão antiga recebe 409 ou outra proteção explícita.
+
+SYNC3:
+pedido criado por um terminal continua com sua origem correta.
+
+SYNC4:
+terminal restaurante e terminal lanche podem operar simultaneamente.
+
+============================================================
+46. TESTES DE INTEGRAÇÃO DO FLUXO COMPLETO
+============================================================
+
+Simular:
+
+Cliente WEB A:
+ambiente = restaurante
+
+Cliente WEB B:
+ambiente = lanche
+
+Terminal Android A:
+ambiente = restaurante
+
+Terminal Android B:
+ambiente = lanche
+
+Todos conectados ao mesmo servidor.
+
+Terminal A cria:
+R1 + L1 + S1
+
+Esperado:
+Pedido único.
+Origem restaurante.
+Cozinha Restaurante -> R1 + L1 + S1
+Sucos -> S1
+
+Terminal B cria:
+R2 + L2 + S2
+
+Esperado:
+Pedido único.
+Origem lanche.
+Cozinha Lanche -> R2 + L2 + S2
+Sucos -> S2
+
+Nenhum pedido deve aparecer duplicado.
+
+Também simular:
+
+Site A:
+ambiente = restaurante
+
+Site B:
+ambiente = lanche
+
+Site A cria:
+R1 + L1 + S1
+
+Esperado:
+Pedido único.
+Origem restaurante.
+Cozinha Restaurante -> R1 + L1 + S1
+Sucos -> S1
+
+Site B cria:
+R2 + L2 + S2
+
+Esperado:
+Pedido único.
+Origem lanche.
+Cozinha Lanche -> R2 + L2 + S2
+Sucos -> S2
+
+Nenhum pedido do site depende da presença do APK Android.
+Nenhum pedido deve aparecer duplicado.
+
+============================================================
+47. TESTES DE IMPRESSÃO COM AS 5 IMPRESSORAS
+============================================================
+
+Criar mock/fake printers exclusivamente em testes.
+
+NÃO reintroduzir impressoras fake no estado inicial de produção.
+
+Testar as cinco.
+
+Exemplo:
+
+printer-rest-kitchen
+printer-snack-kitchen
+printer-juice
+printer-rest-mirror
+printer-snack-mirror
+
+Não depender do nome visual para o algoritmo.
+
+============================================================
+48. ESTADO INICIAL DE IMPRESSORAS
+============================================================
+
+Preservar a decisão existente de que impressoras reais são configuradas pela interface.
+
+Não recriar cinco impressoras fake na instalação real.
+
+Pode existir fixture de teste.
+
+============================================================
+49. REGRAS DE REIMPRESSÃO
+============================================================
+
+Reprint deve manter o mesmo conteúdo do job original.
+
+Se reimprimir:
+- Cozinha Restaurante;
+- Cozinha Lanche;
+- Sucos;
+- Espelho Restaurante;
+- Espelho Lanche;
+
+usar o documento/job original.
+
+Não recalcular a origem usando o catálogo atual do produto.
+
+O histórico do job é a fonte correta para reimpressão.
+
+============================================================
+50. PEDIDOS ANTIGOS
+============================================================
+
+Não quebrar pedidos existentes.
+
+Ao abrir um pedido legado sem origemAtendimento:
+- mostrar como legado/desconhecido;
+- não assumir restaurante/lanche sem evidência;
+- não mudar retroativamente o histórico.
+
+Quando possível, usar dados históricos do lote para preservar o destino já registrado.
+
+============================================================
+51. RELATÓRIOS
+============================================================
+
+Onde fizer sentido, permitir filtrar por:
+
+origemAtendimento:
+- Restaurante
+- Lanche
+- Todos
+
+Isso deve ser aditivo.
+
+Não quebrar os relatórios atuais.
+
+============================================================
+52. NÃO FAZER
+============================================================
+
+NÃO:
+- criar dois aplicativos Android diferentes;
+- criar dois backends;
+- criar duas bases SQLite;
+- duplicar Order;
+- separar um pedido misto em dois pedidos comerciais;
+- usar catálogo como substituto da origem do atendimento;
+- mandar pedido principal para as duas cozinhas;
+- usar nome da impressora como regra lógica;
+- colocar IP real hardcoded;
+- apagar dados ao trocar ambiente;
+- reintroduzir impressoras fake em produção;
+- redirecionar falha silenciosamente;
+- usar localhost como servidor no Android;
+- salvar senha em texto puro;
+- fazer snapshot overwrite sem proteção contra concorrência;
+- remover testes existentes só para o novo código passar;
+- fazer mudanças irrelevantes no restante do PDV.
+
+============================================================
+53. ESTRUTURA ESPERADA
+============================================================
+
+A estrutura final pode ficar parecida com:
+
+PDV2.0/
+  android/
+  src/
+    components/
+      terminal/
+        TerminalSetup.tsx
+        TerminalStatus.tsx
+    context/
+    lib/
+      apiUrl.ts
+      deviceConfig.ts
+      apiClient.ts
+      printRouting.ts
+    types.ts
+  server/
+    routes/
+    printer/
+  docs/
+    ARQUITETURA_AMBIENTE_E_IMPRESSAO.md
+  README_ANDROID.md
+  capacitor.config.ts
+  package.json
+
+Os nomes podem mudar conforme o projeto, mas a separação de responsabilidades deve ser mantida.
+
+============================================================
+54. FUNÇÕES IMPORTANTES A CRIAR/ADAPTAR
+============================================================
+
+Criar funções claras como:
+
+getDeviceConfig()
+saveDeviceConfig()
+clearDeviceConfig()
+
+getOperatingEnvironment()
+
+validateServerUrl()
+testServerConnection()
+
+getMainKitchenPrinter(environment)
+getMainMirrorPrinter(environment)
+isJuiceItem(item)
+
+resolveOrderPrintDestinations(order)
+
+createPrimaryKitchenPrintJob(order)
+createJuicePrintJob(order, documentType)
+createPrimaryMirrorPrintJob(order)
+createJuiceMirrorPrintJob(order)
+
+Os nomes podem variar.
+
+A ideia é que toda a regra de ambiente/impressão fique testável sem depender da interface.
+
+============================================================
+55. SERVER API DO ANDROID
+============================================================
+
+O app deve consumir pelo menos:
+
+GET /api/health
+GET /api/database
+POST /api/database
+
+e as rotas existentes de impressora quando necessárias.
+
+Se forem criadas novas APIs de sincronização:
+documentá-las e testá-las.
+
+Não colocar lógica de SQLite diretamente dentro do Android.
+
+============================================================
+56. FIREWALL E REDE
+============================================================
+
+Documentar no README:
+
+Windows Firewall:
+permitir a porta do Express na rede privada.
+
+Exemplo:
+3001/TCP
+
+O celular/tablet precisa estar na mesma rede LAN/Wi-Fi do servidor.
+
+Testar no navegador do Android:
+
+http://IP-DO-SERVIDOR:3001/api/health
+
+Se abrir JSON, a conectividade básica está funcionando.
+
+============================================================
+57. IP ALTERADO
+============================================================
+
+O IP fixo/reservado pode mudar por troca de roteador.
+
+Por isso:
+- permitir editar IP;
+- testar;
+- salvar;
+- mostrar erro amigável.
+
+Não exigir recompilação do APK para trocar o IP.
+
+============================================================
+58. FUTURO
+============================================================
+
+Preparar a arquitetura para futuras evoluções:
+
+- descoberta de servidor por QR Code;
+- múltiplos terminais;
+- sincronização em tempo real;
+- WebSocket/SSE;
+- notificações;
+- app de cozinha;
+- app de caixa;
+- indicadores por ambiente;
+- inventário por estação.
+
+Não implementar essas funcionalidades agora sem necessidade.
+
+A arquitetura só precisa não impedir essas evoluções.
+
+============================================================
+59. ACEITE FUNCIONAL
+============================================================
+
+A implementação só está concluída quando:
+
+[ ] npm install funciona
+[ ] npm run lint funciona
+[ ] npm test funciona
+[ ] npm run build funciona
+[ ] Capacitor sincroniza
+[ ] build Android via CLI/Gradle conclui sem abrir Android Studio
+[ ] APK debug é gerado
+[ ] APK instala
+[ ] configuração inicial do site exige Restaurante/Lanche
+[ ] site Restaurante cria pedidos com origemAtendimento=restaurante
+[ ] site Lanche cria pedidos com origemAtendimento=lanche
+[ ] pedidos do site funcionam sem o app Android
+[ ] pedidos do site usam a mesma lógica de impressão do Android
+[ ] primeira inicialização pede QR Code/configuração
+[ ] QR Code de Restaurante configura o terminal como Restaurante
+[ ] QR Code de Lanche configura o terminal como Lanche
+[ ] Android não permite escolher livremente o ambiente
+[ ] IP pode ser digitado
+[ ] conexão /api/health funciona
+[ ] ambiente fica salvo
+[ ] ambiente aparece na interface
+[ ] pedido recebe origemAtendimento
+[ ] pedido misto continua sendo uma única ordem
+[ ] cozinha do ambiente recebe pedido COMPLETO
+[ ] outra cozinha não recebe
+[ ] Sucos recebe apenas sucos
+[ ] espelho segue o ambiente
+[ ] outra impressora de espelho não recebe
+[ ] mesmo número do pedido é preservado
+[ ] impressão offline não finge sucesso
+[ ] reimpressão funciona
+[ ] pedidos adicionais continuam corretos
+[ ] testes cobrem os casos acima
+[ ] README_ANDROID.md existe
+[ ] documentação de arquitetura existe
+
+============================================================
+60. ORDEM DE IMPLEMENTAÇÃO RECOMENDADA
+============================================================
+
+FASE 1
+Ler a base atual.
+Mapear todos os locais que criam Order e CartItem.
+Mapear todas as funções de impressão.
+
+FASE 2
+Adicionar OperatingEnvironment e DeviceSettings.
+
+FASE 3
+Adicionar origemAtendimento ao Order.
+Adicionar catalogoOrigem ao CartItem.
+
+FASE 4
+Criar configuração obrigatória do SITE: ambiente + servidor + geração de QR Code.
+
+FASE 5
+Integrar origemAtendimento aos pedidos WEB e Android.
+
+FASE 6
+Centralizar e corrigir roteamento de impressão.
+
+FASE 7
+Criar testes de site, terminal, origem e roteamento.
+
+FASE 8
+Criar camada API multi-client segura ou versionada.
+
+FASE 9
+Adicionar Capacitor.
+
+FASE 10
+Criar Android e leitura de QR Code.
+
+FASE 11
+Configurar persistência do terminal e conectividade.
+
+FASE 12
+Configurar HTTP/LAN e permissões.
+
+FASE 13
+Build APK exclusivamente por CLI/Gradle.
+
+FASE 14
+Executar lint/build/testes.
+
+FASE 15
+Documentar tudo.
+
+============================================================
+61. COMPORTAMENTO VISUAL DA CONFIGURAÇÃO DO SITE E ANDROID
+============================================================
+
+CONFIGURAÇÃO NO SITE:
+
+--------------------------------
+           PDV 2.0
+
+   Configuração do estabelecimento
+
+Nome: Restaurante Murupi
+
+Ambiente do site:
+[ RESTAURANTE ]
+[ LANCHE ]
+
+Servidor:
+192.168.1.100
+
+Porta:
+3001
+
+[ SALVAR ]
+[ GERAR QR CODE DO TERMINAL ]
+--------------------------------
+
+O ambiente é obrigatório para concluir a configuração do SITE.
+
+QR CODE DO TERMINAL:
+
+--------------------------------
+     CONFIGURAÇÃO DO TERMINAL
+
+Ambiente: RESTAURANTE
+Servidor: 192.168.1.100:3001
+
+        [ QR CODE ]
+--------------------------------
+
+ANDROID — PRIMEIRA ABERTURA:
+
+--------------------------------
+           PDV 2.0
+
+      Configuração do terminal
+
+Escaneie o QR Code gerado no SITE.
+
+      [ 📷 ESCANEAR QR CODE ]
+--------------------------------
+
+Depois da leitura:
+
+--------------------------------
+      Configuração recebida
+
+Ambiente: RESTAURANTE
+Servidor: 192.168.1.100:3001
+
+[ TESTAR CONEXÃO ]
+
+✓ Servidor online
+✓ Banco online
+
+[ CONFIRMAR ]
+--------------------------------
+
+O Android não mostra botões para escolher RESTAURANTE/LANCHE nessa etapa.
+
+Depois abrir Login/PDV.
+
+============================================================
+62. DETALHE IMPORTANTE SOBRE A VIA COMPLETA
+============================================================
+
+A via principal não deve ser uma soma de "vias de setores".
+
+Ela é uma via completa do atendimento.
+
+Exemplo:
+
+PEDIDO 200
+------------------------
+2x Carne de Sol
+1x X-Salada
+1x Pizza
+2x Suco
+------------------------
+
+Quando o terminal é Restaurante:
+essa via vai para COZINHA RESTAURANTE.
+
+Quando o terminal é Lanche:
+essa via vai para COZINHA LANCHE.
+
+A impressão de Sucos é uma via operacional adicional e especializada.
+
+Isso é diferente de dividir o pedido em dois.
+
+============================================================
+63. RELAÇÃO COM O APP ANDROID
+============================================================
+
+O SITE é a origem da configuração operacional.
+
+Exemplo:
+
+SITE 1:
+ambiente = RESTAURANTE
+server = 192.168.1.100:3001
+
+SITE 2/Configuração:
+ambiente = LANCHE
+server = 192.168.1.100:3001
+
+O mesmo servidor pode atender os dois ambientes.
+
+Terminal 1:
+recebe QR do ambiente RESTAURANTE
+-> ambienteOperacional = restaurante
+
+Terminal 2:
+recebe QR do ambiente LANCHE
+-> ambienteOperacional = lanche
+
+Mesmo APK.
+Mesmo código.
+Mesmo backend.
+Mesmo SQLite.
+
+Somente a configuração operacional do terminal muda.
+
+============================================================
+64. IMPLEMENTAÇÃO TÉCNICA DO APP ANDROID
+============================================================
+
+Ao criar Capacitor:
+
+- utilizar webDir apropriado;
+- configurar appId;
+- configurar appName;
+- manter sync reprodutível;
+- não editar arquivos gerados sem necessidade;
+- quando precisar alterar Android nativo, documentar;
+- não colocar arquivos secretos no Git.
+
+Criar uma Activity principal padrão do Capacitor.
+
+Configurar:
+INTERNET
+Network Security Config se necessário
+orientação/responsividade conforme dispositivos alvo
+
+Garantir que:
+- teclado;
+- rotação;
+- tablet;
+- celular;
+- WebView;
+- cache de assets
+
+não quebrem o PDV.
+
+============================================================
+65. APP NÃO DEVE SER UM SIMPLES LINK EXTERNO
+============================================================
+
+Não usar simplesmente:
+"abrir navegador e acessar IP".
+
+Quero um aplicativo Android instalável, com:
+- ícone;
+- splash;
+- armazenamento da configuração;
+- tela de configuração;
+- tela de conectividade;
+- mesma interface do PDV;
+- integração nativa via Capacitor.
+
+O conteúdo web pode ser empacotado no APK e falar com a API remota.
+
+Isso é importante porque o aplicativo precisa continuar sendo um produto Android próprio.
+
+============================================================
+66. RESULTADO FINAL ESPERADO
+============================================================
+
+O projeto final deve permitir:
+
+WEB:
+PDV2.0 continua funcionando normalmente.
+
+ANDROID:
+mesmo PDV dentro de um app Android.
+
+Primeira vez:
+escanear o QR Code gerado pelo SITE.
+
+Depois:
+o ambiente recebido do SITE permanece salvo naquele aparelho.
+
+Pedido:
+a origem vem da configuração do terminal, que foi criada no SITE.
+
+Impressão:
+a cozinha do ambiente imprime o pedido completo.
+Sucos imprime somente sucos.
+Espelho do ambiente imprime o pedido completo.
+Nenhuma cozinha/espelho do outro ambiente recebe o pedido.
+
+Tudo:
+mesmo pedido.
+Mesmo número.
+Mesmo histórico.
+Mesmo backend.
+Mesmo SQLite.
+
+============================================================
+67. ENTREGA OBRIGATÓRIA DO CODEX
+============================================================
+
+Ao finalizar, não apenas diga "feito".
+
+Entregar:
+
+1. lista dos arquivos modificados;
+2. lista dos arquivos criados;
+3. explicação curta da arquitetura;
+4. matriz final de impressão;
+5. comandos executados;
+6. resultado de npm run lint;
+7. resultado de npm test;
+8. resultado de npm run build;
+9. resultado do build/sync Android;
+10. caminho exato do APK gerado;
+11. eventuais problemas restantes;
+12. instruções para instalar no Android;
+13. instruções para configurar o servidor no SITE;
+14. instruções para gerar e escanear o QR Code do terminal;
+15. instruções para trocar Restaurante/Lanche pelo SITE e reconfigurar os terminais.
+
+Se algum passo não puder ser executado por falta de Android SDK/JDK/Build Tools no ambiente do Codex, não fingir sucesso.
+Nesse caso, criar toda a estrutura correta do projeto e informar exatamente o que ficou pendente no ambiente de build.
+
+============================================================
+68. REGRA DE OURO
+============================================================
+
+O pedido é UM SÓ.
+
+O ambiente é do TERMINAL.
+
+A origem do pedido vem do TERMINAL.
+
+A cozinha principal é escolhida pela ORIGEM DO PEDIDO.
+
+A via principal é COMPLETA.
+
+A impressora SUCOS é compartilhada e recebe somente SUCOS.
+
+O espelho usa a mesma origem do pedido.
+
+O catálogo do item não decide a cozinha principal.
+
+Nunca dividir comercialmente um pedido misto em dois pedidos.
+
+IMPLEMENTE AGORA, usando a base real do repositório, preservando o que já funciona e criando testes para provar todas as regras acima.
+
+============================================================
+ADENDO B — BUILD ANDROID OBRIGATORIAMENTE PELO CODEX/CLI
+============================================================
+
+O Codex deve criar, sincronizar e compilar o aplicativo Android sem abrir o
+Android Studio.
+
+REGRA OBRIGATÓRIA:
+
+O Codex deve:
+1. criar/alterar a estrutura Capacitor/Android;
+2. instalar dependências necessárias;
+3. gerar/sincronizar a pasta android/;
+4. executar o Gradle pela linha de comando;
+5. gerar o APK;
+6. verificar que o APK realmente existe;
+7. informar o caminho exato do APK e o resultado do build.
+
+NÃO usar como etapa de implementação/aceite:
+- npx cap open android;
+- abertura manual do Android Studio;
+- cliques em menus do Android Studio;
+- "abra o Android Studio para compilar".
+
+O Android Studio pode estar instalado na máquina, mas NÃO faz parte do fluxo
+de build exigido ao Codex.
+
+O Gradle Wrapper do próprio projeto deve ser a referência do build.
+
+Windows:
+cd android
+gradlew.bat assembleDebug
+
+Linux/macOS:
+cd android
+./gradlew assembleDebug
+
+Criar ou manter no package.json scripts como:
+
+"android:init"
+"android:sync"
+"android:build:debug"
+"android:build:release"
+
+O script de build deve executar o build real e não um mock.
+
+Quando o build for executado pelo Codex, informar:
+- comando utilizado;
+- sucesso/falha;
+- variant/build type;
+- caminho do APK;
+- eventuais erros ou warnings relevantes.
+
+Se o ambiente do Codex não possuir Android SDK, JDK ou Build Tools compatíveis,
+NÃO fingir sucesso. Criar toda a estrutura possível e informar exatamente a
+dependência ausente e o passo que ficou pendente.
+
+Aceite principal:
+android/app/build/outputs/apk/debug/app-debug.apk
+
+A existência desse arquivo, juntamente com a saída bem-sucedida do Gradle, é
+a evidência do build Android.
+
+============================================================
+ADENDO C — SITE E ANDROID USAM A MESMA REGRA COMERCIAL
+============================================================
+
+Clientes que podem criar pedidos:
+- WEB/SITE;
+- ANDROID.
+
+Todos criam o mesmo tipo de Order.
+
+WEB:
+- Site Restaurante -> origemAtendimento = restaurante;
+- Site Lanche -> origemAtendimento = lanche.
+
+ANDROID:
+- Terminal configurado pelo SITE como Restaurante -> origemAtendimento = restaurante;
+- Terminal configurado pelo SITE como Lanche -> origemAtendimento = lanche.
+
+Nunca criar:
+- Order especial para WEB;
+- Order especial para Android;
+- backend separado;
+- SQLite separado;
+- lógica de impressão duplicada.
+
+A origemAtendimento é determinada na criação e persistida no pedido.
+
+A função de roteamento continua única:
+
+resolveOrderPrintDestinations(order)
+
+Consequentemente:
+
+WEB Restaurante + Android Restaurante
+-> Cozinha Restaurante + Espelho Restaurante + Sucos quando houver sucos.
+
+WEB Lanche + Android Lanche
+-> Cozinha Lanche + Espelho Lanche + Sucos quando houver sucos.
+
+============================================================
+ADENDO D — MATRIZ FINAL WEB + ANDROID
+============================================================
+
+CLIENTE | AMBIENTE | PEDIDO PRINCIPAL | ESPELHO | SUCOS
+
+WEB      | Restaurante | Cozinha Restaurante | Espelho Restaurante | Sucos
+WEB      | Lanche      | Cozinha Lanche      | Espelho Lanche      | Sucos
+Android  | Restaurante | Cozinha Restaurante | Espelho Restaurante | Sucos
+Android  | Lanche      | Cozinha Lanche      | Espelho Lanche      | Sucos
+
+Em todos os casos:
+- pedido principal = pedido completo;
+- espelho = pedido completo;
+- Sucos = somente itens de suco;
+- outra cozinha = não recebe;
+- outro espelho = não recebe;
+- mesmo número comercial;
+- um único Order.
+
+============================================================
+ADENDO E — ACEITE ESPECÍFICO DOS PEDIDOS PELO SITE
+============================================================
+
+[ ] configuração inicial do site mantém as informações atuais do estabelecimento;
+[ ] configuração inicial do site exige RESTAURANTE ou LANCHE;
+[ ] não é possível concluir sem ambiente;
+[ ] ambiente do site fica persistido;
+[ ] ambiente aparece na administração;
+[ ] troca de ambiente exige confirmação;
+[ ] troca não altera pedidos antigos;
+[ ] site Restaurante cria origemAtendimento=restaurante;
+[ ] site Lanche cria origemAtendimento=lanche;
+[ ] site cria pedidos sem APK Android;
+[ ] site permite pedido misto;
+[ ] pedido misto continua sendo um único Order;
+[ ] site usa o mesmo roteamento de impressão do Android;
+[ ] pedidos WEB e Android coexistem no mesmo SQLite;
+[ ] cada pedido mantém sua própria origem correta;
+[ ] não há duplicação comercial de pedidos.
+
+============================================================
+ADENDO F — ENTREGA FINAL OBRIGATÓRIA DO CODEX
+============================================================
+
+Ao finalizar, o Codex deve entregar:
+
+1. arquivos modificados;
+2. arquivos criados;
+3. arquitetura resumida;
+4. matriz final de impressão WEB + Android;
+5. comandos executados;
+6. resultado de npm run lint;
+7. resultado de npm test;
+8. resultado de npm run build;
+9. resultado de npx cap sync android;
+10. resultado de npm run android:build:debug ou equivalente;
+11. caminho exato do APK gerado;
+12. problemas restantes;
+13. instruções para instalar o APK;
+14. instruções para configurar IP;
+15. instruções para configurar Restaurante/Lanche no site;
+16. instruções para trocar o ambiente do site;
+17. instruções para alterar o ambiente no SITE e gerar novo QR Code;
+18. instruções para reconfigurar o Android escaneando o novo QR Code.
+
+Não utilizar "Android Studio abriu" como prova de sucesso.
+
+A prova é:
+- Gradle/CLI executado com sucesso;
+- APK gerado;
+- caminho do APK informado;
+- demais testes obrigatórios aprovados.
+
+============================================================
+REGRA DE OURO — VERSÃO ATUALIZADA
+============================================================
+
+O pedido é UM SÓ.
+
+O SITE é responsável por definir o ambiente operacional.
+
+O ambiente do SITE é obrigatório:
+- RESTAURANTE
+- LANCHE
+
+O SITE gera a configuração do terminal, preferencialmente por QR Code.
+
+O ANDROID apenas recebe essa configuração e a salva.
+
+Nunca obrigar o operador do Android a escolher o ambiente manualmente.
+
+Origem do pedido:
+- SITE Restaurante -> origemAtendimento = restaurante;
+- SITE Lanche -> origemAtendimento = lanche;
+- Android configurado pelo SITE como Restaurante -> origemAtendimento = restaurante;
+- Android configurado pelo SITE como Lanche -> origemAtendimento = lanche.
+
+O servidor tem UM IP/hostname e UMA porta. O ambiente não precisa de um IP diferente.
+
+A cozinha principal é escolhida pela ORIGEM DO PEDIDO.
+
+A via principal é COMPLETA.
+
+A impressora SUCOS é compartilhada e recebe somente SUCOS.
+
+O espelho usa a mesma origem do pedido.
+
+O catálogo do item não decide a cozinha principal.
+
+Nunca dividir comercialmente um pedido misto em dois pedidos.
+
+O SITE deve criar pedidos sem depender do APP ANDROID.
+
+O ANDROID deve ser criado e compilado pelo CODEX exclusivamente via CLI/Gradle,
+sem abrir o Android Studio.
+
