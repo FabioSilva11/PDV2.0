@@ -1,0 +1,1770 @@
+Você é um engenheiro de software sênior responsável por evoluir o projeto PDV 2.0 existente neste repositório:
+
+https://github.com/FabioSilva11/PDV2.0
+
+IMPORTANTE: NÃO comece recriando o projeto do zero.
+
+Primeiro analise profundamente a implementação atual, entenda os fluxos existentes, preserve o que já funciona e faça uma evolução arquitetural controlada.
+
+==================================================
+
+1. OBJETIVO PRINCIPAL
+   ==================================================
+
+Quero atualizar a arquitetura atual do PDV 2.0 para separar claramente:
+
+1. SITE/PDV COMPLETO
+2. APLICATIVO ANDROID PARA GARÇONS E ATENDENTES
+3. SERVIDOR/API CENTRAL
+4. BANCO DE DADOS CENTRAL
+5. SISTEMA CENTRALIZADO DE IMPRESSÃO
+
+O aplicativo Android NÃO deve ser uma representação completa do site.
+
+O aplicativo Android será um cliente operacional especializado exclusivamente para garçons e atendentes.
+
+O SITE continuará sendo o sistema completo de PDV, administração e operação.
+
+A arquitetura final deve ser:
+
+```
+                REDE LOCAL
+
+            ┌──────────────────────┐
+            │    SERVIDOR PDV      │
+            │                      │
+            │ Node.js / Express    │
+            │ REST API             │
+            │ SQLite               │
+            │ Regras de negócio    │
+            │ Pedidos              │
+            │ Mesas                │
+            │ Contas               │
+            │ Pagamentos           │
+            │ Impressão             │
+            │ Autenticação         │
+            └──────────┬───────────┘
+                       │
+         ┌─────────────┴─────────────┐
+         │                           │
+   ┌─────▼──────┐              ┌─────▼──────┐
+   │ SITE / PDV │              │ APP ANDROID│
+   │ COMPLETO   │              │ GARÇONS    │
+   │ WEB        │              │ ATENDENTES │
+   └────────────┘              └────────────┘
+```
+
+Os dois clientes devem utilizar a mesma API e o mesmo banco central.
+
+O Android NÃO deve manipular diretamente o SQLite.
+
+O Android NÃO deve conter a lógica principal de impressão.
+
+O Android NÃO deve depender do React do site para funcionar.
+
+O Android deve possuir interface própria e fluxo próprio.
+
+==================================================
+2. ANALISAR O PROJETO EXISTENTE ANTES DE ALTERAR
+================================================
+
+Antes de modificar qualquer arquivo:
+
+* analise toda a estrutura do repositório;
+* identifique frontend;
+* identifique backend;
+* identifique SQLite;
+* identifique models/types;
+* identifique RestaurantContext;
+* identifique criação de pedidos;
+* identifique mesas;
+* identifique contas;
+* identifique delivery;
+* identifique pagamentos;
+* identifique espelhos;
+* identifique fila de impressão;
+* identifique configuração de impressoras;
+* identifique terminal;
+* identifique autenticação;
+* identifique testes;
+* identifique fluxo atual do Capacitor/Android.
+
+Arquivos importantes que já existem e devem ser considerados:
+
+* src/context/RestaurantContext.tsx
+* src/types.ts
+* src/lib/apiClient.ts
+* src/lib/databaseApi.ts
+* src/lib/deviceConfig.ts
+* src/lib/printRouting.ts
+* src/components/pdv/POSView.tsx
+* src/components/orders/OrdersView.tsx
+* src/components/terminal/TerminalSetup.tsx
+* server/routes/database.ts
+* server/routes/terminal.ts
+* server/printer/index.ts
+* src/tests/ambiente-impressao.test.tsx
+* ANALISE_PDV.md
+* README_ANDROID.md
+
+Não remover funcionalidades existentes sem justificativa técnica.
+
+Antes da implementação, produza internamente um mapa de dependências para entender onde cada regra está atualmente implementada.
+
+==================================================
+3. PROBLEMA ATUAL QUE DEVE SER CORRIGIDO
+========================================
+
+Hoje o projeto utiliza grande parte da lógica de negócio dentro do frontend React, especialmente no RestaurantContext, e a persistência ocorre através de snapshot do banco.
+
+O Android atual utiliza essencialmente o mesmo código React/TypeScript do site empacotado com Capacitor.
+
+Esse modelo deve ser alterado.
+
+A nova arquitetura deve transformar o servidor em fonte oficial da verdade.
+
+Fluxo desejado:
+
+SITE
+↓
+REST API
+↓
+SERVIDOR
+↓
+BANCO DE DADOS
+
+ANDROID
+↓
+REST API
+↓
+SERVIDOR
+↓
+BANCO DE DADOS
+
+Não fazer:
+
+ANDROID
+↓
+código do SITE
+↓
+estado local do React
+↓
+snapshot completo
+
+==================================================
+4. REGRA FUNDAMENTAL: SERVIDOR É A FONTE DA VERDADE
+===================================================
+
+Toda operação importante deve ser validada e processada pelo servidor.
+
+Exemplos:
+
+* criar pedido;
+* alterar pedido;
+* adicionar item;
+* remover item;
+* cancelar;
+* fechar pedido;
+* adicionar pagamento;
+* selecionar mesa;
+* abrir conta;
+* associar pedido à conta;
+* gerar número do pedido;
+* verificar caixa;
+* verificar ambiente;
+* determinar impressão;
+* gerar espelho;
+* registrar terminal;
+* registrar auditoria.
+
+O frontend e o Android devem enviar comandos para a API.
+
+O servidor valida, processa e grava.
+
+Nenhum cliente deve ser autoridade sobre regras críticas.
+
+==================================================
+5. NOVA ORGANIZAÇÃO DO BACKEND
+==============================
+
+Organize o backend de forma modular.
+
+Sempre que possível, utilizar estrutura semelhante a:
+
+server/
+routes/
+auth.ts
+bootstrap.ts
+orders.ts
+tables.ts
+accounts.ts
+payments.ts
+menu.ts
+delivery.ts
+mirror.ts
+printers.ts
+terminal.ts
+database.ts
+
+services/
+orderService.ts
+tableService.ts
+accountService.ts
+paymentService.ts
+menuService.ts
+deliveryService.ts
+mirrorService.ts
+printerService.ts
+terminalService.ts
+auditService.ts
+
+repositories/
+orderRepository.ts
+tableRepository.ts
+accountRepository.ts
+paymentRepository.ts
+menuRepository.ts
+printerRepository.ts
+
+middleware/
+auth.ts
+terminal.ts
+validation.ts
+errorHandler.ts
+
+validation/
+orderSchemas.ts
+paymentSchemas.ts
+terminalSchemas.ts
+
+Não é obrigatório copiar exatamente essa estrutura, mas a separação de responsabilidades deve existir.
+
+==================================================
+6. API REST DO PDV
+==================
+
+Criar ou evoluir uma API real para as operações de negócio.
+
+Endpoints esperados:
+
+AUTENTICAÇÃO
+
+POST /api/auth/login
+POST /api/auth/logout
+GET  /api/auth/me
+
+CONFIGURAÇÃO INICIAL
+
+GET  /api/bootstrap
+GET  /api/health
+
+TERMINAL
+
+GET  /api/terminal/config
+POST /api/terminal/pair
+GET  /api/terminal/terminals
+
+CARDÁPIO
+
+GET /api/menu
+GET /api/menu/categories
+GET /api/menu/products
+GET /api/menu/products/:id
+
+MESAS
+
+GET /api/tables
+GET /api/tables/:id
+POST /api/tables/:id/open
+POST /api/tables/:id/close
+GET /api/tables/:id/account
+
+CONTAS
+
+GET /api/accounts
+GET /api/accounts/:id
+POST /api/accounts
+PATCH /api/accounts/:id
+
+PEDIDOS
+
+GET /api/orders
+GET /api/orders/:id
+POST /api/orders
+PATCH /api/orders/:id
+POST /api/orders/:id/items
+PATCH /api/orders/:id/items/:itemId
+DELETE /api/orders/:id/items/:itemId
+PATCH /api/orders/:id/status
+POST /api/orders/:id/cancel
+
+PAGAMENTOS
+
+GET /api/orders/:id/payments
+POST /api/orders/:id/payment
+DELETE /api/orders/:id/payment/:paymentId
+
+DELIVERY
+
+GET /api/delivery/orders
+GET /api/delivery/orders/:id
+PATCH /api/delivery/orders/:id/status
+
+ESPELHO
+
+POST /api/orders/:id/mirror
+GET /api/orders/:id/mirror
+
+IMPRESSÃO
+
+GET /api/printers
+POST /api/printers/print
+POST /api/printers/print-with-format
+POST /api/printers/reprint
+GET /api/printers/:id/status
+
+Não criar endpoints inúteis apenas para cumprir uma lista.
+
+O princípio é: cada recurso importante deve possuir uma API clara, validada e reutilizável tanto pelo site quanto pelo Android.
+
+==================================================
+7. MODELO DE ORIGEM DO ATENDIMENTO
+==================================
+
+Preservar os conceitos já existentes:
+
+OperatingEnvironment:
+
+* restaurante
+* lanche
+
+OrigemCliente:
+
+* web
+* android
+
+Essas informações têm significados diferentes.
+
+origemAtendimento:
+
+indica em qual ambiente o pedido está sendo realizado.
+
+Valores:
+
+restaurante
+lanche
+
+origemCliente:
+
+indica qual cliente criou a operação.
+
+Valores:
+
+web
+android
+
+Exemplo:
+
+Garçom usando Android no restaurante:
+
+origemAtendimento = restaurante
+origemCliente = android
+
+Garçom usando Android no lanche:
+
+origemAtendimento = lanche
+origemCliente = android
+
+Caixa usando o site no restaurante:
+
+origemAtendimento = restaurante
+origemCliente = web
+
+Caixa usando o site no lanche:
+
+origemAtendimento = lanche
+origemCliente = web
+
+IMPORTANTE:
+
+Não usar origemCliente para determinar a impressora.
+
+A impressora deve ser determinada principalmente pelo ambiente de atendimento e pelas regras dos itens.
+
+==================================================
+8. PEDIDO MISTO
+===============
+
+Preservar esta regra fundamental.
+
+Um pedido pode conter simultaneamente produtos associados ao restaurante e ao lanche.
+
+Esse pedido NÃO deve ser dividido em dois pedidos comerciais.
+
+Ele continua sendo um único pedido.
+
+Exemplo:
+
+Pedido 125
+
+1x Prato restaurante
+1x Hambúrguer lanche
+1x Batata lanche
+1x Suco
+1x Refrigerante
+
+O pedido continua sendo:
+
+Pedido 125
+
+O sistema pode gerar diferentes jobs de impressão conforme as regras.
+
+A via principal da cozinha deve continuar podendo apresentar o pedido completo quando essa for a regra do ambiente de atendimento.
+
+==================================================
+9. REGRAS DE IMPRESSÃO
+======================
+
+PRESERVAR E CENTRALIZAR as regras já existentes em printRouting.ts.
+
+Não criar uma nova lógica paralela no Android.
+
+As regras atuais precisam continuar funcionando.
+
+CONFIGURAÇÃO:
+
+LANCHES
+
+* lanche
+* espelho do lanche
+* cozinha do lanche
+
+RESTAURANTE
+
+* espelho restaurante
+* cozinha restaurante
+
+IMPRESSORA COMPARTILHADA
+
+* sucos
+
+RESTAURANTE:
+
+Pedidos feitos no ambiente restaurante devem ser direcionados para as estações do restaurante.
+
+Itens de suco devem também ser direcionados para a impressora compartilhada "sucos".
+
+LANCHES:
+
+Pedidos feitos no ambiente lanche devem ser direcionados para as estações do lanche.
+
+Itens de suco devem ser direcionados para "sucos" quando aplicável às regras já existentes.
+
+ESPELHO:
+
+Restaurante:
+→ espelho restaurante
+
+Lanche:
+→ espelho do lanche
+
+COZINHA:
+
+Restaurante:
+→ cozinha restaurante
+
+Lanche:
+→ cozinha do lanche
+
+==================================================
+10. IMPORTANTE: IMPRESSÃO NO SERVIDOR
+=====================================
+
+O Android não deve conhecer diretamente:
+
+* IP das impressoras;
+* USB das impressoras;
+* protocolo ESC/POS;
+* fila física;
+* retry;
+* reconexão;
+* fallback;
+* configuração de impressora.
+
+Essas responsabilidades devem permanecer no servidor.
+
+Fluxo:
+
+Android
+→ POST /api/orders
+→ servidor salva pedido
+→ servidor calcula jobs
+→ servidor coloca jobs na fila
+→ PrinterManager processa
+→ impressora física imprime
+
+O Android recebe apenas o resultado da operação.
+
+Exemplo de resposta:
+
+{
+"success": true,
+"order": {...},
+"printing": {
+"queued": true,
+"jobs": [...]
+}
+}
+
+Não bloquear a criação do pedido somente porque uma impressora temporariamente está indisponível.
+
+O pedido deve ser persistido e o job de impressão deve possuir estado próprio.
+
+==================================================
+11. FILA DE IMPRESSÃO
+=====================
+
+Transformar a fila de impressão em uma responsabilidade realmente central do backend.
+
+Cada job deve possuir algo equivalente a:
+
+* id
+* orderId
+* tipo
+* printerId
+* status
+* createdAt
+* startedAt
+* finishedAt
+* attempts
+* error
+* payload
+* terminalId
+* environment
+* prioridade
+
+Status possíveis:
+
+queued
+printing
+printed
+failed
+retrying
+cancelled
+
+Implementar retry seguro.
+
+Não imprimir duplicadamente apenas porque o cliente repetiu a requisição.
+
+==================================================
+12. IDEMPOTÊNCIA
+================
+
+Essa parte é obrigatória.
+
+O Android pode perder conexão depois que o servidor criou o pedido.
+
+Quando o aplicativo tentar novamente, o sistema não pode criar dois pedidos.
+
+Para operações críticas, utilizar:
+
+* requestId
+* operationId
+* clientTransactionId
+* ou outro mecanismo equivalente.
+
+Exemplo:
+
+POST /api/orders
+
+Header:
+
+Idempotency-Key: UUID
+
+O servidor deve detectar uma requisição repetida e devolver o resultado original quando apropriado.
+
+==================================================
+13. CONCORRÊNCIA
+================
+
+Vários garçons podem usar o sistema simultaneamente.
+
+Vários terminais podem criar pedidos ao mesmo tempo.
+
+O servidor deve proteger:
+
+* sequência de pedidos;
+* número do pedido;
+* mesa;
+* conta;
+* pagamentos;
+* alteração de status;
+* fechamento de conta;
+* impressão.
+
+Não utilizar somente contadores locais no Android.
+
+O número oficial do pedido deve ser determinado no servidor.
+
+==================================================
+14. APP ANDROID — OBJETIVO
+==========================
+
+Criar um aplicativo Android REALMENTE SEPARADO do site.
+
+Ele NÃO deve simplesmente abrir ou empacotar a interface completa do site.
+
+O aplicativo deve ter interface própria para garçom/atendente.
+
+Recomendação:
+
+usar Android nativo com Kotlin + Jetpack Compose.
+
+Pode usar outra tecnologia somente se existir justificativa técnica concreta.
+
+O requisito essencial é:
+
+APP ANDROID ≠ SITE
+
+Ele deve ser um cliente independente da API.
+
+==================================================
+15. TELA DE PRIMEIRA CONFIGURAÇÃO
+=================================
+
+Na primeira execução:
+
+1. identificar/criar deviceId;
+2. solicitar IP do servidor;
+3. permitir configuração do ambiente:
+
+   * Restaurante
+   * Lanche
+4. testar conexão;
+5. buscar configuração via API;
+6. salvar configuração local;
+7. entrar no fluxo de atendimento.
+
+Campos:
+
+IP/URL do servidor
+
+Ambiente:
+
+( ) Restaurante
+( ) Lanche
+
+Botão:
+
+[ CONECTAR ]
+
+Deve existir opção para alterar essa configuração posteriormente mediante acesso apropriado.
+
+Preferencialmente suportar QR Code futuramente, mas o IP manual deve continuar funcionando.
+
+==================================================
+16. CORREÇÃO DO FLUXO ATUAL DE TERMINAL
+=======================================
+
+O projeto atual possui TerminalSetup e leitura de payload.
+
+Evoluir isso.
+
+O payload pode conter:
+
+serverBaseUrl
+ambienteOperacional
+terminalId
+
+Exemplo:
+
+{
+"serverBaseUrl": "http://192.168.0.100:3000",
+"ambienteOperacional": "restaurante",
+"terminalId": "android-001"
+}
+
+Ao configurar:
+
+1. validar URL;
+2. testar /api/health;
+3. buscar /api/bootstrap;
+4. validar ambiente;
+5. registrar terminal;
+6. salvar configuração local.
+
+==================================================
+17. APP ANDROID — TELA PRINCIPAL
+================================
+
+O aplicativo deve apresentar somente funcionalidades relevantes para garçons.
+
+Sugestão:
+
+HOME
+
+[ MESAS ]
+[ NOVO PEDIDO ]
+[ PEDIDOS ]
+[ DELIVERY ]
+[ CONTA / RESUMO ]
+
+Pode adaptar a interface às necessidades reais encontradas no projeto.
+
+Não adicionar módulos administrativos.
+
+==================================================
+18. FLUXO DE MESAS
+==================
+
+No ambiente restaurante:
+
+GET /api/tables
+
+Mostrar mesas visualmente.
+
+Cada mesa deve apresentar seu estado:
+
+* livre
+* ocupada
+* aguardando
+* fechando
+* etc., conforme modelo existente.
+
+Ao tocar em uma mesa:
+
+→ carregar conta atual
+→ carregar pedidos da mesa
+→ permitir novo pedido
+→ adicionar itens
+→ visualizar total
+→ enviar pedido
+→ solicitar espelho quando permitido.
+
+A mesa não deve ser armazenada como verdade somente no Android.
+
+==================================================
+19. FLUXO DE NOVO PEDIDO
+========================
+
+O garçom:
+
+1. escolhe mesa ou modalidade;
+2. consulta cardápio;
+3. adiciona produtos;
+4. altera quantidades;
+5. adiciona observações;
+6. confirma pedido.
+
+O Android então envia:
+
+POST /api/orders
+
+Payload conceitual:
+
+{
+"operatingEnvironment": "restaurante",
+"orderType": "mesa",
+"tableId": "05",
+"accountId": "123",
+"items": [
+{
+"productId": "10",
+"quantity": 2,
+"notes": ""
+}
+]
+}
+
+O servidor deve:
+
+1. validar usuário;
+2. validar terminal;
+3. validar ambiente;
+4. validar produtos;
+5. calcular preços;
+6. calcular subtotal;
+7. calcular total;
+8. gerar identificadores;
+9. gerar número do pedido;
+10. associar mesa/conta;
+11. registrar origemAtendimento;
+12. registrar origemCliente=android;
+13. gravar pedido;
+14. gerar jobs de impressão;
+15. colocar jobs na fila;
+16. registrar auditoria;
+17. devolver o pedido.
+
+==================================================
+20. NÃO CONFIAR NOS VALORES ENVIADOS PELO ANDROID
+=================================================
+
+O Android pode enviar:
+
+* productId
+* quantidade
+* observação
+* mesa
+* conta
+* tipo
+
+Mas o servidor deve obter do banco:
+
+* preço;
+* produto;
+* categoria;
+* regras;
+* status;
+* disponibilidade;
+* permissões;
+* dados da mesa.
+
+Nunca confiar cegamente em:
+
+total
+subtotal
+preço
+desconto
+valor final
+
+Esses valores devem ser recalculados no backend.
+
+==================================================
+21. DELIVERY
+============
+
+O Android deve conseguir consultar pedidos de delivery relevantes para atendimento.
+
+Exemplo:
+
+GET /api/delivery/orders
+
+Permitir:
+
+* listar pedidos;
+* abrir pedido;
+* visualizar itens;
+* visualizar cliente/dados necessários;
+* visualizar status;
+* gerar espelho quando permitido;
+* alterar estados permitidos ao atendente.
+
+Não expor funções administrativas desnecessárias.
+
+==================================================
+22. ESPELHO
+===========
+
+O espelho deve ser uma operação controlada pelo servidor.
+
+Android:
+
+POST /api/orders/:id/mirror
+
+Servidor:
+
+1. valida pedido;
+2. identifica ambiente;
+3. identifica impressora de espelho;
+4. monta conteúdo;
+5. cria print job;
+6. envia para fila;
+7. retorna status.
+
+Não gerar diretamente comandos ESC/POS no Android.
+
+==================================================
+23. CARDÁPIO
+============
+
+O Android deve receber o cardápio através de API.
+
+Exemplo:
+
+GET /api/menu
+
+Criar uma estrutura simples e eficiente para:
+
+* categorias;
+* produtos;
+* preço;
+* disponibilidade;
+* complementos, se existirem;
+* observações;
+* imagem, se necessária.
+
+O aplicativo pode manter cache local do cardápio para melhorar desempenho.
+
+Entretanto:
+
+o servidor continua sendo a fonte oficial.
+
+==================================================
+24. CACHE ANDROID
+=================
+
+O Android pode armazenar localmente:
+
+* configuração do terminal;
+* deviceId;
+* sessão;
+* último cardápio recebido;
+* dados temporários;
+* pedidos ainda aguardando confirmação de sincronização.
+
+Não permitir que o cache substitua o servidor como autoridade.
+
+Quando a conexão voltar:
+
+→ sincronizar operações pendentes
+→ usando idempotency key.
+
+==================================================
+25. CONEXÃO VIA IP FIXO
+=======================
+
+O Android deve suportar conexão com o servidor através de IP fixo da rede local.
+
+Exemplo:
+
+http://192.168.0.100:3000
+
+ou:
+
+http://192.168.1.100:3000
+
+Nunca assumir que localhost no Android representa o servidor do restaurante.
+
+No Android:
+
+localhost = próprio aparelho.
+
+Portanto, sempre utilizar serverBaseUrl configurado.
+
+Centralizar essa configuração.
+
+==================================================
+26. API CLIENT DO ANDROID
+=========================
+
+Criar um cliente de API organizado.
+
+Exemplo conceitual:
+
+ApiClient
+
+métodos:
+
+login()
+bootstrap()
+getTables()
+getTable()
+getMenu()
+getOrders()
+getDeliveryOrders()
+createOrder()
+updateOrder()
+addOrderItem()
+removeOrderItem()
+mirrorOrder()
+getOrder()
+getAccount()
+addPayment()
+
+O Android não deve fazer chamadas HTTP espalhadas por todos os componentes.
+
+Utilizar uma camada de dados organizada.
+
+==================================================
+27. SITE TAMBÉM DEVE USAR A API
+===============================
+
+Não criar uma arquitetura onde:
+
+Android → API
+
+e:
+
+Site → estado React → snapshot
+
+O objetivo final deve ser:
+
+Android → API
+Site → API
+
+Os dois clientes devem compartilhar as mesmas regras do backend.
+
+Migrar gradualmente as operações existentes do RestaurantContext para os serviços do servidor.
+
+O RestaurantContext pode continuar existindo como camada de apresentação/estado temporário do frontend, mas não pode continuar sendo a autoridade final das regras de negócio.
+
+==================================================
+28. MIGRAÇÃO DO RESTAURANTCONTEXT
+=================================
+
+Analise todas as operações de:
+
+RestaurantContext.tsx
+
+e classifique:
+
+A) regra de negócio que deve ir para o backend;
+B) estado visual que pode continuar no frontend;
+C) função puramente de apresentação;
+D) persistência que deve migrar para API.
+
+Prioridade de migração:
+
+1. createOrder
+2. buildOrderInAccount
+3. pagamentos
+4. atualização de pedidos
+5. status
+6. mesas
+7. contas
+8. espelho
+9. impressão
+10. auditoria
+
+Não remover o código antigo antes de existir substituto funcional.
+
+==================================================
+29. AUTH E TERMINAL
+===================
+
+Cada operação deve carregar a identidade necessária.
+
+Usar o mecanismo de autenticação existente quando possível.
+
+Além do usuário, registrar:
+
+* terminalId
+* origemCliente
+* origemAtendimento
+
+Headers podem continuar utilizando:
+
+X-Device-Id
+X-Operating-Environment
+
+desde que validados no servidor.
+
+O backend nunca deve confiar somente no header para decisões críticas.
+
+Validar o terminal contra cadastro/configuração.
+
+==================================================
+30. AUDITORIA
+=============
+
+Registrar ações importantes.
+
+Exemplos:
+
+* login;
+* criação de pedido;
+* alteração;
+* cancelamento;
+* pagamento;
+* impressão;
+* reimpressão;
+* espelho;
+* alteração de mesa.
+
+Registrar pelo menos:
+
+* usuário;
+* terminal;
+* data/hora;
+* ação;
+* entidade;
+* entityId;
+* ambiente.
+
+==================================================
+31. REAL-TIME / ATUALIZAÇÃO
+===========================
+
+Pesquisar no projeto se já existe algum mecanismo real de:
+
+* WebSocket;
+* SSE;
+* socket.io;
+* EventSource.
+
+Caso não exista, implementar primeiro uma solução robusta por polling incremental.
+
+Exemplo:
+
+GET /api/orders/updates?since=<timestamp-or-revision>
+
+ou usar WebSocket/SSE se isso se encaixar melhor na estrutura existente.
+
+Objetivo:
+
+Quando outro terminal criar/modificar pedido ou mesa, os outros clientes devem conseguir atualizar sem precisar recarregar toda a aplicação.
+
+Priorizar:
+
+* mesas;
+* pedidos;
+* delivery;
+* status.
+
+==================================================
+32. BOOTSTRAP
+=============
+
+Criar um endpoint eficiente:
+
+GET /api/bootstrap
+
+Ele deve retornar somente o necessário para o cliente iniciar.
+
+Exemplo:
+
+{
+"server": {
+"version": "...",
+"revision": 123
+},
+"terminal": {...},
+"environment": "restaurante",
+"permissions": [...],
+"menu": {...},
+"tables": [...],
+"configuration": {...}
+}
+
+Não retornar dados administrativos desnecessários ao Android.
+
+==================================================
+33. PERMISSÕES DO GARÇOM
+========================
+
+O Android deve respeitar permissões.
+
+Criar permissões específicas conforme o sistema existente.
+
+Exemplos:
+
+garcom:
+
+* criar pedido;
+* editar itens próprios;
+* consultar mesas;
+* consultar pedidos;
+* solicitar espelho.
+
+atendente:
+
+* funções de atendimento;
+* delivery;
+* consulta de pedidos.
+
+administrador/caixa:
+
+* acesso maior no site.
+
+Nunca usar apenas ocultação visual para segurança.
+
+As permissões precisam ser verificadas no backend.
+
+==================================================
+34. INTERFACE ANDROID
+=====================
+
+Criar interface otimizada para uso rápido.
+
+Priorizar:
+
+* botões grandes;
+* pouca navegação;
+* leitura fácil;
+* operação com uma mão;
+* feedback imediato;
+* carregamento rápido;
+* poucos campos obrigatórios;
+* prevenção contra toque duplicado.
+
+O garçom deve conseguir:
+
+abrir mesa
+→ selecionar produtos
+→ enviar pedido
+
+com o mínimo de passos possível.
+
+==================================================
+35. ESTADOS DE CARREGAMENTO
+===========================
+
+Implementar estados claros:
+
+* carregando;
+* conectado;
+* desconectado;
+* sincronizando;
+* pedido enviando;
+* pedido enviado;
+* impressão em fila;
+* erro;
+* operação pendente.
+
+Nunca deixar a tela aparentemente travada sem feedback.
+
+==================================================
+36. FALHA DE INTERNET / REDE LOCAL
+==================================
+
+Como o sistema funciona em rede local, tratar quedas de conexão.
+
+Exemplo:
+
+Garçom confirma pedido.
+
+O servidor recebe.
+
+O Android perde conexão antes da resposta.
+
+Ao tentar novamente:
+
+→ usar Idempotency-Key
+→ servidor identifica operação existente
+→ devolve pedido já criado
+→ NÃO duplicar.
+
+==================================================
+37. SEGURANÇA
+=============
+
+Não colocar no APK:
+
+* senha de banco;
+* credencial administrativa;
+* configuração de impressoras;
+* segredo do servidor;
+* chave privada;
+* credenciais permanentes.
+
+O Android deve guardar somente o necessário.
+
+Validar todas as entradas no backend.
+
+Evitar endpoints que aceitem snapshots arbitrários do banco como mecanismo normal de operação.
+
+A API de banco existente deve permanecer somente para funções administrativas/backup, se ainda necessária.
+
+==================================================
+38. BANCO DE DADOS
+==================
+
+Analise o SQLite atual e preserve os dados existentes.
+
+Não destruir o banco atual.
+
+Criar migrações necessárias.
+
+Preservar compatibilidade com dados existentes.
+
+Verificar:
+
+* orders;
+* order_items;
+* tables;
+* accounts;
+* payments;
+* products;
+* users;
+* printers;
+* print_jobs;
+* terminals;
+* audit logs.
+
+Caso alguma estrutura necessária não exista, criar migration.
+
+==================================================
+39. COMPATIBILIDADE COM O FLUXO EXISTENTE
+=========================================
+
+Tudo que já funciona deve continuar funcionando:
+
+* caixa;
+* pedido;
+* mesa;
+* balcão;
+* delivery;
+* pagamentos;
+* espelho;
+* impressão;
+* restaurante;
+* lanche;
+* sucos;
+* pedidos mistos.
+
+A atualização deve ser uma evolução arquitetural.
+
+Não alterar regras de negócio existentes sem detectar e documentar a necessidade.
+
+==================================================
+40. TESTES OBRIGATÓRIOS
+=======================
+
+Criar ou atualizar testes.
+
+Testar no mínimo:
+
+1. pedido restaurante;
+2. pedido lanche;
+3. pedido Android restaurante;
+4. pedido Android lanche;
+5. pedido misto;
+6. item suco;
+7. espelho restaurante;
+8. espelho lanche;
+9. impressão restaurante;
+10. impressão lanche;
+11. impressão sucos;
+12. falha de impressora;
+13. retry;
+14. idempotência;
+15. criação simultânea de pedidos;
+16. mesa ocupada;
+17. conta existente;
+18. pagamento;
+19. cancelamento;
+20. permissões;
+21. terminal inválido;
+22. ambiente inválido;
+23. servidor indisponível;
+24. reconexão.
+
+Especial atenção ao teste:
+
+Pedido criado no Android restaurante contendo produtos de restaurante + lanche + suco.
+
+Resultado esperado:
+
+* um único pedido;
+* ambiente restaurante;
+* origemCliente android;
+* via principal conforme regra restaurante;
+* suco roteado para impressora sucos;
+* espelho no espelho restaurante;
+* sem duplicação do pedido.
+
+Repetir cenário para ambiente lanche.
+
+==================================================
+41. CORREÇÃO IMPORTANTE ENCONTRADA NO PROJETO
+=============================================
+
+Na interface POS atual existe uma inconsistência em que o fluxo de criação do pedido pode utilizar:
+
+origemCliente = "web"
+
+mesmo quando executado no contexto Android.
+
+Corrigir isso.
+
+Android deve gerar:
+
+origemCliente = "android"
+
+Site deve gerar:
+
+origemCliente = "web"
+
+Não fazer isso somente no frontend.
+
+O servidor também deve validar/preencher a origem com base no cliente autenticado/terminal quando possível.
+
+==================================================
+42. NÃO REUTILIZAR UI DO SITE NO ANDROID
+========================================
+
+Não importar para o Android:
+
+POSView.tsx
+OrdersView.tsx
+TablesView.tsx
+ou a interface inteira do site.
+
+Pode reutilizar:
+
+* tipos;
+* contratos;
+* DTOs compartilhados;
+* documentação;
+* lógica puramente independente de UI;
+* modelos comuns.
+
+Mas o Android deve ter suas próprias telas.
+
+==================================================
+43. ESTRUTURA SUGERIDA PARA ANDROID
+===================================
+
+Exemplo:
+
+android/
+app/
+src/main/java/com/fabiosilva/pdv/
+MainActivity
+data/
+api/
+model/
+repository/
+domain/
+ui/
+setup/
+home/
+tables/
+menu/
+order/
+orders/
+delivery/
+account/
+components/
+navigation/
+storage/
+session/
+
+Adaptar à estrutura real encontrada no repositório.
+
+==================================================
+44. TELAS MÍNIMAS DO APP
+========================
+
+Criar:
+
+1. Configuração inicial
+2. Conexão
+3. Login, caso necessário
+4. Home do garçom
+5. Mesas
+6. Detalhes da mesa
+7. Cardápio
+8. Montagem do pedido
+9. Confirmação
+10. Pedido enviado
+11. Lista de pedidos
+12. Detalhes do pedido
+13. Delivery
+14. Conta/resumo
+15. Configuração do terminal
+
+Não criar telas administrativas no Android.
+
+==================================================
+45. SITE CONTINUA SENDO O SISTEMA COMPLETO
+==========================================
+
+O site deve continuar oferecendo funcionalidades completas como:
+
+* PDV;
+* caixa;
+* administração;
+* produtos;
+* configurações;
+* impressoras;
+* relatórios;
+* usuários;
+* terminal;
+* operações administrativas.
+
+Não retirar esses recursos apenas porque o Android terá API.
+
+==================================================
+46. DOCUMENTAÇÃO
+================
+
+Atualizar:
+
+README_ANDROID.md
+
+Criar documentação da API, por exemplo:
+
+API.md
+
+Atualizar:
+
+ANALISE_PDV.md
+
+Documentar:
+
+* arquitetura;
+* endpoints;
+* autenticação;
+* ambiente;
+* origem;
+* impressão;
+* pedido misto;
+* idempotência;
+* terminal;
+* configuração por IP;
+* build do Android;
+* geração do APK.
+
+==================================================
+47. BUILD ANDROID
+=================
+
+O projeto deve terminar com o aplicativo Android compilável.
+
+Executar os passos necessários para gerar APK.
+
+Exemplo esperado:
+
+./gradlew assembleDebug
+
+ou equivalente na estrutura encontrada.
+
+Corrigir:
+
+* erros de compilação;
+* dependências;
+* configurações;
+* Manifest;
+* permissões;
+* network security, quando necessário para HTTP em rede local;
+* configuração do endpoint.
+
+Gerar APK de teste.
+
+Salvar o artefato gerado em uma localização claramente identificável.
+
+Exemplo:
+
+/artifacts/pdv-garcom-debug.apk
+
+==================================================
+48. CONFIGURAÇÃO DE HTTP LOCAL
+==============================
+
+Como o servidor poderá utilizar IP local HTTP:
+
+[http://192.168.x.x:porta](http://192.168.x.x:porta)
+
+configurar corretamente o Android para permitir comunicação HTTP local quando necessário.
+
+Não desabilitar segurança de maneira global além do necessário.
+
+Documentar essa configuração.
+
+==================================================
+49. NÃO QUEBRAR O SERVIDOR EXISTENTE
+====================================
+
+Preservar:
+
+GET /api/health
+
+e demais endpoints administrativos que já sejam utilizados.
+
+Fazer migração incremental.
+
+Não apagar database.ts antes de garantir que nenhuma funcionalidade crítica depende dele.
+
+A persistência por snapshot pode ser mantida temporariamente durante a transição, mas não deve continuar sendo o mecanismo principal para operações de negócio.
+
+==================================================
+50. PLANO DE MIGRAÇÃO
+=====================
+
+Executar nesta ordem:
+
+FASE 1
+Análise completa do projeto.
+
+FASE 2
+Criar serviços de domínio no backend.
+
+FASE 3
+Criar API de pedidos, mesas, contas, menu e pagamentos.
+
+FASE 4
+Migrar impressão para o fluxo server-side.
+
+FASE 5
+Fazer os testes dos fluxos existentes.
+
+FASE 6
+Criar API client independente para Android.
+
+FASE 7
+Criar UI Android de garçom.
+
+FASE 8
+Adicionar configuração por IP e ambiente.
+
+FASE 9
+Implementar cache e idempotência.
+
+FASE 10
+Fazer o site consumir a nova API gradualmente.
+
+FASE 11
+Testar concorrência.
+
+FASE 12
+Gerar APK.
+
+==================================================
+51. REGRA SOBRE REUTILIZAÇÃO DE CÓDIGO
+======================================
+
+Reutilize código somente quando ele não criar acoplamento indevido.
+
+Pode compartilhar:
+
+* tipos;
+* contratos;
+* schemas;
+* constantes;
+* DTOs;
+* documentação.
+
+Não compartilhar entre site e Android:
+
+* componentes visuais do React do site;
+* RestaurantContext como fonte principal de negócio;
+* estado global do site;
+* acesso direto ao SQLite;
+* lógica de impressão física.
+
+==================================================
+52. RESULTADO FINAL ESPERADO
+============================
+
+Quero chegar exatamente a este modelo:
+
+```
+                       PDV SERVER
+                          │
+            ┌─────────────┴─────────────┐
+            │                           │
+         SITE                       ANDROID
+         COMPLETO                   GARÇOM
+            │                           │
+            │                           │
+            └────────── API ────────────┘
+                          │
+                       SQLite
+                          │
+                Printer Manager
+                          │
+         ┌────────────────┼───────────────┐
+         │                │               │
+    restaurante        lanche          sucos
+     cozinha           cozinha         compartilhada
+     espelho           espelho
+                         
+```
+
+O Android deve funcionar como um terminal de atendimento.
+
+Ele consulta o servidor.
+
+Ele cria pedidos.
+
+Ele consulta mesas.
+
+Ele consulta delivery.
+
+Ele consulta pedidos.
+
+Ele solicita espelho.
+
+Ele envia alterações.
+
+Ele recebe resultados.
+
+Ele NÃO controla o sistema inteiro.
+
+Ele NÃO substitui o site.
+
+==================================================
+53. CRITÉRIOS DE ACEITE
+=======================
+
+A implementação só deve ser considerada concluída quando:
+
+[ ] site continua funcionando;
+[ ] Android possui interface própria;
+[ ] Android não é cópia do site;
+[ ] Android conecta pelo IP configurado;
+[ ] primeira inicialização permite escolher restaurante/lanche;
+[ ] Android recebe dados pela API;
+[ ] Android cria pedidos pela API;
+[ ] servidor é fonte da verdade;
+[ ] servidor calcula totais;
+[ ] servidor gera número do pedido;
+[ ] origemCliente está correta;
+[ ] origemAtendimento está correta;
+[ ] pedidos mistos permanecem um único pedido;
+[ ] regra de sucos continua funcionando;
+[ ] espelhos continuam funcionando;
+[ ] impressoras continuam funcionando;
+[ ] jobs possuem controle de estado;
+[ ] retry de impressão funciona;
+[ ] idempotência evita pedidos duplicados;
+[ ] concorrência é tratada;
+[ ] autenticação/permissões são verificadas;
+[ ] delivery funciona no Android;
+[ ] mesas funcionam no Android;
+[ ] o servidor não depende do frontend para executar regra crítica;
+[ ] testes passam;
+[ ] APK é gerado.
+
+==================================================
+54. FORMA DE TRABALHO
+=====================
+
+Não faça alterações cegamente.
+
+Para cada alteração estrutural importante:
+
+1. localizar implementação existente;
+2. entender dependências;
+3. preservar comportamento;
+4. criar nova implementação;
+5. conectar cliente;
+6. testar;
+7. somente então remover código duplicado.
+
+Não inventar tabelas, propriedades ou regras sem antes verificar o projeto existente.
+
+Quando houver conflito entre uma proposta deste prompt e uma regra já implementada e claramente utilizada pelo sistema, preservar o comportamento operacional existente e documentar a adaptação.
+
+==================================================
+55. ENTREGA FINAL
+=================
+
+Ao terminar:
+
+1. apresente um resumo das alterações;
+2. liste os novos endpoints;
+3. liste os novos serviços;
+4. explique como o Android se comunica com o servidor;
+5. explique o fluxo restaurante;
+6. explique o fluxo lanche;
+7. explique o pedido misto;
+8. explique o fluxo de impressão;
+9. explique o espelho;
+10. informe como configurar o IP;
+11. informe como gerar o APK;
+12. informe onde o APK foi gerado;
+13. liste testes executados;
+14. liste eventuais pendências reais.
+
+IMPORTANTE:
+
+Não diga que algo foi implementado sem verificar o código/build/teste correspondente.
+
+Se alguma parte não puder ser concluída, informe exatamente qual parte ficou pendente e por quê.
+
+O objetivo não é criar um aplicativo Android gigantesco.
+
+O objetivo é criar um aplicativo Android simples, rápido e especializado para GARÇONS E ATENDENTES, conectado ao mesmo backend do PDV, enquanto o SITE permanece como sistema completo.
