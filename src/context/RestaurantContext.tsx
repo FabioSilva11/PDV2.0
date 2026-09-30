@@ -238,6 +238,7 @@ interface RestaurantContextType {
   addManualPaymentToOrder: (orderId: string, formaId: PaymentMethodId, valor: number, valorRecebido?: number, observacao?: string) => boolean;
   reverseOrderPayment: (orderId: string, paymentId: string, motivo: string) => void;
   markOrderAsPaidManually: (orderId: string) => void;
+  deleteOrderAfterPayment: (orderId: string) => void;
   isPaymentModalOpen: boolean;
   orderForPaymentModal: Order | null;
   openPaymentModal: (order: Order) => void;
@@ -2341,7 +2342,16 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     if (!order.saldoRestante) return; // Já quitado
     // Esta função indica ao usuário que deve usar o fluxo correto de pagamento.
     // Ela não realiza pagamento direto; use addManualPaymentToOrder para isso.
-    throw new Error('Para registrar o recebimento, selecione a forma de pagamento e informe o valor. Para cortesia total, aplique um desconto de 100% com motivo.');
+  };
+
+  /** Remove o pedido do estado após pagamento completo.
+   * As transações do caixa já registram tudo; o pedido não é mais necessário no histórico. */
+  const deleteOrderAfterPayment = (orderId: string) => {
+    const order = store.state.orders.find((o: Order) => o.id === orderId) as Order | undefined;
+    if (!order) return;
+    if (order.statusPagamento !== 'pago') return; // só exclui se totalmente pago
+    setOrders(prev => prev.filter(o => o.id !== orderId));
+    if (order.contaId) syncAccountTotals(order.contaId);
   };
 
   const openPaymentModal = useCallback((order: Order) => {
@@ -2996,6 +3006,7 @@ export const RestaurantProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         addManualPaymentToOrder,
         reverseOrderPayment,
         markOrderAsPaidManually,
+        deleteOrderAfterPayment,
         isPaymentModalOpen,
         orderForPaymentModal: orders.find(o => o.id === orderForPaymentModal?.id) || orderForPaymentModal,
         openPaymentModal,

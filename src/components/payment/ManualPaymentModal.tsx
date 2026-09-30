@@ -25,6 +25,7 @@ export const ManualPaymentModal: React.FC = () => {
     addManualPaymentToOrder,
     reverseOrderPayment,
     markOrderAsPaidManually,
+    deleteOrderAfterPayment,
     currentUser
   } = useRestaurant();
 
@@ -85,10 +86,12 @@ export const ManualPaymentModal: React.FC = () => {
       setValorRecebidoInput('');
       setObservacaoInput('');
 
-      // Ao quitar o saldo inteiro, o fluxo de baixa terminou: fecha o diálogo.
-      // Pagamentos parciais continuam visíveis para permitir registrar o restante.
+      // Ao quitar o saldo inteiro, o fluxo de baixa terminou: fecha o diálogo
+      // e exclui o pedido (não precisa ficar no histórico após pagamento).
       if (quitouConta) {
+        const idToDelete = orderForPaymentModal.id;
         closePaymentModal();
+        deleteOrderAfterPayment(idToDelete);
       }
     }
   };
@@ -105,8 +108,10 @@ export const ManualPaymentModal: React.FC = () => {
   };
 
   const handleMarkAsPaidFull = () => {
-    markOrderAsPaidManually(orderForPaymentModal.id);
+    const idToDelete = orderForPaymentModal.id;
+    markOrderAsPaidManually(idToDelete);
     closePaymentModal();
+    deleteOrderAfterPayment(idToDelete);
   };
 
   return (
